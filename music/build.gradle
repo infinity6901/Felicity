@@ -1,0 +1,266 @@
+plugins {
+    id 'com.android.application'
+    id 'com.google.devtools.ksp'
+    id 'com.google.dagger.hilt.android'
+}
+
+apply from: rootProject.file('common.gradle')
+
+android {
+    namespace 'app.simple.felicity'
+
+    // Equivalent of the old android:extractNativeLibs="true" manifest attribute,
+    // required by youtubedl-android (see repository/youtube/YtDlpManager.kt) so its
+    // bundled Python/yt-dlp/ffmpeg payload can be extracted from the APK at runtime.
+    // Newer AGP versions reject the manifest attribute directly and require this
+    // build-script equivalent instead.
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    buildFeatures {
+        viewBinding true
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "app.simple.felicity"
+
+        versionCode 29
+        versionName "0.0.29_alpha"
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
+    signingConfigs {
+        release {
+            def properties = loadProperties(rootProject.file('local.properties').absolutePath)
+            if (properties.isEmpty()) {
+                logger.error("local.properties file not found or empty, retrying with environment variables.")
+                storeFile = null
+            }
+
+            def keystoreFile = findKeystoreFile(properties)
+
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = getEnvOrProperty("SIGNING_STORE_PASSWORD", properties)
+                keyAlias = getEnvOrProperty("SIGNING_KEY_ALIAS", properties)
+                keyPassword = getEnvOrProperty("SIGNING_KEY_PASSWORD", properties)
+            } else {
+                storeFile = null
+                logger.error("Keystore file not found, signing disabled.")
+            }
+        }
+    }
+
+    flavorDimensions.add("type")
+
+    productFlavors {
+        foss { // GitHub build
+            dimension "type"
+
+            def releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null) {
+                signingConfig releaseSigning
+            }
+
+            ndk {
+                abiFilters "arm64-v8a", "x86_64" // 64bit only
+            }
+        }
+        play { // Play Store build
+            dimension "type"
+            versionNameSuffix "-play"
+
+            def releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null) {
+                signingConfig releaseSigning
+            }
+
+            ndk {
+                abiFilters "arm64-v8a", "x86_64" // 64bit only
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            dependenciesInfo {
+                includeInApk false
+                includeInBundle false
+            }
+
+            def releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null) {
+                signingConfig releaseSigning
+            }
+
+        }
+        debug {
+            versionNameSuffix "-dev"
+
+            def releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null) {
+                signingConfig releaseSigning
+            }
+        }
+    }
+
+    dependenciesInfo {
+        includeInApk false
+        includeInBundle false
+    }
+
+    kotlin {
+        compilerOptions {
+            freeCompilerArgs.add("-XXLanguage:+PropertyParamAnnotationDefaultTargetMode")
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+
+    // For observing live YouTube-download progress in YoutubeViewModel
+    implementation 'androidx.work:work-runtime-ktx:2.10.0'
+
+    implementation project(':theme')
+    implementation project(':decorations')
+    implementation project(':preferences')
+    implementation project(':core')
+    implementation project(':shared')
+    implementation project(':repository')
+    implementation project(':engine')
+    implementation project(':milkdrop')
+    implementation project(':blur')
+
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+
+    // AndroidX
+    implementation 'androidx.fragment:fragment-ktx:1.8.9'
+    implementation 'androidx.activity:activity-ktx:1.13.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.11.0'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.11.0'
+    implementation 'androidx.documentfile:documentfile:1.1.0'
+    implementation 'androidx.media:media:1.8.0'
+    implementation 'androidx.security:security-crypto:1.1.0'
+    implementation 'androidx.viewpager2:viewpager2:1.1.0'
+    implementation 'androidx.asynclayoutinflater:asynclayoutinflater:1.1.0'
+
+    implementation "com.google.dagger:hilt-android:2.59.2"
+    ksp "com.google.dagger:hilt-android-compiler:2.59.2"
+
+    implementation 'com.squareup.retrofit2:retrofit:3.0.0'
+    implementation 'com.squareup.retrofit2:converter-gson:3.0.0'
+
+    // Kotlin
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
+
+    // Google
+    implementation 'com.google.android.flexbox:flexbox:3.0.0'
+
+    // Third party
+
+    // My Own
+    implementation 'io.github.hamza417:Amplituda:3.3.1'
+
+    // NanoHTTPD — lightweight embedded HTTP server for the local WiFi server mode
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+
+    // Glide
+    implementation 'com.github.bumptech.glide:glide:5.0.7'
+    implementation 'com.github.bumptech.glide:okhttp3-integration:5.0.7'
+    ksp 'com.github.Hamza417.glide:ksp:d1311d8d06' // Using in-house AP for deterministic output
+}
+
+static def loadProperties(filePath) {
+    def properties = new Properties()
+    def file = new File(filePath)
+    if (file.exists()) {
+        properties.load(new FileInputStream(file))
+    } else {
+        println("Properties file not found: $filePath")
+    }
+    return properties
+}
+
+static def findKeystoreFile(properties) {
+    def path = System.getProperty("user.home") + "/work/_temp/keystore/"
+    def fallbackPath = properties.get("KEYSTORE_PATH")
+    def keystoreFileName = "key.jks"
+    def keystoreFile = new File(path, keystoreFileName)
+
+    if (!keystoreFile.exists() && fallbackPath != null) {
+        keystoreFile = new File(fallbackPath)
+    }
+
+    return keystoreFile
+}
+
+static def getEnvOrProperty(envKey, properties) {
+    return System.getenv(envKey) ?: properties.get(envKey)
+}
+
+/**
+ * Automatically clones the latest Fastlane changelog to the current versionCode's
+ * changelog file during Android Studio Sync.
+ *
+ * afterEvaluate ensures the android {} block has been fully parsed
+ * so we can read the correct versionCode.
+ */
+afterEvaluate {
+    // Detect if Android Studio is currently running a Sync
+    def isSyncing = System.getProperty("idea.sync.active") == "true"
+
+    if (isSyncing) {
+        def fastlaneChangelogDir = file("$rootDir/fastlane/metadata/android/en-US/changelogs")
+        def currentVersionCode = android.defaultConfig.versionCode
+
+        if (currentVersionCode == null) {
+            println("Error: versionCode is not defined.")
+            return
+        }
+
+        if (!fastlaneChangelogDir.exists()) {
+            println("Warning: Fastlane changelog directory not found at $fastlaneChangelogDir")
+            return
+        }
+
+        // Scan the directory and find the latest changelog
+        def changelogFiles = fastlaneChangelogDir.listFiles()?.findAll { file ->
+            file.isFile() && file.name.endsWith(".txt")
+        }
+
+        def latestChangelog = changelogFiles?.max { file ->
+            def nameWithoutExt = file.name.replace(".txt", "")
+            nameWithoutExt.isInteger() ? nameWithoutExt.toInteger() : -1
+        }
+
+        if (latestChangelog != null) {
+            def targetFile = new File(fastlaneChangelogDir, "${currentVersionCode}.txt")
+
+            // Clone it only if the target file doesn't already exist
+            if (!targetFile.exists()) {
+                targetFile.bytes = latestChangelog.bytes
+                println("Fastlane Changelog Sync Success: " +
+                        "Cloned changelog from ${latestChangelog.name} to ${targetFile.name}")
+            } else {
+                println("Fastlane Changelog Sync Skipped: " +
+                        "Target changelog ${targetFile.name} already exists.")
+            }
+        }
+    }
+}

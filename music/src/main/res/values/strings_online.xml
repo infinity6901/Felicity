@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="online">Online</string>
+    <string name="online_search_hint">Search Radio Browser, Jamendo, Audius, Internet Archive, or YouTube…</string>
+    <string name="online_search_empty_state">Nothing to show — try a different search, or switch sources above</string>
+    <string name="online_source_radio_browser">Radio Browser</string>
+    <string name="online_source_jamendo">Jamendo</string>
+    <string name="online_source_audius">Audius</string>
+    <string name="online_source_internet_archive">Internet Archive</string>
+    <string name="online_source_youtube">YouTube</string>
+
+    <string name="youtube_sign_in">Sign in with YouTube</string>
+    <string name="youtube_sign_out">Sign out of YouTube</string>
+    <string name="youtube_signed_in_as">Signed in to YouTube</string>
+    <string name="youtube_not_signed_in">Not signed in — search still works, personal results won\'t</string>
+    <string name="youtube_download_started">Downloading \"%1$s\"…</string>
+    <string name="youtube_ui_toast_resolve_failed">Couldn\'t get a playable stream for this video</string>
+
+    <string name="jamendo_client_id">Jamendo client ID</string>
+    <string name="jamendo_client_id_summary_short">Required for Jamendo search to work</string>
+    <string name="jamendo_client_id_title">Jamendo client ID</string>
+    <string name="jamendo_client_id_summary">Jamendo requires a free client ID for API access. Register one at devportal.jamendo.com, then paste it here.</string>
+    <string name="jamendo_client_id_hint">Paste your client ID</string>
+</resources>

@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+    This is the popup that slides up when you tap the three-dots button
+    while songs are selected. It shows you how many songs you've picked
+    and gives you actions to perform on the whole batch at once.
+-->
+
+<app.simple.felicity.decorations.corners.DynamicCornerLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <!-- Header section — shows the total count of selected songs -->
+    <app.simple.felicity.decorations.typeface.TypeFaceTextView
+        android:id="@+id/selection_count"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="@dimen/padding_15"
+        android:textSize="@dimen/text_size_16"
+        app:appFontStyle="bold"
+        app:textColorStyle="primary" />
+
+    <app.simple.felicity.decorations.theme.ThemeDivider
+        android:layout_width="match_parent"
+        android:layout_height="1px" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="@dimen/padding_10">
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/play"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/play"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_play_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/delete_all"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/delete"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_delete_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/share_all"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/send"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_send_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <!-- Dump all selected songs right onto the end of the playing queue — no fuss, no fanfare -->
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/add_all_to_queue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/add_to_queue"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_queue_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <!-- Let the user stash the selected songs into one or more playlists they already have -->
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/add_to_playlist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/add_to_playlist"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_add_to_playlist_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <!-- Mark every selected song to always be skipped during playback -->
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/always_skip_all"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/always_skip"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_skip_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <!-- Lift the always-skip flag from every selected song so they can play freely again -->
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/never_skip_all"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/never_skip"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_skip_next_menu_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+            android:id="@+id/clear_selection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawablePadding="@dimen/padding_10"
+            android:gravity="center_vertical"
+            android:padding="@dimen/padding_10"
+            android:text="@string/clear_selection"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:drawableStartCompat="@drawable/ic_cross_16dp"
+            app:drawableTintStyle="regular"
+            app:textColorStyle="primary" />
+
+    </LinearLayout>
+
+    <app.simple.felicity.decorations.theme.ThemeDivider
+        android:layout_width="match_parent"
+        android:layout_height="1px" />
+
+    <app.simple.felicity.decorations.typeface.TypeFaceTextView
+        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:text="@string/selection_desc"
+        android:padding="@dimen/padding_10"
+        android:layout_margin="@dimen/padding_10"
+        android:textSize="@dimen/text_size_12"
+        app:appFontStyle="regular"
+        app:textColorStyle="tertiary" />
+
+</app.simple.felicity.decorations.corners.DynamicCornerLinearLayout>
+

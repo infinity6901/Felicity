@@ -1,0 +1,238 @@
+package app.simple.felicity.engine.processors
+
+import android.util.Log
+import app.simple.felicity.engine.processors.AaudioOutputProcessor.Companion.AAUDIO_FORMAT_PCM_FLOAT
+import app.simple.felicity.engine.processors.AaudioOutputProcessor.Companion.AAUDIO_FORMAT_PCM_I16
+
+/**
+ * JNI handle for a native AAudio output stream.
+ *
+ * This class is **not** an [androidx.media3.common.audio.AudioProcessor]. It is a thin
+ * Kotlin wrapper around the native [AaudioContext] defined in [aaudio-player.cpp] and
+ * is intended to be owned and driven exclusively by [AaudioAudioSink].
+ *
+ * Two correctness properties are baked in at the native level:
+ *
+ * - **Format fallback safety**: if the HAL rejects [AAUDIO_FORMAT_PCM_FLOAT] and opens
+ *   an [AAUDIO_FORMAT_PCM_I16] stream instead, [nativeAaudioWrite] detects this via
+ *   [AAudioStream_getFormat] and performs NEON-accelerated float→int16 conversion on
+ *   every [write] call. Callers always supply a [FloatArray]; the conversion is
+ *   invisible here. Use [getActualFormat] to log or display what the HAL gave.
+ *
+ * - **Bluetooth buffer safety**: when [useSafeBuffers] is `true` the stream is opened
+ *   with [AAUDIO_PERFORMANCE_MODE_NONE] + [AAUDIO_SHARING_MODE_SHARED] and its buffer
+ *   is enlarged to 8× the burst count, preventing the A2DP / BLE stack from starving.
+ *
+ * Lifecycle:
+ * ```
+ * AaudioOutputProcessor(sampleRate, channelCount, useSafeBuffers)
+ *     .start()
+ *     .write(floatPcm, length)   // audio thread, non-blocking, returns samples accepted
+ *     .stop()
+ *     .release()
+ * ```
+ *
+ * @param sampleRate    Target sample rate in Hz.
+ * @param channelCount  Number of interleaved output channels (1 = mono, 2 = stereo).
+ * @param useSafeBuffers Pass `true` when a Bluetooth output device is active to enable
+ *                       [AAUDIO_PERFORMANCE_MODE_NONE] and the 8× burst buffer.
+ *
+ * @author Hamza417
+ */
+class AaudioOutputProcessor(
+        sampleRate: Int,
+        channelCount: Int,
+        useSafeBuffers: Boolean = false
+) {
+
+    private var nativeHandle: Long = 0L
+
+    /** Tracks whether the native stream has been started and is currently running.
+     *  Updated synchronously by [start] and [stop] so callers on any thread can
+     *  check this without a JNI round-trip. */
+    @Volatile
+    var isRunning: Boolean = false
+        private set
+
+    init {
+        nativeHandle = nativeAaudioCreate(sampleRate, channelCount, useSafeBuffers)
+        if (nativeHandle == 0L) {
+            Log.e(TAG, "nativeAaudioCreate returned 0 — check logcat for native errors")
+        }
+    }
+
+    /** True when the native stream was opened successfully and is ready to use. */
+    val isReady: Boolean
+        get() = nativeHandle != 0L
+
+    /**
+     * Starts the stream (transitions to STARTED state).
+     *
+     * @return True on success.
+     */
+    fun start(): Boolean {
+        if (nativeHandle == 0L) return false
+        val ok = nativeAaudioStart(nativeHandle)
+        if (ok) isRunning = true
+        return ok
+    }
+
+    /**
+     * Writes interleaved float32 PCM to the stream.
+     * The native layer converts to int16 if the HAL negotiated [AAUDIO_FORMAT_PCM_I16].
+     *
+     * The underlying native call is non-blocking, so it may not accept every
+     * sample in one go if the hardware buffer is momentarily full. Check the
+     * returned count and hang on to whatever wasn't written so it can be sent
+     * on the next call.
+     *
+     * @param pcmBuffer Interleaved float PCM; length = frameCount × channelCount.
+     * @return Number of samples actually accepted, which may be less than
+     *         [pcmBuffer]'s size, or -1 if the stream reported an error.
+     */
+    fun write(pcmBuffer: FloatArray): Int {
+        if (nativeHandle == 0L) return 0
+        return nativeAaudioWrite(nativeHandle, pcmBuffer)
+    }
+
+    /**
+     * Same as [write] but only sends the first [length] samples to the hardware.
+     * When [pcmBuffer] is exactly [length] elements the array goes straight to native
+     * with no allocation. A trimmed copy is made only when the buffer is oversized,
+     * which at steady state (same frame size every call) never happens.
+     *
+     * The write is non-blocking: the hardware buffer may be full, in which case
+     * fewer than [length] samples are accepted. Callers must check the returned
+     * count and retry with the remainder rather than assuming the whole buffer
+     * was consumed — that assumption is what used to make pause() wait for a
+     * whole backlog of already-decoded audio to drain before it could take effect.
+     *
+     * @param pcmBuffer  The scratch buffer holding valid audio in its first [length] slots.
+     * @param length     Number of valid samples to write.
+     * @return Number of samples actually accepted by the hardware, or -1 on error.
+     */
+    fun write(pcmBuffer: FloatArray, length: Int): Int {
+        if (nativeHandle == 0L) return 0
+        val buf = if (pcmBuffer.size == length) pcmBuffer else pcmBuffer.copyOf(length)
+        return nativeAaudioWrite(nativeHandle, buf)
+    }
+
+    /**
+     * Returns the estimated playback position in microseconds using AAudio's
+     * hardware timestamp API. Returns [androidx.media3.common.C.TIME_UNSET] (-1)
+     * when the stream is not running or the timestamp is not yet available.
+     *
+     * @param sourceEnded True when the audio source has finished delivering data.
+     */
+    fun getPlaybackPositionUs(sourceEnded: Boolean): Long {
+        if (nativeHandle == 0L) return -1L
+        return nativeAaudioGetPlaybackPositionUs(nativeHandle, sourceEnded)
+    }
+
+    /**
+     * Returns the estimated output latency in milliseconds, or -1 if unavailable.
+     */
+    fun getLatencyMs(): Int {
+        if (nativeHandle == 0L) return -1
+        return nativeAaudioGetLatencyMs(nativeHandle)
+    }
+
+    /**
+     * Returns the PCM format the HAL actually negotiated after the stream was opened.
+     *
+     * The returned integer maps to the AAudio format constants:
+     *   - `1` = [AAUDIO_FORMAT_PCM_I16] — HAL rejected float; conversion is active.
+     *   - `2` = [AAUDIO_FORMAT_PCM_FLOAT] — optimal float path; no conversion needed.
+     *   - `-1` — stream not open.
+     */
+    fun getActualFormat(): Int {
+        if (nativeHandle == 0L) return -1
+        return nativeAaudioGetActualFormat(nativeHandle)
+    }
+
+    /**
+     * Returns a human-readable label for [getActualFormat], suitable for logs and
+     * the audio pipeline snapshot display.
+     */
+    fun getActualFormatName(): String = when (getActualFormat()) {
+        AAUDIO_FORMAT_PCM_FLOAT -> "PCM_FLOAT (32-bit)"
+        AAUDIO_FORMAT_PCM_I16 -> "PCM_I16 (16-bit, converted)"
+        else -> "Unknown"
+    }
+
+    fun pause() {
+        if (nativeHandle != 0L) {
+            isRunning = false
+            nativeAaudioPause(nativeHandle)
+        }
+    }
+
+    /**
+     * Stops the stream without closing it. Safe to restart via [start].
+     */
+    fun stop() {
+        if (nativeHandle == 0L) return
+        isRunning = false
+        nativeAaudioStop(nativeHandle)
+    }
+
+    /**
+     * Stops, closes, and frees all native resources. Must not be used after this call.
+     */
+    fun release() {
+        if (nativeHandle == 0L) return
+        isRunning = false
+        nativeAaudioDestroy(nativeHandle)
+        nativeHandle = 0L
+        Log.i(TAG, "AaudioOutputProcessor released")
+    }
+
+    // JNI declarations
+
+    /**
+     * Opens the AAudio stream.
+     *
+     * @param sampleRate    Sample rate in Hz.
+     * @param channelCount  Channel count (1 or 2).
+     * @param useSafeBuffers True to enable Bluetooth-safe performance mode and buffer sizing.
+     * @return Opaque handle, or 0 on failure.
+     */
+    private external fun nativeAaudioCreate(
+            sampleRate: Int,
+            channelCount: Int,
+            useSafeBuffers: Boolean
+    ): Long
+
+    private external fun nativeAaudioStart(handle: Long): Boolean
+
+    /**
+     * @return Number of samples actually written to the hardware buffer (may be
+     *         less than [pcmBuffer]'s size when the buffer is momentarily full),
+     *         or -1 on error.
+     */
+    private external fun nativeAaudioWrite(handle: Long, pcmBuffer: FloatArray): Int
+    private external fun nativeAaudioGetLatencyMs(handle: Long): Int
+    private external fun nativeAaudioGetPlaybackPositionUs(handle: Long, sourceEnded: Boolean): Long
+
+    /**
+     * Returns the [aaudio_format_t] constant the HAL actually used after opening the stream.
+     *
+     * @param handle Opaque handle from [nativeAaudioCreate].
+     * @return Format constant ([AAUDIO_FORMAT_PCM_FLOAT] = 2, [AAUDIO_FORMAT_PCM_I16] = 1),
+     *         or -1 if the stream is not open.
+     */
+    private external fun nativeAaudioGetActualFormat(handle: Long): Int
+    private external fun nativeAaudioPause(handle: Long)
+    private external fun nativeAaudioStop(handle: Long)
+    private external fun nativeAaudioDestroy(handle: Long)
+
+    companion object {
+        private const val TAG = "AaudioOutputProcessor"
+
+        /** Matches [AAUDIO_FORMAT_PCM_I16] in [aaudio/AAudio.h]. */
+        const val AAUDIO_FORMAT_PCM_I16 = 1
+
+        /** Matches [AAUDIO_FORMAT_PCM_FLOAT] in [aaudio/AAudio.h]. */
+        const val AAUDIO_FORMAT_PCM_FLOAT = 2
+    }
+}

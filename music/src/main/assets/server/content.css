@@ -1,0 +1,583 @@
+/*
+ * content.css — Felicity Web Player
+ *
+ * Styles for everything that renders inside scrollable screen bodies:
+ * the dashboard sections (stats, panels, carousels), song list rows,
+ * album grid cards, artist rows, genre rows, and the entrance animation
+ * that makes items pop in with a little flair.
+ */
+
+/* Empty / loading state — centered icon + message. */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    height: 100%;
+    gap: 14px;
+    color: var(--text-2);
+    text-align: center;
+    padding: 48px;
+    pointer-events: none;
+}
+
+.empty-icon { font-size: 60px !important; opacity: 0.18; }
+
+.empty-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-2);
+}
+
+/* ==================== Dashboard ==================== */
+
+/* The whole dashboard scrolls as one block. */
+.dashboard {
+    padding: 20px 20px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+/* Library stats — a row of little info chips at the top. */
+.dash-stats {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.dash-stat-chip {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: 100px;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.dash-stat-chip .material-icons-round { font-size: 16px !important; color: var(--accent); }
+
+/* Section block inside the dashboard (title + content). */
+.dash-section { display: flex; flex-direction: column; gap: 12px; }
+
+.dash-section-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-1);
+    letter-spacing: -0.2px;
+}
+
+/*
+ * Browse panels — a 4-column row of large tap-targets.
+ * Each panel card navigates to its library section.
+ */
+.dash-panels {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.panel-card {
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    padding: 18px 10px 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.18s var(--ease), box-shadow 0.18s;
+    user-select: none;
+}
+
+.panel-card:hover {
+    background: var(--active-bg);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.30);
+}
+
+.panel-card:active { transform: scale(0.96); }
+
+.panel-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--r-md);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.panel-icon .material-icons-round { font-size: 22px !important; color: var(--accent); }
+
+.panel-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2);
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* Horizontal carousel — scrolls left and right with invisible scrollbar. */
+.dash-carousel {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+}
+
+.dash-carousel::-webkit-scrollbar { display: none; }
+
+/* Album card in a carousel — slightly smaller than the full grid cards. */
+.carousel-album-card {
+    flex-shrink: 0;
+    width: 140px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.18s var(--ease);
+}
+
+.carousel-album-card:hover { transform: translateY(-3px); }
+.carousel-album-card:active { transform: scale(0.95); }
+
+.carousel-album-art {
+    width: 140px;
+    height: 140px;
+    border-radius: var(--r-md);
+    object-fit: cover;
+    display: block;
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+}
+
+.carousel-album-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-top: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.carousel-album-sub {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Song mini-card in a carousel (for recently added). */
+.carousel-song-card {
+    flex-shrink: 0;
+    width: 120px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.18s var(--ease);
+}
+
+.carousel-song-card:hover { transform: translateY(-3px); }
+.carousel-song-card:active { transform: scale(0.95); }
+
+.carousel-song-art {
+    width: 120px;
+    height: 120px;
+    border-radius: var(--r-md);
+    object-fit: cover;
+    display: block;
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+}
+
+.carousel-song-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-top: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.carousel-song-sub {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* On mobile, collapse panels to 2 columns. */
+@media (max-width: 480px) {
+    .dash-panels { grid-template-columns: repeat(2, 1fr); }
+    .dashboard { padding: 16px 14px 24px; gap: 22px; }
+}
+
+/* ==================== Library Content ==================== */
+
+/* Item entrance animation — items pop in with a gentle scale + fade. */
+@keyframes itemAppear {
+    from { opacity: 0; transform: scale(0.90); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+/* Song list row — generous height for comfortable scanning. */
+.song-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background 0.10s, border-color 0.10s;
+    user-select: none;
+}
+
+.song-row:hover { background: var(--hover); }
+
+.song-row.active {
+    background: var(--active-bg);
+    border-left-color: var(--accent);
+}
+
+.song-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: var(--r-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--hover);
+}
+
+.song-info { flex: 1; min-width: 0; }
+
+.song-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-1);
+}
+
+.song-row.active .song-name { color: var(--active-text); }
+
+.song-sub {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 3px;
+}
+
+.song-dur {
+    font-size: 12px;
+    color: var(--text-3);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Album grid. */
+.album-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+    padding: 18px;
+}
+
+.album-card {
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.15s, transform 0.20s var(--ease), box-shadow 0.20s;
+    user-select: none;
+}
+
+.album-card:hover {
+    background: var(--active-bg);
+    transform: translateY(-4px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.70);
+}
+
+[data-theme="light"] .album-card:hover {
+    box-shadow: 0 12px 36px rgba(0, 100, 200, 0.28);
+}
+
+.album-cover {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: var(--hover);
+}
+
+.album-info { padding: 10px 12px 12px; }
+
+.album-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-1);
+}
+
+.album-meta {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 3px;
+}
+
+/* Song grid card (same grid as album, plays on click). */
+.song-card {
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.15s, transform 0.20s var(--ease), box-shadow 0.20s;
+    user-select: none;
+}
+
+.song-card:hover {
+    background: var(--active-bg);
+    transform: translateY(-4px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.70);
+}
+
+.song-card.active {
+    background: var(--active-bg);
+    border-color: var(--accent);
+}
+
+.song-card.active .album-name { color: var(--active-text); }
+
+/* Album list row (alternative list view for the Albums section). */
+.album-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: background 0.10s;
+    user-select: none;
+}
+
+.album-row:hover { background: var(--hover); }
+
+.album-row-art {
+    width: 52px;
+    height: 52px;
+    border-radius: var(--r-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--hover);
+}
+
+/* Artist list row. */
+.artist-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: background 0.10s;
+    user-select: none;
+}
+
+.artist-row:hover { background: var(--hover); }
+
+.artist-avatar {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--hover);
+}
+
+/* Artist grid. */
+.artist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px;
+    padding: 18px;
+}
+
+.artist-card {
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.15s, transform 0.20s var(--ease), box-shadow 0.20s;
+    user-select: none;
+    text-align: center;
+    padding-bottom: 12px;
+}
+
+.artist-card:hover {
+    background: var(--active-bg);
+    transform: translateY(-4px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.70);
+}
+
+.artist-card-img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: var(--hover);
+    border-radius: 50%;
+    padding: 12px;
+}
+
+.artist-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-1);
+    padding: 0 10px;
+    margin-top: 6px;
+}
+
+.artist-card-sub {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 2px;
+    padding: 0 10px;
+}
+
+/* Genre list row. */
+.genre-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    cursor: pointer;
+    transition: background 0.10s;
+    user-select: none;
+}
+
+.genre-row:hover { background: var(--hover); }
+
+.genre-icon-wrap {
+    width: 52px;
+    height: 52px;
+    border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.genre-icon-wrap .material-icons-round { font-size: 24px !important; }
+
+/* Genre grid. */
+.genre-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 16px;
+    padding: 18px;
+}
+
+.genre-card {
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.15s, transform 0.20s var(--ease), box-shadow 0.20s;
+    user-select: none;
+    padding: 22px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.genre-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.70);
+}
+
+.genre-card-icon-wrap {
+    width: 54px;
+    height: 54px;
+    border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.genre-card-icon-wrap .material-icons-round { font-size: 26px !important; }
+
+.genre-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+}
+
+.genre-card-sub { font-size: 11px; color: var(--text-2); text-align: center; }
+
+/* Shared list row helpers. */
+.row-info { flex: 1; min-width: 0; }
+
+.row-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-1);
+}
+
+.row-sub {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-top: 3px;
+}
+
+.chevron { color: var(--text-3); font-size: 18px !important; flex-shrink: 0; }
+
+/* Mobile grid override. */
+@media (max-width: 600px) {
+    .album-grid,
+    .artist-grid,
+    .genre-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        padding: 12px;
+    }
+}

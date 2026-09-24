@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+    Coordinator layout is used as fragment container to support
+    Overscroll effect on NestedScrollViews.
+
+    @See app.simple.inure.decorations.behaviour.OverScrollBehaviour
+    to understand the use case of coordinator layout in place of
+    FragmentContainerView.
+-->
+
+<app.simple.felicity.decorations.theme.ThemeCoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/app_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    tools:context=".activities.MainActivity"
+    tools:parentTag="android.widget.FrameLayout">
+
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:id="@+id/fragment_container"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!--
+        This row of quick-action buttons floats just above the mini player card.
+        It only appears when the user has songs in their selection basket.
+        The translationY is kept in sync with the mini player via a PreDrawListener
+        in MainActivity so both slide on and off-screen as a single unit.
+    -->
+    <LinearLayout
+        android:id="@+id/mini_player_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="horizontal"
+        android:paddingHorizontal="15dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/selection_count"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/icon_size_30"
+            android:gravity="center"
+            android:paddingHorizontal="@dimen/padding_10"
+            app:appFontStyle="medium"
+            app:highlightMode="flat"
+            app:textColorStyle="primary" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1" />
+
+        <!-- Delete all selected songs permanently -->
+        <app.simple.felicity.decorations.highlight.HighlightImageButton
+            android:id="@+id/action_delete"
+            android:layout_width="@dimen/icon_size_40"
+            android:layout_height="@dimen/icon_size_30"
+            android:layout_marginEnd="6dp"
+            android:padding="@dimen/padding_5"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_delete_16dp"
+            android:contentDescription="@string/delete" />
+
+        <!-- Share all selected songs at once -->
+        <app.simple.felicity.decorations.highlight.HighlightImageButton
+            android:id="@+id/action_share"
+            android:layout_width="@dimen/icon_size_40"
+            android:layout_height="@dimen/icon_size_30"
+            android:layout_marginEnd="6dp"
+            android:padding="@dimen/padding_5"
+            android:src="@drawable/ic_send_16dp"
+            android:contentDescription="@string/send" />
+
+        <!-- Three-dots vertical more menu — opens the full selection actions sheet -->
+        <app.simple.felicity.decorations.highlight.HighlightImageButton
+            android:id="@+id/action_more"
+            android:padding="@dimen/padding_5"
+            android:layout_width="@dimen/icon_size_40"
+            android:layout_height="@dimen/icon_size_30"
+            android:src="@drawable/ic_more_vert"
+            android:contentDescription="@string/select" />
+
+    </LinearLayout>
+
+    <app.simple.felicity.decorations.miniplayer.MiniPlayer
+        android:id="@+id/mini_player"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_gravity="bottom" />
+
+</app.simple.felicity.decorations.theme.ThemeCoordinatorLayout>

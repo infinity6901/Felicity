@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    New strings for the Vinyl player interface style (ui/player/VinylPlayer.kt), kept in
+    their own file for the same reason as strings_sleep_timer.xml — the real strings.xml
+    wasn't included in this export, so new strings are added here to merge in cleanly
+    without touching or risking a collision with it.
+-->
+<resources>
+    <string name="vinyl">Vinyl</string>
+    <string name="vinyl_ui_desc">A spinning record behind your album art</string>
+</resources>

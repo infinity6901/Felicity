@@ -1,0 +1,71 @@
+package app.simple.felicity.viewmodels.panels
+
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.viewModelScope
+import app.simple.felicity.engine.managers.MediaPlaybackManager
+import app.simple.felicity.extensions.viewmodels.WrappedViewModel
+import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.online.OnlineTrack
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class PlayingQueueViewModel @Inject constructor(
+        application: Application) : WrappedViewModel(application) {
+
+    private val _songs = MutableStateFlow<List<Audio>>(emptyList())
+    val songs: StateFlow<List<Audio>> = _songs.asStateFlow()
+
+    val onlineQueue: StateFlow<List<OnlineTrack>> = MediaPlaybackManager.onlineQueueFlow
+    val onlineQueueIndex: StateFlow<Int> = MediaPlaybackManager.onlineQueueIndexFlow
+    val currentOnlineTrack: StateFlow<OnlineTrack?> = MediaPlaybackManager.currentOnlineTrackFlow
+
+    private val _currentPosition = MutableStateFlow(0)
+    val currentPosition: StateFlow<Int> = _currentPosition.asStateFlow()
+
+    private val _activeQueueId = MutableStateFlow(MediaPlaybackManager.getActiveQueueId())
+    val activeQueueId: StateFlow<Int> = _activeQueueId.asStateFlow()
+
+    init {
+        observeQueue()
+        observePosition()
+        observeActiveQueueId()
+    }
+
+    private fun observeQueue() {
+        viewModelScope.launch {
+            MediaPlaybackManager.songListFlow.collect { audioList ->
+                Log.d(TAG, "Queue updated: ${audioList.size} songs")
+                _songs.value = audioList
+            }
+        }
+    }
+
+    private fun observePosition() {
+        viewModelScope.launch {
+            MediaPlaybackManager.songPositionFlow.collect { position ->
+                Log.d(TAG, "Queue position updated: $position")
+                _currentPosition.value = position
+            }
+        }
+    }
+
+    private fun observeActiveQueueId() {
+        viewModelScope.launch {
+            MediaPlaybackManager.activeQueueIdFlow.collect { queueId ->
+                Log.d(TAG, "Active queue changed: $queueId")
+                _activeQueueId.value = queueId
+            }
+        }
+    }
+
+    companion object {
+        private const val TAG = "PlayingQueueViewModel"
+    }
+}
+

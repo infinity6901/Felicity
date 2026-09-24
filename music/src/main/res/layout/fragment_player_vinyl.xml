@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<app.simple.felicity.decorations.padding.PaddingAwareLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:orientation="vertical"
+    app:navigationPaddingRequired="true"
+    app:statusPaddingRequired="false">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/padding_10"
+        android:layout_weight="1"
+        android:clipChildren="false">
+
+        <!--
+            Purely decorative — a static "record" the swipeable album art (pager, below)
+            appears to be sitting on top of. VinylPlayer.kt spins this container slowly
+            while playback is active and stops it (rather than resetting it) on pause, the
+            same way a real turntable platter behaves.
+        -->
+        <FrameLayout
+            android:id="@+id/vinyl_disc"
+            android:layout_width="280dp"
+            android:layout_height="280dp"
+            android:layout_gravity="center">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/shape_vinyl_disc_base" />
+
+            <View
+                android:layout_width="238dp"
+                android:layout_height="238dp"
+                android:layout_gravity="center"
+                android:background="@drawable/shape_vinyl_groove" />
+
+            <View
+                android:layout_width="190dp"
+                android:layout_height="190dp"
+                android:layout_gravity="center"
+                android:background="@drawable/shape_vinyl_groove" />
+
+            <View
+                android:layout_width="140dp"
+                android:layout_height="140dp"
+                android:layout_gravity="center"
+                android:background="@drawable/shape_vinyl_groove" />
+
+            <View
+                android:id="@+id/vinyl_center_label"
+                android:layout_width="112dp"
+                android:layout_height="112dp"
+                android:layout_gravity="center"
+                android:background="@drawable/shape_vinyl_center_label" />
+
+            <View
+                android:layout_width="17dp"
+                android:layout_height="17dp"
+                android:layout_gravity="center"
+                android:background="@drawable/shape_vinyl_spindle" />
+
+        </FrameLayout>
+
+        <!-- The interactive, swipeable album art — sized smaller than vinyl_disc above so the
+             record's grooves stay visible around it, evoking the label peeking out from under a sleeve. -->
+        <app.simple.felicity.decorations.pager.FelicityPager
+            android:id="@+id/pager"
+            android:layout_width="190dp"
+            android:layout_height="190dp"
+            android:layout_gravity="center" />
+
+        <app.simple.felicity.decorations.views.FelicityVisualizer
+            android:id="@+id/visualizer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0.55"
+            app:vizMaxRenderHeight="0.30"
+            app:vizParticlesEnabled="true" />
+
+        <app.simple.felicity.decorations.lrc.view.LrcLineView
+            android:id="@+id/lrc"
+            android:layout_margin="@dimen/padding_10"
+            android:padding="@dimen/padding_5"
+            android:layout_width="match_parent"
+            android:layout_gravity="bottom"
+            android:layout_height="wrap_content" />
+
+    </FrameLayout>
+
+    <app.simple.felicity.decorations.theme.ThemeDivider
+        android:layout_width="match_parent"
+        android:layout_height="1px" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <app.simple.felicity.decorations.views.FavoriteButton
+            android:id="@+id/favorite"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:layout_marginEnd="@dimen/padding_1"
+            android:src="@drawable/ic_favorite_border"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/visualizer_button"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:layout_marginEnd="@dimen/padding_1"
+            android:src="@drawable/ic_graphic_eq"
+            android:layout_gravity="center_vertical"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/equalizer"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:layout_marginEnd="@dimen/padding_1"
+            android:src="@drawable/ic_tune"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/sleep_timer"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:layout_marginEnd="@dimen/padding_1"
+            android:src="@drawable/ic_timer"
+            android:contentDescription="@string/sleep_timer"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/search"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:layout_marginEnd="@dimen/padding_1"
+            android:src="@drawable/ic_search"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/menu"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/button_size"
+            android:src="@drawable/ic_more_vert"
+            app:buttonTintType="regular" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:clipChildren="false"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:orientation="horizontal">
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/lyrics"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="@string/lyrics"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/shuffle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="@string/shuffle"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:minWidth="@dimen/padding_5"
+            android:layout_height="match_parent" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/pcm_info"
+            android:layout_width="wrap_content"
+            android:textSize="@dimen/text_size_12"
+            android:maxWidth="100dp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:minWidth="100dp"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:layout_gravity="center_vertical"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:paddingVertical="@dimen/padding_1"
+            android:layout_marginVertical="@dimen/padding_10"
+            android:layout_height="wrap_content"
+            app:appFontStyle="bold"
+            app:highlightMode="outline"
+            app:textColorStyle="primary" />
+
+    </LinearLayout>
+
+    <app.simple.felicity.decorations.typeface.TypeFaceTextView
+        android:id="@+id/title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:layout_marginBottom="1dp"
+        android:ellipsize="marquee"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:scrollHorizontally="true"
+        android:singleLine="true"
+        android:text="@string/not_available"
+        android:textSize="@dimen/text_size_36"
+        android:transitionName="album_name"
+        app:appFontStyle="black"
+        app:textColorStyle="primary" />
+
+    <app.simple.felicity.decorations.typeface.TypeFaceTextView
+        android:id="@+id/artist"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:layout_marginTop="5dp"
+        android:drawableStart="@drawable/ic_artist_16dp"
+        android:drawablePadding="@dimen/padding_10"
+        android:ellipsize="marquee"
+        android:gravity="center_vertical"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:scrollHorizontally="true"
+        android:singleLine="true"
+        android:textSize="@dimen/text_size_14"
+        app:appFontStyle="regular"
+        app:drawableTintStyle="secondary"
+        app:textColorStyle="secondary" />
+
+    <app.simple.felicity.decorations.typeface.TypeFaceTextView
+        android:id="@+id/album"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:layout_marginTop="@dimen/padding_5"
+        android:layout_marginBottom="@dimen/padding_15"
+        android:drawableStart="@drawable/ic_album_16dp"
+        android:drawablePadding="@dimen/padding_10"
+        android:ellipsize="marquee"
+        android:gravity="center_vertical"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:scrollHorizontally="true"
+        android:singleLine="true"
+        android:textSize="@dimen/text_size_14"
+        app:appFontStyle="regular"
+        app:drawableTintStyle="secondary"
+        app:textColorStyle="secondary" />
+
+    <app.simple.felicity.decorations.views.FlexStackLayout
+        android:id="@+id/seekbar_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <app.simple.felicity.decorations.seekbars.WaveformSeekbar
+            android:id="@+id/seekbar"
+            android:layout_width="match_parent"
+            android:layout_height="100dp"
+            android:layout_gravity="center_vertical"
+            app:wsbBarWidth="7dp"
+            app:wsbLabelEdgeMargin="@dimen/padding_20"
+            app:wsbLabelGravity="center"
+            app:wsbLabelHighlightMode="both"
+            app:wsbWaveformMode="full" />
+
+        <LinearLayout
+            android:id="@+id/linearLayout2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/padding_10"
+            android:layout_marginTop="@dimen/dialog_padding"
+            android:layout_marginBottom="@dimen/dialog_padding"
+            android:clipChildren="false"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+                android:id="@+id/repeat"
+                android:layout_width="@dimen/button_size"
+                android:layout_height="@dimen/button_size"
+                android:layout_marginEnd="@dimen/padding_1"
+                android:src="@drawable/ic_repeat"
+                android:layout_gravity="center_vertical"
+                app:buttonTintType="regular" />
+
+            <app.simple.felicity.decorations.views.FelicityMediaControls
+                android:id="@+id/mediaControls"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="3"
+                android:clipChildren="false"
+                android:clipToPadding="false" />
+
+            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+                android:id="@+id/queue"
+                android:layout_width="@dimen/button_size"
+                android:layout_height="@dimen/button_size"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="@dimen/padding_1"
+                android:src="@drawable/ic_queue"
+                app:buttonTintType="regular" />
+
+        </LinearLayout>
+
+    </app.simple.felicity.decorations.views.FlexStackLayout>
+
+</app.simple.felicity.decorations.padding.PaddingAwareLinearLayout>

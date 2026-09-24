@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Felicity</string>
+    <string name="app_name_full" translatable="false">Felicity Music Player</string>
+    <string name="over_scroll_behavior" translatable="false">app.simple.felicity.decorations.behaviors.OverScrollBehavior</string>
+    <string name="github" translatable="false">GitHub</string>
+    <string name="progress" translatable="false">%d%%</string>
+    <string name="markdown" translatable="false">.MD</string>
+    <string name="html" translatable="false">.HTML</string>
+    <string name="txt" translatable="false">.TXT</string>
+    <string name="xml" translatable="false">.XML</string>
+    <string name="json" translatable="false">.JSON</string>
+    <string name="csv" translatable="false">.CSV</string>
+    <string name="z_spread" translatable="false">z Spread</string>
+    <string name="ffmpeg" translatable="false">FFmpeg</string>
+    <string name="time_minus" translatable="false">- 1s</string>
+    <string name="time_minus_ms" translatable="false">- 0.5s</string>
+    <string name="time_plus" translatable="false">+ 1s</string>
+    <string name="time_plus_ms" translatable="false">+ 0.5s</string>
+    <string name="fisher_yates" translatable="false">Fisher-Yates</string>
+    <string name="miller" translatable="false">Miller</string>
+    <string name="lrc_timestamp_hint" translatable="false">00:00.000</string>
+    <string name="aaudio_enabled" translatable="false">AAudio</string>
+    <string name="oboe" translatable="false">Oboe</string>
+    <string name="audiotrack" translatable="false">AudioTrack</string>
+    <string name="peq" translatable="false">PEQ</string>
+
+    <!-- Audio Pipeline Dialog — channel display values -->
+    <string name="channel_mono" translatable="false">1 (Mono)</string>
+    <string name="channel_stereo" translatable="false">2 (Stereo)</string>
+
+    <!-- Audio Pipeline Dialog — value format strings -->
+    <string name="format_hz" translatable="false">%1$d Hz</string>
+    <string name="format_hz_cutoff" translatable="false">%1$d Hz, %2$d%%</string>
+    <string name="format_kbps" translatable="false">%1$d kbps</string>
+    <string name="format_bit_depth" translatable="false">%1$d-bit</string>
+    <string name="format_percent" translatable="false">%1$d%%</string>
+    <string name="format_approx_ms" translatable="false">~%1$d ms</string>
+    <string name="format_io_rate" translatable="false">%1$s ➔ %2$s</string>
+    <string name="format_bit_depth_io" translatable="false">In: %1$d-bit  Out: %2$d-bit</string>
+    <string name="telegram_channel" translatable="false">Telegram Channel</string>
+    <string name="dsp" translatable="false">DSP</string>
+
+    <!-- GRID -->
+    <string name="_2x" translatable="false">2x</string>
+    <string name="_3x" translatable="false">3x</string>
+    <string name="_4x" translatable="false">4x</string>
+    <string name="_5x" translatable="false">5x</string>
+    <string name="_6x" translatable="false">6x</string>
+    <string name="uri" translatable="false">URI</string>
+    <string name="play_store" translatable="false">Play Store</string>
+
+    <string name="year_hint" translatable="false">YYYY</string>
+    <string name="track_number_hint" translatable="false">e.g. 1</string>
+    <string name="num_tracks_hint" translatable="false">e.g. 12</string>
+    <string name="disc_number_hint" translatable="false">1</string>
+    <string name="disc_total_hint" translatable="false">1</string>
+    <string name="of" translatable="false">of</string>
+    <string name="rg_db_hint" translatable="false">e.g. +1.23 dB</string>
+    <string name="rg_peak_hint" translatable="false">e.g. 0.9876</string>
+    <string name="rg_track_peak" translatable="false">Track Peak</string>
+    <string name="rg_album_peak" translatable="false">Album Peak</string>
+    <string name="active_years">%1$s – %2$s</string>
+    <string name="usb_dac">USB DAC</string>
+</resources>

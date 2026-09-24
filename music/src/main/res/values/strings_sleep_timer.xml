@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Strings for the Sleep Timer feature (dialogs/player/SleepTimerDialog.kt).
+
+    Kept in a separate file rather than merged into the main strings.xml, which was not
+    included in this export — Android merges all values/*.xml files at build time, so this
+    file can simply be dropped alongside the real strings.xml without needing to touch it
+    or risk clobbering existing translations.
+-->
+<resources>
+    <string name="sleep_timer">Sleep Timer</string>
+    <string name="sleep_timer_duration">Duration</string>
+    <string name="sleep_timer_stop_at_end_of_track">Stop after current song</string>
+    <string name="sleep_timer_fade_out">Fade out</string>
+    <string name="sleep_timer_fade_out_summary">Gradually lower the volume before pausing</string>
+    <string name="sleep_timer_start">Start Timer</string>
+    <string name="sleep_timer_cancel">Cancel Timer</string>
+
+    <!--
+        NOTE: the dismiss button in dialog_sleep_timer.xml intentionally reuses the existing
+        @string/cancel (already defined in the app's main strings.xml, see
+        dialogs/playlists/CreatePlaylistDialog's layout) rather than adding a near-duplicate
+        "close" string here.
+    -->
+
+    <!-- %1$d = whole minutes remaining -->
+    <string name="sleep_timer_status_active_minutes">Playback will stop in %1$d min</string>
+    <!-- %1$s = mm:ss countdown, shown in the final minute -->
+    <string name="sleep_timer_status_active_seconds">Playback will stop in %1$s</string>
+    <string name="sleep_timer_status_active_end_of_track">Playback will stop when this song ends</string>
+    <!-- %1$d = minutes selected on the seekbar, shown before a timer is started -->
+    <string name="sleep_timer_status_idle">Stop playback after %1$d minutes</string>
+</resources>

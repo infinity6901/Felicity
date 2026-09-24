@@ -1,0 +1,10 @@
+/*
+ * style.css — Felicity Web Player (legacy stub)
+ *
+ * Styles have been split into focused files:
+ *   theme.css      — CSS variables and theme definitions
+ *   layout.css     — Reset, body, shell, nav pane, content area
+ *   content.css    — Song rows, album grid, artist and genre lists
+ *   player-bar.css — Player strip, controls, seek slider, volume popup
+ *   overlays.css   — Ambient background, context menu, toast
+ */

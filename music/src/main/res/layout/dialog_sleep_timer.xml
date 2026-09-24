@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/container"
+    android:layout_width="match_parent"
+    android:layout_gravity="bottom"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:padding="@dimen/padding_15"
+    android:layout_height="wrap_content">
+
+    <app.simple.felicity.decorations.corners.DynamicCornerLinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:padding="@dimen/padding_15"
+        android:orientation="vertical">
+
+        <app.simple.felicity.decorations.typeface.TypeFaceTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="@dimen/padding_15"
+            android:text="@string/sleep_timer"
+            app:appFontStyle="bold"
+            android:textSize="@dimen/popup_text_size"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.typeface.TypeFaceTextView
+            android:id="@+id/sleep_timer_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="@dimen/padding_15"
+            android:paddingBottom="@dimen/padding_15"
+            app:appFontStyle="regular"
+            android:textSize="@dimen/text_size_12"
+            app:textColorStyle="tertiary"
+            tools:text="Playback will stop in 30 minutes" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:orientation="horizontal">
+
+            <app.simple.felicity.decorations.typeface.TypeFaceTextView
+                android:layout_width="0dp"
+                android:padding="@dimen/padding_15"
+                android:layout_height="wrap_content"
+                android:text="@string/sleep_timer_stop_at_end_of_track"
+                android:layout_weight="1"
+                android:layout_gravity="center_vertical"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.toggles.FelicitySwitch
+                android:id="@+id/stop_at_end_of_track_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/duration_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:orientation="horizontal">
+
+            <app.simple.felicity.decorations.typeface.TypeFaceTextView
+                android:layout_width="wrap_content"
+                android:padding="@dimen/padding_15"
+                android:layout_height="wrap_content"
+                android:text="@string/sleep_timer_duration"
+                android:layout_gravity="center_vertical"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.seekbars.FelicitySeekbar
+                android:id="@+id/duration_seekbar"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/padding_10"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="@dimen/padding_1"
+                app:felicityAnimateInitial="true"
+                app:felicityLabelBackgroundEnabled="true"
+                app:felicityLabelsEnabled="true"
+                app:felicityMax="180"
+                app:felicityMin="5"
+                app:felicityProgress="30" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_height="wrap_content">
+
+                <app.simple.felicity.decorations.typeface.TypeFaceTextView
+                    android:layout_width="match_parent"
+                    android:paddingHorizontal="@dimen/padding_15"
+                    android:paddingTop="@dimen/padding_15"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sleep_timer_fade_out"
+                    android:layout_gravity="center_vertical"
+                    android:textSize="@dimen/text_size_14"
+                    app:appFontStyle="bold"
+                    app:textColorStyle="primary" />
+
+                <app.simple.felicity.decorations.typeface.TypeFaceTextView
+                    android:layout_width="match_parent"
+                    android:paddingHorizontal="@dimen/padding_15"
+                    android:paddingBottom="@dimen/padding_15"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sleep_timer_fade_out_summary"
+                    android:layout_gravity="center_vertical"
+                    android:textSize="@dimen/text_size_12"
+                    app:appFontStyle="regular"
+                    app:textColorStyle="tertiary" />
+
+            </LinearLayout>
+
+            <app.simple.felicity.decorations.toggles.FelicitySwitch
+                android:id="@+id/fade_out_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="@dimen/padding_10"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+                android:id="@+id/dismiss"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="@dimen/padding_15"
+                android:text="@string/cancel"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:textColorStyle="accent" />
+
+            <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+                android:id="@+id/primary_action"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/padding_5"
+                android:gravity="center"
+                android:padding="@dimen/padding_15"
+                android:text="@string/sleep_timer_start"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:textColorStyle="accent" />
+
+        </LinearLayout>
+
+    </app.simple.felicity.decorations.corners.DynamicCornerLinearLayout>
+
+</FrameLayout>

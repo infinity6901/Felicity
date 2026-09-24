@@ -1,0 +1,79 @@
+/*
+ * theme.css — Felicity Web Player
+ *
+ * Structural constants and color tokens for both themes.
+ *
+ * The accent color variables (--accent, --accent-2, etc.) start with sensible
+ * defaults here but are overwritten immediately at runtime by theme.js, which
+ * fetches the real values from the Android app via /api/theme. This way the
+ * web UI always matches the colors the user actually picked in the app.
+ *
+ * Backgrounds are intentionally plain — no blurs, no tints, no ambient effects.
+ * Just clean solid colors like the app itself uses.
+ */
+
+:root {
+    /* Default accent — replaced at runtime with the real app accent. */
+    --accent:          #2980b9;
+    --accent-2:        #5499c7;
+    --accent-gradient: linear-gradient(135deg, #2980b9 0%, #5499c7 100%);
+    --accent-glow:     rgba(41, 128, 185, 0.38);
+    --accent-dim:      rgba(41, 128, 185, 0.13);
+    --accent-border:   rgba(41, 128, 185, 0.30);
+    --active-bg:       rgba(41, 128, 185, 0.12);
+    --active-text:     #2980b9;
+
+    --r-xl:  20px;
+    --r-lg:  14px;
+    --r-md:  10px;
+    --r-sm:   6px;
+    --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Dark theme — plain near-black, no tint at all. */
+:root,
+[data-theme="dark"] {
+    --bg-base:        #121212;
+    --bg-surface:     #1e1e1e;
+    --bg-elevated:    #252525;
+
+    --text-1:         rgba(255, 255, 255, 0.92);
+    --text-2:         rgba(255, 255, 255, 0.54);
+    --text-3:         rgba(255, 255, 255, 0.28);
+    --hover:          rgba(255, 255, 255, 0.07);
+
+    --sep-c:          rgba(255, 255, 255, 0.09);
+    --track-c:        rgba(255, 255, 255, 0.18);
+    --scrollbar-c:    rgba(255, 255, 255, 0.14);
+    --shadow:         0 4px 20px rgba(0, 0, 0, 0.55);
+    --danger:         #f87171;
+    --danger-bg:      rgba(248, 113, 113, 0.10);
+
+    /* Glass is just a slightly elevated surface — no blur needed on a plain bg. */
+    --glass-bg:     #1e1e1e;
+    --glass-border: rgba(255, 255, 255, 0.09);
+    --glass-blur:   none;
+}
+
+/* Light theme — plain near-white, no tint. */
+[data-theme="light"] {
+    --bg-base:        #f5f5f5;
+    --bg-surface:     #ffffff;
+    --bg-elevated:    #fafafa;
+
+    --text-1:         rgba(10, 10, 10, 0.92);
+    --text-2:         rgba(10, 10, 10, 0.54);
+    --text-3:         rgba(10, 10, 10, 0.32);
+    --hover:          rgba(0, 0, 0, 0.05);
+
+    --sep-c:          rgba(0, 0, 0, 0.09);
+    --track-c:        rgba(0, 0, 0, 0.16);
+    --scrollbar-c:    rgba(0, 0, 0, 0.14);
+    --shadow:         0 2px 12px rgba(0, 0, 0, 0.12);
+    --danger:         #dc2626;
+    --danger-bg:      rgba(220, 38, 38, 0.08);
+
+    --glass-bg:     #ffffff;
+    --glass-border: rgba(0, 0, 0, 0.09);
+    --glass-blur:   none;
+}
