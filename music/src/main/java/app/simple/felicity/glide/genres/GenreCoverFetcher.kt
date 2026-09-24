@@ -1,0 +1,21 @@
+package app.simple.felicity.glide.genres
+
+import android.content.Context
+import android.graphics.Bitmap
+import app.simple.felicity.repository.covers.GenreCover
+import app.simple.felicity.repository.models.Genre
+import com.bumptech.glide.Priority
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.data.DataFetcher
+
+class GenreCoverFetcher internal constructor(private val context: Context, private val genre: Genre) : DataFetcher<Bitmap> {
+    override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in Bitmap>) {
+        val coverFromFiles = GenreCover.load(context, genre)
+        callback.onDataReady(coverFromFiles)
+    }
+
+    override fun cleanup() {}
+    override fun cancel() {}
+    override fun getDataClass() = Bitmap::class.java
+    override fun getDataSource() = DataSource.LOCAL
+}

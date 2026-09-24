@@ -1,0 +1,629 @@
+/**
+ * taglib_jni.cpp
+ *
+ * Thin JNI bridge between Kotlin and TagLib. This file handles both reading
+ * and writing audio metadata. The only currency it deals in is raw POSIX file
+ * descriptors — so it works with both regular files and SAF content:// URIs
+ * without needing to know anything about the actual path on disk.
+ *
+ * Why file descriptors instead of file paths? Because when the user picks a
+ * folder with the SAF (Storage Access Framework) folder picker, Android hands
+ * us a content:// URI — not a real path. We can open that URI as a
+ * ParcelFileDescriptor and pass its underlying int fd here. TagLib then reads
+ * or writes the file via the fd without ever needing to know the actual path.
+ *
+ * We dup() the fd before handing it to TagLib so that TagLib can own and
+ * eventually close its copy while Java's ParcelFileDescriptor still holds
+ * (and safely closes) the original. Without the dup, TagLib closing the fd
+ * would corrupt Java's file handle and vice-versa.
+ *
+ * @author Hamza417
+ */
+
+#include <jni.h>
+#include <unistd.h>
+#include <android/log.h>
+
+#include <taglib/fileref.h>
+#include <taglib/tfilestream.h>
+#include <taglib/tag.h>
+#include <taglib/audioproperties.h>
+#include <taglib/tpropertymap.h>
+#include <taglib/tvariant.h>
+
+#include <string>
+#include "taglib/tstring.h"
+#include "taglib/flacproperties.h"
+#include "taglib/wavproperties.h"
+#include "taglib/aiffproperties.h"
+#include "taglib/apeproperties.h"
+
+#define LOG_TAG "TagLibJNI"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// Cached references so we don't pay the FindClass/GetMethodID cost on every file load.
+// These are filled in once inside JNI_OnLoad and stay valid for the lifetime of the process.
+static jclass g_metaClass = nullptr;
+static jmethodID g_metaCtor = nullptr;
+
+// Converts a TagLib string to a Java/Kotlin String, returning nullptr for
+// empty strings so Kotlin sees them as null (cleaner than empty strings).
+static jstring toJString(JNIEnv *env, const TagLib::String &str) {
+    if (str.isEmpty()) return nullptr;
+    std::string utf8 = str.to8Bit(true /* utf8 */);
+    jstring result = env->NewStringUTF(utf8.c_str());
+    // NewStringUTF can fail when the JVM heap is exhausted — it sets a pending
+    // exception and returns null. We clear that so execution can continue safely.
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
+}
+
+// Looks up the first value for a given property-map key, returning nullptr
+// if the key is absent or its list is empty.
+static jstring getProperty(JNIEnv *env, const TagLib::PropertyMap &props, const char *key) {
+    TagLib::String k(key);
+    auto it = props.find(k);
+    if (it == props.end() || it->second.isEmpty()) return nullptr;
+    return toJString(env, it->second.front());
+}
+
+// Converts a jstring to a TagLib::String (UTF-8). Returns an empty TagLib
+// string if the jstring is null, so callers don't have to guard every call.
+static TagLib::String fromJString(JNIEnv *env, jstring js) {
+    if (!js) return {};
+    const char *chars = env->GetStringUTFChars(js, nullptr);
+    // GetStringUTFChars returns null when the JVM can't allocate the buffer.
+    if (!chars) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return {};
+    }
+    TagLib::String s(chars, TagLib::String::UTF8);
+    env->ReleaseStringUTFChars(js, chars);
+    return s;
+}
+
+// Sets a property map entry only when the value string isn't null,
+// and also clears it out when an empty string is passed so the user
+// can intentionally erase a field (null = leave it alone, "" = delete it).
+static void applyProperty(JNIEnv *env, TagLib::PropertyMap &props,
+                          const char *key, jstring js) {
+    if (!js) return; // null means "don't touch this field"
+    TagLib::String value = fromJString(env, js);
+    if (value.isEmpty()) {
+        props.erase(TagLib::String(key)); // empty string = erase the field
+    } else {
+        TagLib::StringList list;
+        list.append(value);
+        props[TagLib::String(key)] = list;
+    }
+}
+
+extern "C" {
+
+/**
+ * Called once by the Android runtime when the native library is first loaded.
+ * We just declare the JNI version here — we intentionally do NOT look up app
+ * classes at this point. During JNI_OnLoad the only ClassLoader available is
+ * the bootstrap loader, which can't see app classes. Trying to FindClass here
+ * would always return null and cause an UnsatisfiedLinkError at startup.
+ * The actual class lookup happens lazily on the first real call instead.
+ */
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM * /*vm*/, void * /*reserved*/) {
+    return JNI_VERSION_1_6;
+}
+
+/**
+ * Looks up the TagLibMetadata class and its constructor the first time it's
+ * needed, then caches both for every subsequent call. By the time any native
+ * method is invoked from Kotlin, the app's ClassLoader is fully active and
+ * FindClass can see all app classes — so this is the right place to do it.
+ *
+ * Returns true if the globals are ready to use, false if something went wrong.
+ */
+static bool ensureMetaClassCached(JNIEnv *env) {
+    if (g_metaClass && g_metaCtor) return true;
+
+    jclass localClass = env->FindClass("app/simple/felicity/repository/metadata/TagLibMetadata");
+    if (!localClass) {
+        LOGE("Cannot find TagLibMetadata class — check the package name");
+        return false;
+    }
+
+    // Promote to a global ref so it outlives this stack frame and stays valid
+    // across future JNI calls on any thread.
+    g_metaClass = reinterpret_cast<jclass>(env->NewGlobalRef(localClass));
+    env->DeleteLocalRef(localClass);
+
+    g_metaCtor = env->GetMethodID(g_metaClass, "<init>",
+                                  "("
+                                  "Ljava/lang/String;"   // title
+                                  "Ljava/lang/String;"   // artist
+                                  "Ljava/lang/String;"   // album
+                                  "Ljava/lang/String;"   // genre
+                                  "Ljava/lang/String;"   // year
+                                  "Ljava/lang/String;"   // comment
+                                  "Ljava/lang/String;"   // albumArtist
+                                  "Ljava/lang/String;"   // composer
+                                  "Ljava/lang/String;"   // lyricist
+                                  "Ljava/lang/String;"   // discNumber
+                                  "Ljava/lang/String;"   // trackNumber
+                                  "Ljava/lang/String;"   // numTracks
+                                  "Ljava/lang/String;"   // compilation
+                                  "JJJJ"                 // duration, bitrate, sampleRate, bitsPerSample
+                                  "Ljava/lang/String;"   // replayGainTrackGain
+                                  "Ljava/lang/String;"   // replayGainTrackPeak
+                                  "Ljava/lang/String;"   // replayGainAlbumGain
+                                  "Ljava/lang/String;"   // replayGainAlbumPeak
+                                  ")V");
+
+    if (!g_metaCtor) {
+        LOGE("Cannot find TagLibMetadata constructor — signature mismatch");
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Opens the audio file by its raw file descriptor and extracts every tag
+ * field plus audio properties. Returns a fully populated TagLibMetadata
+ * Kotlin object, or null if anything goes wrong (bad fd, unsupported format,
+ * missing tags, etc.).
+ */
+JNIEXPORT jobject JNICALL
+Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeLoadFromFd(
+        JNIEnv *env, jobject thiz, jint fd) {
+
+    // Duplicate the fd so TagLib can own its copy and close it at the end of
+    // the stream's lifetime, while the caller's fd stays valid and closeable.
+    int dupFd = dup(static_cast<int>(fd));
+    if (dupFd < 0) {
+        LOGE("dup() failed for fd=%d — cannot read tags", fd);
+        return nullptr;
+    }
+
+    // Wrap the duplicated fd in a TagLib stream.
+    // true = TagLib closes the fd when the stream is destroyed.
+    TagLib::FileStream stream(dupFd, true);
+
+    // Ask TagLib to figure out the format from the file's magic bytes.
+    TagLib::FileRef fileRef(
+            static_cast<TagLib::IOStream *>(&stream),
+            true,
+            TagLib::AudioProperties::ReadStyle::Fast
+    );
+    if (fileRef.isNull()) {
+        LOGE("FileRef is null for fd=%d — unsupported format or corrupt file", fd);
+        return nullptr;
+    }
+
+    // Collect tag fields, guarding every access so a missing tag never crashes.
+    TagLib::Tag *tag = fileRef.tag();
+    TagLib::AudioProperties *ap = fileRef.audioProperties();
+    TagLib::PropertyMap props;
+    if (tag) props = tag->properties();
+
+
+    jstring title = tag ? toJString(env, tag->title()) : nullptr;
+    jstring artist = tag ? toJString(env, tag->artist()) : nullptr;
+    jstring album = tag ? toJString(env, tag->album()) : nullptr;
+    jstring genre = tag ? toJString(env, tag->genre()) : nullptr;
+    jstring comment = tag ? toJString(env, tag->comment()) : nullptr;
+
+    // Year comes as an unsigned int — convert to a string so it matches the
+    // String field in the Audio model and plays nicely with the rest of the
+    // metadata pipeline (some tracks have "2023", others have "2023-04-21").
+    jstring year = nullptr;
+    if (tag && tag->year() > 0) {
+        std::string yearStr = std::to_string(tag->year());
+        year = env->NewStringUTF(yearStr.c_str());
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            year = nullptr;
+        }
+    }
+
+    // Richer fields come from the property map which covers ID3v2, Vorbis
+    // comments, MP4 atoms, APE tags, etc. in a unified way.
+    jstring albumArtist = getProperty(env, props, "ALBUMARTIST");
+    if (!albumArtist) albumArtist = getProperty(env, props, "ALBUM ARTIST");
+    jstring composer = getProperty(env, props, "COMPOSER");
+    jstring lyricist = getProperty(env, props, "LYRICIST");
+    // DISCNUMBER can also be packed as "1/2" — split it the same way.
+    jstring discNumber = nullptr;
+    {
+        jstring rawDisc = getProperty(env, props, "DISCNUMBER");
+        if (rawDisc) {
+            const char *raw = env->GetStringUTFChars(rawDisc, nullptr);
+            if (raw) {
+                std::string rawStr(raw);
+                env->ReleaseStringUTFChars(rawDisc, raw);
+                auto slash = rawStr.find('/');
+                if (slash != std::string::npos) {
+                    std::string numPart = rawStr.substr(0, slash);
+                    if (!numPart.empty()) discNumber = env->NewStringUTF(numPart.c_str());
+                } else {
+                    discNumber = rawDisc;
+                }
+            }
+        }
+    }
+    // ID3v2 (and some other formats) pack both the track number and the total
+    // into a single "5/10" string inside the TRACKNUMBER field. We need to
+    // split on the slash so each piece lands in the right variable.
+    jstring trackNumber = nullptr;
+    jstring numTracks = nullptr;
+    {
+        jstring rawTrack = getProperty(env, props, "TRACKNUMBER");
+        // LOGI("Raw TRACKNUMBER for fd=%d: %s", fd, rawTrack ? env->GetStringUTFChars(rawTrack, nullptr) : "null");
+        if (rawTrack) {
+            const char *raw = env->GetStringUTFChars(rawTrack, nullptr);
+            if (raw) {
+                std::string rawStr(raw);
+                env->ReleaseStringUTFChars(rawTrack, raw);
+                auto slash = rawStr.find('/');
+                if (slash != std::string::npos) {
+                    // Split "5/10" into "5" and "10"
+                    std::string numPart = rawStr.substr(0, slash);
+                    std::string totalPart = rawStr.substr(slash + 1);
+                    if (!numPart.empty()) trackNumber = env->NewStringUTF(numPart.c_str());
+                    if (!totalPart.empty()) numTracks = env->NewStringUTF(totalPart.c_str());
+                } else {
+                    trackNumber = rawTrack;
+                }
+            }
+        }
+//        LOGI("Parsed trackNumber='%s', numTracks='%s' for fd=%d",
+//             trackNumber ? env->GetStringUTFChars(trackNumber, nullptr) : "null",
+//             numTracks ? env->GetStringUTFChars(numTracks, nullptr) : "null",
+//             fd);
+
+        // If the tagger stored the total in its own dedicated field, prefer that.
+        if (!numTracks) numTracks = getProperty(env, props, "TRACKTOTAL");
+//        LOGI("After fallback, numTracks='%s' for fd=%d",
+//             numTracks ? env->GetStringUTFChars(numTracks, nullptr) : "null",
+//             fd);
+        if (!numTracks) numTracks = getProperty(env, props, "TOTALTRACKS");
+//        LOGI("After second fallback, numTracks='%s' for fd=%d",
+//             numTracks ? env->GetStringUTFChars(numTracks, nullptr) : "null",
+//             fd);
+    }
+    jstring compilation = getProperty(env, props, "COMPILATION");
+
+    // ReplayGain fields — present in well-mastered libraries but optional.
+    // REPLAYGAIN_TRACK_GAIN stores a value like "+5.32 dB"; PEAK stores "0.987654".
+    // We pull all four standard keys (track gain, track peak, album gain, album peak)
+    // and store them as raw strings so the app can parse and display them freely.
+    jstring rgTrackGain = getProperty(env, props, "REPLAYGAIN_TRACK_GAIN");
+    jstring rgTrackPeak = getProperty(env, props, "REPLAYGAIN_TRACK_PEAK");
+    jstring rgAlbumGain = getProperty(env, props, "REPLAYGAIN_ALBUM_GAIN");
+    jstring rgAlbumPeak = getProperty(env, props, "REPLAYGAIN_ALBUM_PEAK");
+
+    // AudioProperties gives us the technical stuff — duration in milliseconds,
+    // bitrate in kbps, sample rate in Hz, and bit depth.
+    jlong duration = ap ? static_cast<jlong>(ap->lengthInMilliseconds()) : 0L;
+    jlong bitrate = ap ? static_cast<jlong>(ap->bitrate()) : 0L;
+    jlong sampleRate = ap ? static_cast<jlong>(ap->sampleRate()) : 0L;
+    jint channels = ap ? ap->channels() : 0;
+    jlong bitsPerSample = 0;
+
+    if (ap) {
+        // Try casting to known lossless formats that expose bitsPerSample()
+        if (auto flacProps = dynamic_cast<TagLib::FLAC::Properties *>(ap)) {
+            bitsPerSample = static_cast<jlong>(flacProps->bitsPerSample());
+        } else if (auto wavProps = dynamic_cast<TagLib::RIFF::WAV::Properties *>(ap)) {
+            bitsPerSample = static_cast<jlong>(wavProps->bitsPerSample());
+        } else if (auto aiffProps = dynamic_cast<TagLib::RIFF::AIFF::Properties *>(ap)) {
+            bitsPerSample = static_cast<jlong>(aiffProps->bitsPerSample());
+        } else if (auto apeProps = dynamic_cast<TagLib::APE::Properties *>(ap)) {
+            bitsPerSample = static_cast<jlong>(apeProps->bitsPerSample());
+        }
+            // The Universal Fallback Calculation for lossy/unknown formats
+        else if (sampleRate > 0 && channels > 0) {
+            // We multiply by 1000 to get bits per second.
+            // We add (sampleRate * channels) / 2 to the numerator to perform integer rounding
+            // instead of truncation.
+            bitsPerSample =
+                    ((bitrate * 1000) + (sampleRate * channels) / 2) / (sampleRate * channels);
+
+            // Clamp bizarre lossy math to standard 16-bit presentation
+            if (bitsPerSample > 0 && bitsPerSample < 16) {
+                bitsPerSample = 16;
+            }
+        }
+    }
+
+    // Make sure the class and constructor are cached before we try to use them.
+    // This is a no-op on every call after the first one.
+    if (!ensureMetaClassCached(env)) return nullptr;
+
+    return env->NewObject(
+            g_metaClass, g_metaCtor,
+            title, artist, album, genre, year, comment,
+            albumArtist, composer, lyricist, discNumber, trackNumber, numTracks, compilation,
+            duration, bitrate, sampleRate, bitsPerSample,
+            rgTrackGain, rgTrackPeak, rgAlbumGain, rgAlbumPeak);
+}
+
+/**
+ * Writes tag fields back into an audio file through a writable file descriptor.
+ *
+ * The fd must have been opened for reading AND writing (O_RDWR / "rw" mode).
+ * On the Kotlin side you get that by calling ContentResolver.openFileDescriptor
+ * with "rw" for SAF URIs, or ParcelFileDescriptor.open(file, MODE_READ_WRITE)
+ * for regular files.
+ *
+ * Any field passed as null is left exactly as it was in the file.
+ * Passing an empty string ("") will erase that field from the tag.
+ *
+ * Returns JNI_TRUE on success, JNI_FALSE if anything went sideways.
+ */
+JNIEXPORT jboolean JNICALL
+Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeSaveToFd(
+        JNIEnv *env, jobject thiz, jint fd,
+        jstring title, jstring artist, jstring album, jstring albumArtist,
+        jstring year, jstring trackNumber, jstring numTracks, jstring discNumber,
+        jstring genre, jstring composer, jstring lyricist, jstring compilation,
+        jstring comment, jstring lyrics,
+        jstring replayGainTrackGain, jstring replayGainTrackPeak,
+        jstring replayGainAlbumGain, jstring replayGainAlbumPeak) {
+
+    // Duplicate the fd so TagLib can own and eventually close its copy while
+    // the Java ParcelFileDescriptor still holds the original safely.
+    int dupFd = dup(static_cast<int>(fd));
+    if (dupFd < 0) {
+        LOGE("dup() failed for fd=%d — cannot write tags", fd);
+        return JNI_FALSE;
+    }
+
+    // true = TagLib closes the dup'd fd when the stream is destroyed, preventing a leak.
+    TagLib::FileStream stream(dupFd, false);
+
+    // readAudioProperties=false here — we just want to write tags,
+    // no need to decode audio to gather properties (saves time).
+    TagLib::FileRef fileRef(&stream, false);
+    if (fileRef.isNull()) {
+        LOGE("FileRef is null for fd=%d — unsupported format or corrupt file", fd);
+        return JNI_FALSE;
+    }
+
+    TagLib::Tag *tag = fileRef.tag();
+    if (!tag) {
+        LOGE("File has no writable tag for fd=%d", fd);
+        return JNI_FALSE;
+    }
+
+    // The simple tag fields (title, artist, album, genre, comment) get written
+    // via the basic Tag API so they end up in the right frame/atom for each format.
+    if (title) tag->setTitle(fromJString(env, title));
+    if (artist) tag->setArtist(fromJString(env, artist));
+    if (album) tag->setAlbum(fromJString(env, album));
+    if (genre) tag->setGenre(fromJString(env, genre));
+    if (comment) tag->setComment(fromJString(env, comment));
+
+    // Year is stored as a uint in the basic API — convert the string if it looks
+    // like a plain four-digit year; otherwise store it via the property map below.
+    if (year) {
+        TagLib::String yearStr = fromJString(env, year);
+        auto yearUint = static_cast<unsigned int>(std::strtoul(yearStr.toCString(), nullptr, 10));
+        if (yearUint > 0) tag->setYear(yearUint);
+    }
+
+    // Richer / format-specific fields go through the unified property map, which
+    // TagLib translates to the right ID3v2 frame, Vorbis comment, MP4 atom, etc.
+    TagLib::PropertyMap props = tag->properties();
+
+    applyProperty(env, props, "ALBUMARTIST", albumArtist);
+    applyProperty(env, props, "COMPOSER", composer);
+    applyProperty(env, props, "LYRICIST", lyricist);
+    applyProperty(env, props, "DISCNUMBER", discNumber);
+    applyProperty(env, props, "TRACKNUMBER", trackNumber);
+    applyProperty(env, props, "TRACKTOTAL", numTracks);
+    applyProperty(env, props, "COMPILATION", compilation);
+    applyProperty(env, props, "LYRICS", lyrics);
+
+    // ReplayGain fields — written as standard property map keys so they work
+    // across all formats (ID3v2 TXXX, Vorbis comments, MP4 custom atoms, etc.).
+    applyProperty(env, props, "REPLAYGAIN_TRACK_GAIN", replayGainTrackGain);
+    applyProperty(env, props, "REPLAYGAIN_TRACK_PEAK", replayGainTrackPeak);
+    applyProperty(env, props, "REPLAYGAIN_ALBUM_GAIN", replayGainAlbumGain);
+    applyProperty(env, props, "REPLAYGAIN_ALBUM_PEAK", replayGainAlbumPeak);
+
+    tag->setProperties(props);
+
+    if (!fileRef.save()) {
+        LOGE("TagLib save() failed for fd=%d", fd);
+        return JNI_FALSE;
+    }
+
+    LOGI("Tags saved successfully for fd=%d", fd);
+    return JNI_TRUE;
+}
+
+/**
+ * Replaces (or sets for the first time) the embedded cover art in an audio
+ * file. This uses TagLib 2.x's unified "complex properties" API, which
+ * handles all the format-specific plumbing (ID3v2 APIC for MP3, covr atom
+ * for MP4/M4A, METADATA_BLOCK_PICTURE for FLAC/OGG) behind one clean call.
+ *
+ * The fd must be open for both reading and writing. The artwork bytes should
+ * be a valid JPEG or PNG image — we just embed whatever you pass in.
+ *
+ * @param fd          Read/write file descriptor pointing at the audio file.
+ * @param artworkData The raw image bytes to embed as front cover art.
+ * @param mimeType    MIME type string ("image/jpeg" or "image/png").
+ * @return JNI_TRUE if the artwork was saved, JNI_FALSE if anything failed.
+ */
+JNIEXPORT jboolean JNICALL
+Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeSaveArtworkToFd(
+        JNIEnv *env, jobject thiz, jint fd,
+        jbyteArray artworkData, jstring mimeType) {
+
+    int dupFd = dup(static_cast<int>(fd));
+    if (dupFd < 0) {
+        LOGE("dup() failed for fd=%d — cannot write artwork", fd);
+        return JNI_FALSE;
+    }
+
+    // true = TagLib closes the dup'd fd when the stream is destroyed, preventing a leak.
+    TagLib::FileStream stream(dupFd, false);
+    TagLib::FileRef fileRef(&stream, false);
+    if (fileRef.isNull() || !fileRef.file()) {
+        LOGE("FileRef is null for fd=%d — unsupported format", fd);
+        return JNI_FALSE;
+    }
+
+    // Grab the raw image bytes from the Java byte array.
+    jsize dataLen = env->GetArrayLength(artworkData);
+    jbyte *dataPtr = env->GetByteArrayElements(artworkData, nullptr);
+    // GetByteArrayElements can return null if the JVM is out of memory.
+    if (!dataPtr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("GetByteArrayElements returned null for fd=%d — out of memory?", fd);
+        return JNI_FALSE;
+    }
+    TagLib::ByteVector imageData(reinterpret_cast<const char *>(dataPtr),
+                                 static_cast<unsigned int>(dataLen));
+    env->ReleaseByteArrayElements(artworkData, dataPtr, JNI_ABORT);
+
+    // Build the picture map using TagLib 2.x complex properties format.
+    // "pictureType" 3 = Front Cover, which is what every music app expects.
+    TagLib::VariantMap pic;
+    pic["data"] = TagLib::Variant(imageData);
+    pic["mimeType"] = TagLib::Variant(fromJString(env, mimeType));
+    pic["description"] = TagLib::Variant(TagLib::String());
+    pic["pictureType"] = TagLib::Variant(3); // 3 = Front Cover
+
+    TagLib::List<TagLib::VariantMap> pictures;
+    pictures.append(pic);
+
+    // setComplexProperties with "PICTURE" replaces ALL existing pictures,
+    // which is exactly what we want when the user picks a new cover image.
+    fileRef.file()->setComplexProperties("PICTURE", pictures);
+
+    if (!fileRef.save()) {
+        LOGE("TagLib save() failed while writing artwork for fd=%d", fd);
+        return JNI_FALSE;
+    }
+
+    LOGI("Artwork saved successfully for fd=%d (%d bytes)", fd, dataLen);
+    return JNI_TRUE;
+}
+
+/**
+ * Extracts the embedded lyrics text (plain or synced LRC) from an audio file
+ * using TagLib's unified property map. This covers USLT frames in MP3s, the
+ * ©lyr atom in M4A files, LYRICS Vorbis comments in FLAC/OGG, and every other
+ * format TagLib knows about — all from one call, no extra libraries needed.
+ *
+ * We check "LYRICS" first (the most common key), then fall back to
+ * "UNSYNCEDLYRICS" which some taggers use for plain-text lyrics.
+ *
+ * @param fd A readable POSIX file descriptor pointing at an audio file.
+ * @return The embedded lyrics string, or null if none were found.
+ */
+JNIEXPORT jstring JNICALL
+Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeExtractLyricsFromFd(
+        JNIEnv *env, jobject thiz, jint fd) {
+
+    int dupFd = dup(static_cast<int>(fd));
+    if (dupFd < 0) {
+        LOGE("dup() failed for fd=%d — cannot extract lyrics", fd);
+        return nullptr;
+    }
+
+    // We only need to read here, so skip the audio properties scan for speed.
+    TagLib::FileStream stream(dupFd, true);
+    TagLib::FileRef fileRef(&stream, false);
+    if (fileRef.isNull()) {
+        LOGE("FileRef is null for fd=%d — unsupported format", fd);
+        return nullptr;
+    }
+
+    TagLib::Tag *tag = fileRef.tag();
+    if (!tag) return nullptr;
+
+    TagLib::PropertyMap props = tag->properties();
+
+    // "LYRICS" is the standard key across ID3v2 (USLT), M4A (©lyr), and Vorbis.
+    jstring lyrics = getProperty(env, props, "LYRICS");
+    if (lyrics) return lyrics;
+
+    // Some taggers (e.g., older foobar2000 versions) write plain lyrics under
+    // "UNSYNCEDLYRICS" — worth a quick look before giving up.
+    return getProperty(env, props, "UNSYNCEDLYRICS");
+}
+
+/**
+ * Reads the embedded front cover art out of an audio file and returns the raw
+ * image bytes to the Kotlin side as a byte array. Uses TagLib 2.x's unified
+ * "complex properties" API, so it works for WAV, FLAC, MP3, M4A, OGG — any
+ * format that TagLib can open.
+ *
+ * This is especially useful for WAV files, where MediaMetadataRetriever
+ * sometimes fails to extract the picture even though it's there.
+ *
+ * @param fd A readable POSIX file descriptor pointing at an audio file.
+ * @return A jbyteArray containing the raw image bytes, or null if no cover was found.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeExtractArtworkFromFd(
+        JNIEnv *env, jobject thiz, jint fd) {
+
+    int dupFd = dup(static_cast<int>(fd));
+    if (dupFd < 0) {
+        LOGE("dup() failed for fd=%d — cannot extract artwork", fd);
+        return nullptr;
+    }
+
+    // Read-only stream — we don't need write access just to pull artwork out.
+    TagLib::FileStream stream(dupFd, true);
+    TagLib::FileRef fileRef(&stream, false);
+    if (fileRef.isNull() || !fileRef.file()) {
+        LOGE("FileRef is null for fd=%d — unsupported format", fd);
+        return nullptr;
+    }
+
+    // complexProperties("PICTURE") returns a list of VariantMaps, one per
+    // embedded image. The first entry is almost always the front cover.
+    auto pictures = fileRef.file()->complexProperties("PICTURE");
+    if (pictures.isEmpty()) {
+        return nullptr;
+    }
+
+    // Grab the raw image bytes from the first picture entry.
+    const auto &pic = pictures.front();
+    auto dataIt = pic.find("data");
+    if (dataIt == pic.end()) {
+        return nullptr;
+    }
+
+    // The "data" field is a TagLib::ByteVector wrapped in a TagLib::Variant.
+    const TagLib::ByteVector &imageData = dataIt->second.value<TagLib::ByteVector>();
+    if (imageData.isEmpty()) {
+        return nullptr;
+    }
+
+    // Copy the image data into a Java byte array so it can cross the JNI boundary.
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(imageData.size()));
+    if (!result) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("NewByteArray failed for fd=%d — out of memory?", fd);
+        return nullptr;
+    }
+
+    env->SetByteArrayRegion(
+            result, 0, static_cast<jsize>(imageData.size()),
+            reinterpret_cast<const jbyte *>(imageData.data())
+    );
+
+    LOGI("Extracted %d bytes of artwork from fd=%d", static_cast<int>(imageData.size()), fd);
+    return result;
+}
+
+} // extern "C"
+

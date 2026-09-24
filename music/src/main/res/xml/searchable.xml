@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares Felicity as a system-searchable app.
+
+    This is what lets:
+      - The Assistant / "Hey Google, search Felicity for <query>" route a typed or voice
+        query to MainActivity via ACTION_SEARCH.
+      - Any SearchView elsewhere (in this app or, in principle, another app) that calls
+        searchView.setSearchableInfo(searchManager.getSearchableInfo(componentName)) get
+        live suggestions from FelicitySearchProvider as the user types.
+
+    See music/src/main/java/app/simple/felicity/search/FelicitySearchProvider.kt for the
+    suggestions cursor implementation, and MainActivity.handleSearchIntent() for what
+    happens once a query or suggestion tap comes back in.
+-->
+<searchable xmlns:android="http://schemas.android.com/apk/res/android"
+    android:label="@string/app_name"
+    android:hint="@string/search"
+    android:searchSuggestAuthority="${applicationId}.searchsuggest"
+    android:searchSuggestIntentAction="android.intent.action.VIEW"
+    android:searchSuggestThreshold="2"
+    android:includeInGlobalSearch="true"
+    android:queryAfterZeroResults="true" />

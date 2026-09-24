@@ -1,0 +1,70 @@
+package app.simple.felicity.models
+
+import app.simple.felicity.repository.models.Album
+import app.simple.felicity.repository.models.Artist
+import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.models.Genre
+import app.simple.felicity.repository.models.MusicBrainzAlbumInfo
+import app.simple.felicity.repository.models.MusicBrainzArtistInfo
+
+sealed class PageItem {
+    /**
+     * Header with album info, art flow, and controls
+     */
+    data class Header(
+            val album: Album,
+            val totalSongs: Int,
+            val totalDuration: Long,
+            val albumArtists: List<Artist>,
+            val songs: List<Audio>
+    ) : PageItem()
+
+    /**
+     * Sub-header carousel for albums from this artist
+     */
+    data class AlbumsSection(
+            val albums: List<Album>,
+            val artistName: String?
+    ) : PageItem()
+
+    /**
+     * Sub-header carousel for artists in this album
+     */
+    data class ArtistsSection(
+            val artists: List<Artist>
+    ) : PageItem()
+
+    /**
+     * Sub-header carousel for genres in this album
+     */
+    data class GenresSection(
+            val genres: List<Genre>
+    ) : PageItem()
+
+    /**
+     * Individual song item
+     */
+    data class SongItem(
+            val audio: Audio,
+            val position: Int, // Position in the songs list
+            val allSongs: List<Audio> // Reference to all songs for playback
+    ) : PageItem()
+
+    /**
+     * A section that shows bio, genre tags, country, and active years fetched from
+     * MusicBrainz. Shown right after the header on the artist page.
+     */
+    data class ArtistInfoSection(
+            val info: MusicBrainzArtistInfo
+    ) : PageItem()
+
+    /**
+     * A section that shows release date, country, status, record labels, genre tags,
+     * and a bio paragraph fetched from MusicBrainz. Shown right after the header on
+     * the album page.
+     */
+    data class AlbumInfoSection(
+            val info: MusicBrainzAlbumInfo
+    ) : PageItem()
+}
+

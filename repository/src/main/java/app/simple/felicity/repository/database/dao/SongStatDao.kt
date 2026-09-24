@@ -1,0 +1,122 @@
+package app.simple.felicity.repository.database.dao
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.models.AudioStat
+import app.simple.felicity.repository.models.AudioWithStat
+import kotlinx.coroutines.flow.Flow
+
+/**
+ * Data Access Object for {@link AudioStat} records stored in the {@code song_stats} table.
+ *
+ * <p>Provides reactive flows for recently played and most played songs by joining
+ * {@code song_stats} with the {@code audio} table on the shared {@code hash} /
+ * {@code audioHash} column.</p>
+ */
+@Dao
+interface SongStatDao {
+
+    @Query("SELECT * FROM song_stats WHERE audioHash = :audioHash LIMIT 1")
+    suspend fun getStatByHash(audioHash: Long): AudioStat?
+
+    /**
+     * Returns up to 50 available songs ordered by their most recent play time, newest first.
+     */
+    @Query("""
+        SELECT a.* FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.lastPlayed > 0
+        ORDER BY ss.lastPlayed DESC
+        LIMIT 50
+    """)
+    fun getRecentlyPlayedAudio(): Flow<List<Audio>>
+
+    /**
+     * Returns up to 50 available songs ordered by their total play count, highest first.
+     */
+    @Query("""
+        SELECT a.* FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.playCount > 0
+        ORDER BY ss.playCount DESC
+        LIMIT 50
+    """)
+    fun getMostPlayedAudio(): Flow<List<Audio>>
+
+    /**
+     * Returns available songs with their stat data ordered by last-played
+     * timestamp descending. All stat columns — including {@code skipCount} and
+     * {@code replayCount} — are pulled in from the join so callers get the full picture.
+     */
+    @Query("""
+        SELECT a.*, ss.lastPlayed, ss.playCount, ss.skipCount, ss.replayCount FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.lastPlayed > 0
+        ORDER BY ss.lastPlayed DESC
+    """)
+    fun getRecentlyPlayedWithStat(): Flow<List<AudioWithStat>>
+
+    /**
+     * Returns available songs with their stat data ordered by play count
+     * descending. All stat columns — including {@code skipCount} and {@code replayCount}
+     * — are pulled in from the join so callers get the full picture.
+     *
+     * Only returns songs played atlease twice to ensure the list is meaningful and
+     * not cluttered with one-off plays.
+     */
+    @Query("""
+        SELECT a.*, ss.lastPlayed, ss.playCount, ss.skipCount, ss.replayCount FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.playCount > 1
+        ORDER BY ss.playCount DESC
+    """)
+    fun getMostPlayedWithStat(): Flow<List<AudioWithStat>>
+
+    /**
+     * Returns available songs ordered by their total skip count, highest first.
+     */
+    @Query("""
+        SELECT a.* FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.skipCount > 0
+        ORDER BY ss.skipCount DESC
+    """)
+    fun getMostSkippedAudio(): Flow<List<Audio>>
+
+    /**
+     * Returns available songs with their stat data ordered by skip count
+     * descending, so the UI can show how many times each song was skipped.
+     */
+    @Query("""
+        SELECT a.*, ss.lastPlayed, ss.playCount, ss.skipCount, ss.replayCount FROM audio a
+        INNER JOIN song_stats ss ON a.hash = ss.audioHash
+        WHERE a.is_available = 1 AND ss.skipCount > 0
+        ORDER BY ss.skipCount DESC
+    """)
+    fun getMostSkippedWithStat(): Flow<List<AudioWithStat>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStat(audioStat: AudioStat)
+
+    @Update
+    suspend fun updateStat(audioStat: AudioStat)
+
+    @Delete
+    suspend fun deleteStat(audioStat: AudioStat)
+
+    /** Wipes the stat row for a given hash without needing to load it first. */
+    @Query("DELETE FROM song_stats WHERE audioHash = :audioHash")
+    suspend fun deleteStatByHash(audioHash: Long)
+
+    /**
+     * Deletes all rows from the {@code song_stats} table, effectively wiping all play and skip
+     * history.
+     */
+    @Query("DELETE FROM song_stats")
+    suspend fun deleteAllStatsInternal()
+}

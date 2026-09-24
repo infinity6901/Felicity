@@ -1,0 +1,293 @@
+/*
+ * layout.css — Felicity Web Player
+ *
+ * Global reset and the two-column app layout:
+ *   Left column (screens-container) — fills remaining space, holds all screens.
+ *   Right column (player-pane) — slides in from the right when a song starts playing.
+ *
+ * No bottom nav, no ambient blur, no tinted glass panels. Just a clean layout
+ * that mirrors the structure of the Android app.
+ */
+
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-base);
+    color: var(--text-1);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    transition: background 0.25s ease, color 0.20s ease;
+}
+
+/* Root two-column layout — fills the whole viewport. */
+.app-layout {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Left column: a column that puts the screens on top and the nav bar below. */
+.screens-container {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-base);
+}
+
+/*
+ * The stacking layer — all screens live here, absolutely positioned on top of
+ * each other. The bottom-nav lives outside this, so it always stays visible.
+ */
+.screens-stack {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+/*
+ * Each screen is absolutely positioned inside .screens-container so they all
+ * occupy the same space. The .active one is fully visible; the rest are
+ * faded out and slide slightly down so they feel like they're being
+ * "pushed behind" the active one.
+ */
+.screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.20s ease, transform 0.20s var(--ease);
+    z-index: 1;
+    background: var(--bg-base);
+}
+
+.screen.hidden {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* The scrollable body below any fixed header. */
+.screen-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    mask-image: linear-gradient(to bottom, transparent 0, black 20px, black calc(100% - 12px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 20px, black calc(100% - 12px), transparent 100%);
+}
+
+.screen-body.fading { opacity: 0; transition: opacity 0.12s ease; }
+
+.screen-body::-webkit-scrollbar { width: 4px; }
+.screen-body::-webkit-scrollbar-track { background: transparent; }
+.screen-body::-webkit-scrollbar-thumb { background: var(--scrollbar-c); border-radius: 2px; }
+
+/* Glass surface mixin (still useful for context menu, search bar, etc.) */
+.glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+}
+
+/* ==================== Dashboard Header ==================== */
+
+.dash-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 14px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--sep-c);
+    background: var(--bg-base);
+}
+
+.dash-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.app-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.brand-name {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-1);
+    white-space: nowrap;
+}
+
+/* ==================== Library Header ==================== */
+
+.lib-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--sep-c);
+    background: var(--bg-base);
+}
+
+.header-left-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.section-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    white-space: nowrap;
+    color: var(--text-1);
+    flex-shrink: 0;
+}
+
+.item-count {
+    font-size: 12px;
+    color: var(--text-3);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Back button — pill shape with arrow + parent name. */
+.back-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--active-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: 100px;
+    color: var(--active-text);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 10px 5px 7px;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.back-btn:hover { background: var(--accent-dim); }
+.back-btn .material-icons-round { font-size: 14px !important; }
+.back-btn.hidden { display: none; }
+
+/* Search bar. */
+.search-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--hover);
+    border: 1px solid var(--glass-border);
+    border-radius: 100px;
+    padding: 7px 14px;
+    transition: border-color 0.18s;
+    min-width: 120px;
+    max-width: 260px;
+    flex: 1;
+}
+
+.search-bar:focus-within { border-color: var(--accent); }
+
+.search-bar .material-icons-round { font-size: 16px !important; color: var(--text-3); flex-shrink: 0; }
+
+.search-bar input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-1);
+    font-size: 13px;
+    font-family: inherit;
+    min-width: 0;
+}
+
+.search-bar input::placeholder { color: var(--text-3); }
+
+/* Small icon-only button — used for theme toggle, home, view toggle. */
+.icon-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.icon-btn:hover { background: var(--hover); color: var(--text-1); border-color: var(--sep-c); }
+.icon-btn .material-icons-round { font-size: 20px !important; }
+
+/* On small screens keep the search bar from crushing everything. */
+@media (max-width: 600px) {
+    .search-bar { min-width: 80px; max-width: 200px; }
+}
+
+/* On very narrow screens, keep the search bar from crushing everything. */
+@media (max-width: 380px) {
+    .lib-header { padding: 10px 12px; gap: 6px; }
+}
+
+/*
+ * Floating "Now Playing" FAB — shows up in the bottom-right corner whenever
+ * a song is playing but the player pane is closed. A small but mighty button
+ * that saves you from losing the player entirely.
+ */
+.player-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--accent-gradient);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 16px var(--accent-glow);
+    transition: transform 0.18s var(--ease), opacity 0.18s ease, box-shadow 0.18s ease;
+    z-index: 200;
+}
+
+.player-fab:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 24px var(--accent-glow);
+}
+
+.player-fab.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.8);
+}
+
