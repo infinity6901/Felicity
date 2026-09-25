@@ -1,5 +1,6 @@
 package app.simple.felicity.managers
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -13,9 +14,11 @@ import app.simple.felicity.decorations.lrc.parser.WordLrcParser
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.managers.LyricsManager.Companion.SYNC_SAVE_DEBOUNCE_MS
 import app.simple.felicity.preferences.LyricsPreferences
+import app.simple.felicity.repository.metadata.LyricsMetaHelper
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.online.OnlineTrack
 import app.simple.felicity.repository.repositories.LrcRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +44,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class LyricsManager @Inject constructor(
-        private val lrcRepository: LrcRepository
+    @ApplicationContext private val context: Context,
+    private val lrcRepository: LrcRepository
 ) {
 
     private val TAG = "LyricsManager"
@@ -261,6 +265,21 @@ class LyricsManager @Inject constructor(
             Log.d(TAG, "TXT sidecar found for '${song.title}'.")
             parseThenEmit(txtContent, songPath, fallback = LrcData()) { content ->
                 TxtParser().parse(content)
+            }
+            return
+        }
+
+        // Step 2.5: Try embedded tag lyrics in file tags (USLT, ©lyr, Vorbis LYRICS via TagLib).
+        val embeddedContent = withContext(Dispatchers.IO) {
+            LyricsMetaHelper.extractEmbeddedLyrics(context, song.uri)
+        }
+
+        if (!isStillRelevant(songPath)) return
+
+        if (!embeddedContent.isNullOrBlank()) {
+            Log.d(TAG, "Embedded tag lyrics found for '${song.title}'.")
+            parseThenEmit(embeddedContent, songPath, fallback = LrcData()) { content ->
+                selectParser(content).parse(content)
             }
             return
         }

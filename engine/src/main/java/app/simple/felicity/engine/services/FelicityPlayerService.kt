@@ -52,6 +52,7 @@ import app.simple.felicity.engine.R
 import app.simple.felicity.engine.audio.FelicityAudioSink
 import app.simple.felicity.engine.managers.AudioPipelineManager
 import app.simple.felicity.engine.managers.AudioProcessorManager
+import app.simple.felicity.engine.managers.BluetoothProfileManager
 import app.simple.felicity.engine.managers.EqualizerManager
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.engine.managers.PlaybackStateManager
@@ -277,6 +278,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Listen for Sleep Timer events so a countdown or end-of-track timer armed from the
         // UI actually pauses (and optionally fades out) playback when it fires.
         SleepTimerManager.registerListener(sleepTimerListener)
+        BluetoothProfileManager.register(this)
 
         // Expose the processor via VisualizerManager so the player fragment can call
         // setDirectOutput() and wire the lock-free twin-buffer path without a service bind.

@@ -164,11 +164,16 @@ class AdapterYoutubeTrack(
             binding.downloadButton.setOnClickListener {
                 callbacks?.onDownloadClicked(item)
             }
+
+            binding.moreOptions.setOnClickListener {
+                callbacks?.onMoreOptionsClicked(item)
+            }
         }
     }
 
     interface Callbacks {
         fun onTrackClicked(track: OnlineTrack)
         fun onDownloadClicked(track: OnlineTrack)
+        fun onMoreOptionsClicked(track: OnlineTrack)
     }
 }

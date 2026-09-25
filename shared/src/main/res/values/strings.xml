@@ -222,6 +222,8 @@
     <string name="skip_hidden_files_summary">Exclude dot-prefixed audio files (e.g. .song.mp3) from the library scan.</string>
     <string name="skip_hidden_folders">Skip Hidden Folders</string>
     <string name="skip_hidden_folders_summary">Exclude dot-prefixed directories (e.g. .music/) and their contents from the library scan.</string>
+    <string name="excluded_folders" translatable="false">Excluded Folders</string>
+    <string name="excluded_folders_summary" translatable="false">Manage blacklisted directories excluded from library scans</string>
     <string name="paste_lyrics_here">Paste Lyrics Here</string>
     <string name="save">Save</string>
     <string name="volume">Volume</string>
@@ -459,6 +461,8 @@
     <string name="pause_activity_summary">Prevent app from keeping the playback activity records.</string>
     <string name="clear_playback_stats">Clear Playback Stats</string>
     <string name="clear_playback_stats_summary">Wipe the playback history and records.</string>
+    <string name="playback_analytics" translatable="false">Playback Analytics</string>
+    <string name="playback_analytics_summary" translatable="false">View listening statistics, top played tracks, and audio insights.</string>
     <string name="bookmarks">Bookmarks</string>
     <string name="add_bookmark">Add Bookmark</string>
     <string name="remove_bookmark">Remove Bookmark</string>

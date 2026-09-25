@@ -68,6 +68,19 @@
             app:textColorStyle="primary" />
 
         <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/add_custom_radio"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="+ Add Radio Station"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
             android:id="@+id/source_jamendo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

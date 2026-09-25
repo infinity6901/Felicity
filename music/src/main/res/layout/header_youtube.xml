@@ -29,6 +29,127 @@
         android:singleLine="true"
         android:textSize="@dimen/text_size_14" />
 
+    <HorizontalScrollView
+        android:id="@+id/youtube_mood_chips_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:paddingHorizontal="@dimen/padding_10"
+        android:layout_marginBottom="@dimen/padding_10"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_podcasts"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Podcasts"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_romance"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Romance"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_relax"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Relax"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_feel_good"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Feel good"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_workout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Work out"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_focus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Focus"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_commute"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Commute"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+            <app.simple.felicity.decorations.highlight.HighlightTextView
+                android:id="@+id/chip_party"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/padding_5"
+                android:paddingVertical="@dimen/padding_5"
+                android:paddingHorizontal="@dimen/padding_15"
+                android:text="Party"
+                android:textSize="@dimen/text_size_14"
+                app:appFontStyle="bold"
+                app:highlightMode="auto"
+                app:textColorStyle="primary" />
+
+        </LinearLayout>
+    </HorizontalScrollView>
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -61,10 +182,36 @@
             app:highlightMode="auto"
             app:textColorStyle="primary" />
 
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/tab_downloaded"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="Downloaded Only"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
             android:layout_weight="1" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/import_playlist_url"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="Import Link"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
 
         <app.simple.felicity.decorations.highlight.HighlightTextView
             android:id="@+id/youtube_sign_in"

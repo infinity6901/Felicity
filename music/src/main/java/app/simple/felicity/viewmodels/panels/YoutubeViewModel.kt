@@ -22,7 +22,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import javax.inject.Inject
 import kotlin.coroutines.resume
 
-enum class YoutubeTab { SEARCH, PLAYLISTS }
+enum class YoutubeTab { SEARCH, PLAYLISTS, DOWNLOADED }
 
 @HiltViewModel
 class YoutubeViewModel @Inject constructor(
@@ -43,6 +43,15 @@ class YoutubeViewModel @Inject constructor(
 
     private val _searchResults = MutableStateFlow<List<OnlineTrack>>(emptyList())
     val searchResults: StateFlow<List<OnlineTrack>> = _searchResults.asStateFlow()
+
+    private val _quickPicks = MutableStateFlow<List<OnlineTrack>>(emptyList())
+    val quickPicks: StateFlow<List<OnlineTrack>> = _quickPicks.asStateFlow()
+
+    private val _trendingSongs = MutableStateFlow<List<OnlineTrack>>(emptyList())
+    val trendingSongs: StateFlow<List<OnlineTrack>> = _trendingSongs.asStateFlow()
+
+    private val _newReleases = MutableStateFlow<List<OnlineTrack>>(emptyList())
+    val newReleases: StateFlow<List<OnlineTrack>> = _newReleases.asStateFlow()
 
     private val _playlists = MutableStateFlow<List<YoutubePlaylist>>(emptyList())
     val playlists: StateFlow<List<YoutubePlaylist>> = _playlists.asStateFlow()
@@ -90,9 +99,36 @@ class YoutubeViewModel @Inject constructor(
         }
     }
 
+    fun loadHomeSections() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _quickPicks.value = youtubeRepository.getQuickPicks()
+            _trendingSongs.value = youtubeRepository.getTrendingSongs()
+            _newReleases.value = youtubeRepository.getNewReleases()
+            _isLoading.value = false
+        }
+    }
+
+    private val _searchSuggestions = MutableStateFlow<List<String>>(emptyList())
+    val searchSuggestions: StateFlow<List<String>> = _searchSuggestions.asStateFlow()
+
+    fun fetchSearchSuggestions(query: String) {
+        if (query.isBlank()) {
+            _searchSuggestions.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            _searchSuggestions.value = youtubeRepository.getSearchSuggestions(query)
+        }
+    }
+
     fun search(query: String) {
         if (query.isBlank()) {
             _searchResults.value = emptyList()
+            _searchSuggestions.value = emptyList()
+            if (_quickPicks.value.isEmpty()) {
+                loadHomeSections()
+            }
             return
         }
 
@@ -107,6 +143,26 @@ class YoutubeViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _playlists.value = youtubeRepository.getLibraryPlaylists()
+            _isLoading.value = false
+        }
+    }
+
+    fun importPlaylistByUrl(url: String) {
+        if (url.isBlank()) return
+        viewModelScope.launch {
+            _isLoading.value = true
+            val importedTracks = youtubeRepository.importPlaylistByUrl(url)
+            if (importedTracks.isNotEmpty()) {
+                _openedPlaylist.value = YoutubePlaylist(
+                    playlistId = "imported",
+                    title = "Imported Playlist",
+                    subtitle = "${importedTracks.size} tracks",
+                    thumbnailUrl = importedTracks.firstOrNull()?.artworkUrl.orEmpty()
+                )
+                _playlistTracks.value = importedTracks
+            } else {
+                _playbackError.value = "Could not import playlist from the provided URL."
+            }
             _isLoading.value = false
         }
     }

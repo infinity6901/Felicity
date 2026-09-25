@@ -7,6 +7,7 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.viewModels
@@ -22,6 +23,7 @@ import app.simple.felicity.adapters.ui.lists.AdapterYoutubeTrack
 import app.simple.felicity.databinding.FragmentYoutubeBinding
 import app.simple.felicity.databinding.HeaderYoutubeBinding
 import app.simple.felicity.decorations.views.AppHeader
+import app.simple.felicity.dialogs.youtube.YoutubeTrackMenu
 import app.simple.felicity.extensions.fragments.PanelFragment
 import app.simple.felicity.repository.online.OnlineTrack
 import app.simple.felicity.repository.youtube.YoutubePlaylist
@@ -214,6 +216,19 @@ class YoutubeSection : PanelFragment() {
                         ).show()
                     }
                 }
+
+                override fun onMoreOptionsClicked(track: OnlineTrack) {
+                    YoutubeTrackMenu.show(childFragmentManager, track) { chosenTrack ->
+                        showDownloadFormatDialog { chosenFormat ->
+                            youtubeViewModel.download(chosenTrack, format = chosenFormat)
+                            Toast.makeText(
+                                requireContext(),
+                                getString(R.string.youtube_download_started, chosenTrack.title),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
             }
 
             adapter.onSelectionChanged = { count ->
@@ -265,16 +280,54 @@ class YoutubeSection : PanelFragment() {
     }
 
     private fun setupClickListeners() {
+        val moodChips = mapOf(
+            headerBinding.chipPodcasts to "Podcasts",
+            headerBinding.chipRomance to "Romance",
+            headerBinding.chipRelax to "Relax",
+            headerBinding.chipFeelGood to "Feel good",
+            headerBinding.chipWorkout to "Work out",
+            headerBinding.chipFocus to "Focus",
+            headerBinding.chipCommute to "Commute",
+            headerBinding.chipParty to "Party"
+        )
+
+        moodChips.forEach { (chip, query) ->
+            chip.setOnClickListener {
+                selectTab(YoutubeTab.SEARCH)
+                headerBinding.youtubeSearchInput.setText(query)
+            }
+        }
+
         headerBinding.youtubeSearchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
-                youtubeViewModel.search(s?.toString().orEmpty())
+                val query = s?.toString().orEmpty()
+                youtubeViewModel.search(query)
+                youtubeViewModel.fetchSearchSuggestions(query)
             }
         })
 
         headerBinding.tabSearch.setOnClickListener { selectTab(YoutubeTab.SEARCH) }
         headerBinding.tabPlaylists.setOnClickListener { selectTab(YoutubeTab.PLAYLISTS) }
+        headerBinding.tabDownloaded.setOnClickListener { selectTab(YoutubeTab.DOWNLOADED) }
+
+        headerBinding.importPlaylistUrl.setOnClickListener {
+            val input = EditText(requireContext()).apply {
+                hint = "Paste YouTube playlist URL or ID"
+            }
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle("Import YouTube Playlist")
+                .setView(input)
+                .setPositiveButton("Import") { _, _ ->
+                    val url = input.text.toString().trim()
+                    if (url.isNotBlank()) {
+                        youtubeViewModel.importPlaylistByUrl(url)
+                    }
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
 
         headerBinding.youtubeSignIn.setOnClickListener {
             if (youtubeViewModel.isSignedIn) {
@@ -330,15 +383,28 @@ class YoutubeSection : PanelFragment() {
         youtubeViewModel.setActiveTab(tab)
         headerBinding.tabSearch.alpha = if (tab == YoutubeTab.SEARCH) 1f else 0.5f
         headerBinding.tabPlaylists.alpha = if (tab == YoutubeTab.PLAYLISTS) 1f else 0.5f
+        headerBinding.tabDownloaded.alpha = if (tab == YoutubeTab.DOWNLOADED) 1f else 0.5f
 
         headerBinding.youtubeSearchInput.visibility = if (tab == YoutubeTab.SEARCH) View.VISIBLE else View.GONE
 
-        if (tab == YoutubeTab.SEARCH) {
-            itemTouchHelper?.attachToRecyclerView(null)
-            binding.recyclerView.adapter = trackAdapter
-            trackAdapter?.updateItems(youtubeViewModel.searchResults.value)
-        } else {
-            switchListForPlaylistState(youtubeViewModel.openedPlaylist.value)
+        when (tab) {
+            YoutubeTab.SEARCH -> {
+                itemTouchHelper?.attachToRecyclerView(null)
+                binding.recyclerView.adapter = trackAdapter
+                trackAdapter?.updateItems(youtubeViewModel.searchResults.value)
+            }
+            YoutubeTab.DOWNLOADED -> {
+                itemTouchHelper?.attachToRecyclerView(null)
+                binding.recyclerView.adapter = trackAdapter
+                val completedIds = youtubeViewModel.downloadProgress.value.filter { it.value == 100 }.keys
+                val downloadedTracks = (youtubeViewModel.searchResults.value + youtubeViewModel.playlistTracks.value)
+                    .filter { it.id in completedIds }
+                    .distinctBy { it.id }
+                trackAdapter?.updateItems(downloadedTracks)
+            }
+            YoutubeTab.PLAYLISTS -> {
+                switchListForPlaylistState(youtubeViewModel.openedPlaylist.value)
+            }
         }
         updateEmptyState()
     }

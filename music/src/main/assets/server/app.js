@@ -33,14 +33,17 @@ async function goDashboard() {
     screenLibrary.classList.remove("active");
     screenLibrary.classList.add("hidden");
 
-
     /* Kick off loading all library data so the dashboard is fully populated. */
-    await Promise.all([
-        ensureLoaded("songs"),
-        ensureLoaded("albums"),
-        ensureLoaded("artists"),
-        ensureLoaded("genres"),
-    ]);
+    try {
+        await Promise.all([
+            ensureLoaded("songs"),
+            ensureLoaded("albums"),
+            ensureLoaded("artists"),
+            ensureLoaded("genres"),
+        ]);
+    } catch (e) {
+        console.error("Dashboard data load error:", e);
+    }
 
     renderDashboard(true);
 }
@@ -69,7 +72,12 @@ async function ensureLoaded(sec) {
         artists: "/api/artists",
         genres:  "/api/genres",
     };
-    cache[sec] = await fetchJson(endpoints[sec]);
+    try {
+        cache[sec] = await fetchJson(endpoints[sec]);
+    } catch (e) {
+        console.error("Failed to load " + sec, e);
+        cache[sec] = [];
+    }
 }
 
 /**
@@ -161,6 +169,20 @@ function goBack() {
 homeBtn.addEventListener("click", goDashboard);
 
 backBtn.addEventListener("click", goBack);
+
+const ytBtn = document.getElementById("ytSearchBtn");
+if (ytBtn) {
+    ytBtn.addEventListener("click", async () => {
+        const query = prompt("Search YouTube Music:");
+        if (!query) return;
+        const results = await fetchJson(`/api/youtube/search?q=${encodeURIComponent(query)}`);
+        if (results && results.length) {
+            alert(`Found ${results.length} YouTube Music tracks!`);
+        } else {
+            alert("No YouTube tracks found.");
+        }
+    });
+}
 
 searchInput.addEventListener("input", () => {
     searchQuery = searchInput.value;
