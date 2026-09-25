@@ -199,11 +199,16 @@ class AudioScanner {
             skipHiddenFolders: Boolean
     ): List<File> {
         val result = mutableListOf<File>()
+        val excludedFolders = LibraryPreferences.getExcludedFolders()
 
         root.walkTopDown()
             .onEnter { dir ->
                 if (skipHiddenFolders && dir.name.startsWith(".")) {
                     Log.d(TAG, "Skipping hidden folder: ${dir.absolutePath}")
+                    return@onEnter false
+                }
+                if (excludedFolders.any { dir.absolutePath.contains(it, ignoreCase = true) || dir.name.equals(it, ignoreCase = true) }) {
+                    Log.d(TAG, "Skipping excluded folder: ${dir.absolutePath}")
                     return@onEnter false
                 }
                 return@onEnter true
@@ -321,11 +326,16 @@ class AudioScanner {
         }
 
         val result = mutableListOf<SAFFile>()
+        val excludedFolders = LibraryPreferences.getExcludedFolders()
 
         for (row in rows) {
             if (row.mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                 if (skipHiddenFolders && row.name.startsWith(".")) {
                     Log.d(TAG, "SAF: Skipping hidden folder: ${row.name}")
+                    continue
+                }
+                if (excludedFolders.any { row.name.equals(it, ignoreCase = true) || row.docId.contains(it, ignoreCase = true) }) {
+                    Log.d(TAG, "SAF: Skipping excluded folder: ${row.name}")
                     continue
                 }
                 result.addAll(collectAudioSAF(context, treeUri, row.docId, skipHiddenFiles, skipHiddenFolders))

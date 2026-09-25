@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.format.DateUtils
 import android.view.View
+import android.widget.EditText
 import android.widget.TextView
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
@@ -39,7 +40,9 @@ import app.simple.felicity.ui.preferences.sub.MusicFolders
 import app.simple.felicity.ui.preferences.sub.PanelVisibility
 import app.simple.felicity.ui.preferences.sub.Themes
 import app.simple.felicity.ui.preferences.sub.TypeFaces
+import app.simple.felicity.ui.subpanels.PlaybackAnalytics
 import com.bumptech.glide.Glide
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1138,6 +1141,16 @@ abstract class PreferenceFragment : MediaFragment() {
                 }
         )
 
+        val excludedFoldersPreference = Preference(
+                title = app.simple.felicity.shared.R.string.excluded_folders,
+                summary = app.simple.felicity.shared.R.string.excluded_folders_summary,
+                icon = R.drawable.ic_folder,
+                type = PreferenceType.NORMAL,
+                onPreferenceAction = { view, callback ->
+                    showExcludedFoldersDialog()
+                }
+        )
+
         val cacheHeader = Preference(type = PreferenceType.SUB_HEADER, title = R.string.cache)
 
         val clearImageCache = Preference(
@@ -1161,6 +1174,16 @@ abstract class PreferenceFragment : MediaFragment() {
                 }
         )
 
+        val playbackAnalyticsPreference = Preference(
+                title = app.simple.felicity.shared.R.string.playback_analytics,
+                summary = app.simple.felicity.shared.R.string.playback_analytics_summary,
+                icon = R.drawable.ic_pie_16dp,
+                type = PreferenceType.NORMAL,
+                onPreferenceAction = { view, callback ->
+                    openFragment(PlaybackAnalytics.newInstance(), PlaybackAnalytics.TAG)
+                }
+        )
+
         preferences.add(folders)
         preferences.add(scanLibrary)
         preferences.add(refreshLibrary)
@@ -1168,6 +1191,7 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(activityHeader)
         preferences.add(pauseActivityToggle)
         preferences.add(clearPlaybackStats)
+        preferences.add(playbackAnalyticsPreference)
         preferences.add(metadataHeader)
         preferences.add(albumArtistsInsteadOfArtists)
         preferences.add(musicBrainz)
@@ -1179,10 +1203,45 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(filtersHeader)
         preferences.add(skipHiddenFilesToggle)
         preferences.add(skipHiddenFoldersToggle)
+        preferences.add(excludedFoldersPreference)
         preferences.add(cacheHeader)
         preferences.add(clearImageCache)
 
         return preferences
+    }
+
+    protected fun showExcludedFoldersDialog() {
+        val currentFolders = LibraryPreferences.getExcludedFolders().toMutableList()
+        val items: Array<CharSequence> = if (currentFolders.isEmpty()) arrayOf("No excluded folders added yet") else currentFolders.map { it as CharSequence }.toTypedArray()
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(app.simple.felicity.shared.R.string.excluded_folders)
+            .setItems(items) { _, which ->
+                if (currentFolders.isNotEmpty()) {
+                    val folderToRemove = currentFolders[which]
+                    LibraryPreferences.removeExcludedFolder(folderToRemove)
+                    showWarning(R.string.done)
+                }
+            }
+            .setPositiveButton("Add Folder Path") { _, _ ->
+                val input = EditText(requireContext()).apply {
+                    hint = "e.g. WhatsApp Audio or /Music/Recordings"
+                }
+                MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("Add Excluded Folder")
+                    .setView(input)
+                    .setPositiveButton(R.string.save) { _, _ ->
+                        val path = input.text.toString().trim()
+                        if (path.isNotBlank()) {
+                            LibraryPreferences.addExcludedFolder(path)
+                            showWarning(R.string.done)
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     protected fun createAccessibilityPanel(): List<Preference> {

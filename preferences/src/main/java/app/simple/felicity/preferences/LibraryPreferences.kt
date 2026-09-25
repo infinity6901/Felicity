@@ -118,5 +118,29 @@ object LibraryPreferences {
     fun setActivityPaused(paused: Boolean) {
         SharedPreferences.getSharedPreferences().edit { putBoolean(PAUSE_ACTIVITY, paused) }
     }
+
+    // ------------------------------------------------------------------------------------------------------ //
+
+    private const val EXCLUDED_FOLDERS = "excluded_folders"
+
+    fun getExcludedFolders(): Set<String> {
+        return SharedPreferences.getSharedPreferences().getStringSet(EXCLUDED_FOLDERS, emptySet()) ?: emptySet()
+    }
+
+    fun setExcludedFolders(folders: Set<String>) {
+        SharedPreferences.getSharedPreferences().edit { putStringSet(EXCLUDED_FOLDERS, folders) }
+    }
+
+    fun addExcludedFolder(folderPath: String) {
+        val current = getExcludedFolders().toMutableSet()
+        current.add(folderPath)
+        setExcludedFolders(current)
+    }
+
+    fun removeExcludedFolder(folderPath: String) {
+        val current = getExcludedFolders().toMutableSet()
+        current.remove(folderPath)
+        setExcludedFolders(current)
+    }
 }
 

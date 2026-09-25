@@ -7,6 +7,8 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.viewModels
@@ -14,6 +16,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import app.simple.felicity.R
 import app.simple.felicity.activities.youtube.YoutubeLoginActivity
 import app.simple.felicity.adapters.ui.lists.AdapterOnline
 import app.simple.felicity.databinding.FragmentOnlineBinding
@@ -25,10 +28,13 @@ import app.simple.felicity.extensions.fragments.PanelFragment
 import app.simple.felicity.preferences.JamendoPreferences
 import app.simple.felicity.repository.online.OnlineSource
 import app.simple.felicity.repository.online.OnlineTrack
+import app.simple.felicity.repository.repositories.RadioBrowserRepository
 import app.simple.felicity.shared.utils.ViewUtils.gone
 import app.simple.felicity.shared.utils.ViewUtils.visible
 import app.simple.felicity.viewmodels.panels.OnlineViewModel
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.launch
 
 /**
@@ -49,6 +55,9 @@ class Online : PanelFragment() {
     private lateinit var headerBinding: HeaderOnlineBinding
 
     private var adapterOnline: AdapterOnline? = null
+
+    @Inject
+    lateinit var radioBrowserRepository: RadioBrowserRepository
 
     private val onlineViewModel: OnlineViewModel by viewModels()
 
@@ -148,6 +157,7 @@ class Online : PanelFragment() {
         })
 
         headerBinding.sourceRadioBrowser.setOnClickListener { selectSource(OnlineSource.RADIO_BROWSER) }
+        headerBinding.addCustomRadio.setOnClickListener { showAddCustomRadioDialog() }
         headerBinding.sourceJamendo.setOnClickListener {
             selectSource(OnlineSource.JAMENDO)
             if (JamendoPreferences.hasClientId().not()) {
@@ -182,12 +192,43 @@ class Online : PanelFragment() {
         onlineViewModel.setSelectedSource(source)
         highlightSelectedSource(source)
 
+        if (source == OnlineSource.RADIO_BROWSER) {
+            headerBinding.addCustomRadio.visible()
+        } else {
+            headerBinding.addCustomRadio.gone()
+        }
+
         if (source == OnlineSource.YOUTUBE) {
             headerBinding.youtubeSignIn.visible()
             updateYoutubeSignInLabel()
         } else {
             headerBinding.youtubeSignIn.gone()
         }
+    }
+
+    private fun showAddCustomRadioDialog() {
+        val layout = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 16)
+        }
+        val inputName = EditText(requireContext()).apply { hint = "Station Name (e.g. My Favorite FM)" }
+        val inputUrl = EditText(requireContext()).apply { hint = "Stream URL (http://...)" }
+        layout.addView(inputName)
+        layout.addView(inputUrl)
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Add Custom Radio Station")
+            .setView(layout)
+            .setPositiveButton("Add") { _, _ ->
+                val name = inputName.text.toString().trim()
+                val url = inputUrl.text.toString().trim()
+                if (name.isNotBlank() && url.isNotBlank()) {
+                    val customTrack = radioBrowserRepository.createCustomStation(name, url)
+                    onlineViewModel.play(customTrack)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     /**

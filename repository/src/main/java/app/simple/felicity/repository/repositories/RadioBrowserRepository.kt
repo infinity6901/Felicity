@@ -103,6 +103,24 @@ class RadioBrowserRepository @Inject constructor() {
         }
     }
 
+    fun createCustomStation(
+        name: String,
+        streamUrl: String,
+        genre: String = "Custom Radio",
+        logoUrl: String? = null
+    ): OnlineTrack {
+        val uuid = "custom_${System.currentTimeMillis()}"
+        return OnlineTrack(
+            source = OnlineSource.RADIO_BROWSER,
+            id = uuid,
+            title = name,
+            subtitle = genre,
+            artworkUrl = logoUrl,
+            streamUrl = streamUrl,
+            durationMs = null
+        )
+    }
+
     private fun RadioBrowserStation.toOnlineTrack(): OnlineTrack {
         return OnlineTrack(
                 source = OnlineSource.RADIO_BROWSER,

@@ -414,6 +414,16 @@ object MediaPlaybackManager {
             val url = onlineStreamResolver?.invoke(track)
             if (url != null) {
                 playOnlineTrack(track, url)
+
+                // Pre-resolve stream URLs for the next 2 tracks in online queue for gapless playback
+                val queue = _onlineQueueFlow.value
+                val currentIndex = _onlineQueueIndexFlow.value
+                val next1 = queue.getOrNull(currentIndex + 1)
+                val next2 = queue.getOrNull(currentIndex + 2)
+                launch(Dispatchers.IO) {
+                    if (next1 != null) runCatching { onlineStreamResolver?.invoke(next1) }
+                    if (next2 != null) runCatching { onlineStreamResolver?.invoke(next2) }
+                }
             } else {
                 _onlineQueueErrorFlow.emit("Couldn't get a playable stream for \"${track.title}\"")
             }
@@ -759,6 +769,10 @@ object MediaPlaybackManager {
         // Stop seek updates when paused to reduce unnecessary processing
         // UI will get the final position from the playback state change
         stopSeekPositionUpdates()
+    }
+
+    fun setPlayerVolume(volume: Float) {
+        mediaController?.volume = volume.coerceIn(0f, 1f)
     }
 
     fun play() {

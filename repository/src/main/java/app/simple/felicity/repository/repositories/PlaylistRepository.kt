@@ -75,6 +75,15 @@ class PlaylistRepository @Inject constructor(
     fun getSongsInPlaylistOrdered(playlistId: Long): Flow<List<Audio>> =
         dao.getSongsInPlaylistOrdered(playlistId)
 
+    // Dynamic Smart Playlists
+    fun getMostPlayedTracks(): Flow<List<Audio>> = database.songStatDao().getMostPlayedAudio()
+
+    fun getRecentlyAddedTracks(limit: Int = 50): Flow<List<Audio>> = database.audioDao()!!.getRecentAudio()
+
+    fun getRecentlyPlayedTracks(): Flow<List<Audio>> = database.songStatDao().getRecentlyPlayedAudio()
+
+    fun getTopRatedTracks(): Flow<List<Audio>> = database.audioDao()!!.getFavoriteAudio()
+
     /**
      * Returns a reactive [Flow] of [PageData] for the given playlist.
      *

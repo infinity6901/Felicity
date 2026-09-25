@@ -61,6 +61,10 @@ class YoutubeRepository @Inject constructor(
         }
     }
 
+    suspend fun getSearchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
+        YoutubeApiClient.getSearchSuggestions(query, currentSession())
+    }
+
     /**
      * Resolves a direct, playable stream URL for [track]. Tries yt-dlp first (actively
      * maintained against YouTube's changes — see [YtDlpManager]) and falls back to the
@@ -114,14 +118,18 @@ class YoutubeRepository @Inject constructor(
         }
     }
 
-    /** Enqueues a background download of [track], returning a WorkManager request ID the UI can observe live progress on (see `YoutubeDownloadWorker`). */
-    fun download(track: OnlineTrack, format: String = "m4a"): UUID? {
-        if (track.source != OnlineSource.YOUTUBE) return null
-        return YoutubeDownloadWorker.enqueue(context, track.id, track.title, track.subtitle, format)
-    }
+    /** Extracts playlist ID from a YouTube URL and fetches its tracks. */
+    suspend fun importPlaylistByUrl(urlStr: String): List<OnlineTrack> = withContext(Dispatchers.IO) {
+        val playlistId = runCatching {
+            when {
+                urlStr.contains("list=") -> urlStr.substringAfter("list=").substringBefore("&")
+                urlStr.startsWith("PL") || urlStr.startsWith("VL") -> urlStr
+                else -> urlStr.trim()
+            }
+        }.getOrDefault("")
 
-    fun signOut() {
-        YoutubeSessionStore.signOut(context)
+        if (playlistId.isBlank()) return@withContext emptyList()
+        getPlaylistTracks(playlistId)
     }
 
     private fun YoutubeSearchResult.toOnlineTrack(): OnlineTrack {
@@ -145,6 +153,25 @@ class YoutubeRepository @Inject constructor(
             else -> return null
         }
         return seconds * 1000L
+    }
+
+    /** Fetches trending music tracks on YouTube Music. */
+    suspend fun getTrendingSongs(): List<OnlineTrack> = search("Trending music")
+
+    /** Fetches quick picks / top tracks on YouTube Music. */
+    suspend fun getQuickPicks(): List<OnlineTrack> = search("Top hits music")
+
+    /** Fetches new releases on YouTube Music. */
+    suspend fun getNewReleases(): List<OnlineTrack> = search("New release songs")
+
+    /** Enqueues a background download of [track], returning a WorkManager request ID the UI can observe live progress on (see `YoutubeDownloadWorker`). */
+    fun download(track: OnlineTrack, format: String = "m4a"): UUID? {
+        if (track.source != OnlineSource.YOUTUBE) return null
+        return YoutubeDownloadWorker.enqueue(context, track.id, track.title, track.subtitle, format)
+    }
+
+    fun signOut() {
+        YoutubeSessionStore.signOut(context)
     }
 
     companion object {

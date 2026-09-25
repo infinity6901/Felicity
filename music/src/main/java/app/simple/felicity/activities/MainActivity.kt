@@ -156,6 +156,14 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
                     topFragment?.openFragment(player, BasePlayerFragment.TAG)
                 }
             }
+
+            override fun onSwipeLeft() {
+                MediaPlaybackManager.next()
+            }
+
+            override fun onSwipeRight() {
+                MediaPlaybackManager.previous()
+            }
         }
 
         // Seek via long-press drag on the miniplayer

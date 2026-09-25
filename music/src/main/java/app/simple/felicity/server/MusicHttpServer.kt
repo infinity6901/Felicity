@@ -9,11 +9,15 @@ import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import app.simple.felicity.R
 import app.simple.felicity.core.constants.ThemeConstants
+import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.preferences.AppearancePreferences
 import app.simple.felicity.repository.covers.AudioCover
 import app.simple.felicity.repository.database.instances.AudioDatabase
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.repositories.SongStatRepository
+import app.simple.felicity.repository.youtube.YoutubeApiClient
+import app.simple.felicity.repository.youtube.YoutubeSearchParser
+import app.simple.felicity.repository.youtube.YoutubeSessionStore
 import app.simple.felicity.theme.managers.ThemeManager
 import com.google.gson.GsonBuilder
 import fi.iki.elonen.NanoHTTPD
@@ -93,6 +97,8 @@ class MusicHttpServer(
             uri == "/" || uri == "/index.html" -> serveAsset("server/index.html", MIME_HTML)
             uri == "/app-icon" -> serveAppIcon()
             uri == "/api/theme" -> serveTheme()
+            uri == "/api/player/now-playing" -> serveNowPlaying()
+            uri == "/api/youtube/search" -> handleYoutubeSearch(session)
             uri == "/api/songs" -> serveSongList()
             uri == "/api/albums" -> serveAlbums()
             uri == "/api/albums/songs" -> serveAlbumSongs(session.parms["name"] ?: "")
@@ -123,17 +129,70 @@ class MusicHttpServer(
 
     private fun handlePost(session: IHTTPSession): Response {
         val uri = session.uri
-        return if (PLAYED_REGEX.matches(uri)) {
-            val id = PLAYED_REGEX.find(uri)!!.groupValues[1].toLongOrNull()
-                ?: return badRequest("Invalid song ID")
-            val audio = findAudio(id) ?: return notFound("Song not found")
-            runBlocking { songStatRepository.recordPlay(audio.hash) }
-            newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
-        } else {
-            newFixedLengthResponse(
-                    Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method not allowed"
-            )
+        return when {
+            uri == "/api/player/control" -> handlePlayerControl(session)
+            PLAYED_REGEX.matches(uri) -> {
+                val id = PLAYED_REGEX.find(uri)!!.groupValues[1].toLongOrNull()
+                    ?: return badRequest("Invalid song ID")
+                val audio = findAudio(id) ?: return notFound("Song not found")
+                runBlocking { songStatRepository.recordPlay(audio.hash) }
+                newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
+            }
+            else -> {
+                newFixedLengthResponse(
+                        Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "Method not allowed"
+                )
+            }
         }
+    }
+
+    private fun serveNowPlaying(): Response {
+        val song = MediaPlaybackManager.getCurrentSong()
+        val onlineTrack = MediaPlaybackManager.getCurrentOnlineTrack()
+        val isPlaying = MediaPlaybackManager.isPlaying()
+        val position = MediaPlaybackManager.getSeekPosition()
+        val duration = MediaPlaybackManager.getDuration()
+
+        val json = mapOf(
+            "title" to (onlineTrack?.title ?: song?.title ?: "Not Playing"),
+            "artist" to (onlineTrack?.subtitle ?: song?.artist ?: ""),
+            "album" to (song?.album ?: ""),
+            "isPlaying" to isPlaying,
+            "positionMs" to position,
+            "durationMs" to duration,
+            "isOnline" to (onlineTrack != null)
+        )
+        return jsonResponse(json)
+    }
+
+    private fun handlePlayerControl(session: IHTTPSession): Response {
+        val action = session.parms["action"] ?: ""
+        when (action) {
+            "play" -> MediaPlaybackManager.play()
+            "pause" -> MediaPlaybackManager.pause()
+            "toggle" -> MediaPlaybackManager.flipState()
+            "next" -> MediaPlaybackManager.next()
+            "previous" -> MediaPlaybackManager.previous()
+            "seek" -> {
+                val pos = session.parms["pos"]?.toLongOrNull() ?: 0L
+                MediaPlaybackManager.seekTo(pos)
+            }
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
+    }
+
+    private fun handleYoutubeSearch(session: IHTTPSession): Response {
+        val query = session.parms["q"] ?: ""
+        if (query.isBlank()) return jsonResponse(emptyList<Any>())
+        val sessionObj = YoutubeSessionStore.get(context)
+        val raw = YoutubeApiClient.search(query, sessionObj)
+        val results = YoutubeSearchParser.parse(raw)
+        return jsonResponse(results)
+    }
+
+    private fun jsonResponse(data: Any): Response {
+        val json = gson.toJson(data)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", json)
     }
 
     /**

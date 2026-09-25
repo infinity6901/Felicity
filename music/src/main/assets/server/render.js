@@ -438,6 +438,81 @@ function renderContent(animate = false) {
     const mode = drillItem ? drillViewMode : (viewMode[section] || "list");
 
     if (drillItem) {
+        let items = drillItem.items || [];
+        if (q) items = items.filter(s =>
+            (s.title || "").toLowerCase().includes(q)  ||
+            (s.artist || "").toLowerCase().includes(q) ||
+            (s.album || "").toLowerCase().includes(q)
+        );
+        renderSongList(items, animate);
+        return;
+    }
+
+    if (section === "songs") {
+        let songs = cache.songs || [];
+        if (q) songs = songs.filter(s =>
+            (s.title || "").toLowerCase().includes(q)  ||
+            (s.artist || "").toLowerCase().includes(q) ||
+            (s.album || "").toLowerCase().includes(q)
+        );
+        renderSongList(songs, animate);
+    } else if (section === "albums") {
+        let albums = cache.albums || [];
+        if (q) albums = albums.filter(a =>
+            (a.name || "").toLowerCase().includes(q) ||
+            (a.artist || "").toLowerCase().includes(q)
+        );
+        renderAlbumGrid(albums, mode, animate);
+    } else if (section === "artists") {
+        let artists = cache.artists || [];
+        if (q) artists = artists.filter(a => (a.name || "").toLowerCase().includes(q));
+        renderArtistList(artists, mode, animate);
+    } else if (section === "genres") {
+        let genres = cache.genres || [];
+        if (q) genres = genres.filter(g => (g.name || "").toLowerCase().includes(q));
+        renderGenreList(genres, mode, animate);
+    }
+}
+
+function renderYoutubeResults(results) {
+    screenLibrary.classList.add("active");
+    screenLibrary.classList.remove("hidden");
+    screenDashboard.classList.remove("active");
+    screenDashboard.classList.add("hidden");
+
+    sectionTitle.textContent = "YouTube Music";
+    itemCount.textContent = `${results.length} tracks`;
+    backBtn.classList.remove("hidden");
+    backLabel.textContent = "Home";
+
+    contentBody.innerHTML = "";
+    const list = document.createElement("div");
+    list.className = "song-list";
+
+    results.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "song-row";
+        row.style.cursor = "pointer";
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.padding = "10px 16px";
+        row.innerHTML = `
+            <img class="song-art" src="${item.thumbnailUrl || '/app-icon'}" loading="lazy" alt="" style="width: 48px; height: 48px; border-radius: 6px; object-fit: cover; margin-right: 12px;">
+            <div class="song-info" style="flex: 1;">
+                <div class="song-title" style="font-weight: bold; color: var(--text-primary);">${esc(item.title)}</div>
+                <div class="song-sub" style="font-size: 13px; color: var(--text-secondary);">${esc(item.artist || "YouTube Music")} · ${esc(item.durationText || "")}</div>
+            </div>
+            <span class="material-icons-round play-icon" style="color: #FF0000; font-size: 28px;">play_circle</span>
+        `;
+        row.addEventListener("click", async () => {
+            await fetchJson(`/api/player/control?action=play`);
+            alert(`Playing "${item.title}" on Felicity!`);
+        });
+        list.appendChild(row);
+    });
+
+    contentBody.appendChild(list);
+}
         let items = drillItem.items;
         if (q) items = items.filter(s =>
             (s.title  || s.name || "").toLowerCase().includes(q) ||

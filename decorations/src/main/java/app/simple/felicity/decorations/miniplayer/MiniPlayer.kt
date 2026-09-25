@@ -133,6 +133,12 @@ class MiniPlayer @JvmOverloads constructor(
 
         /** The content area of [position] was long-pressed. */
         fun onItemLongClick(position: Int) {}
+
+        /** A quick horizontal swipe to the left occurred (used for next track if [BehaviourPreferences] allow it). */
+        fun onSwipeLeft() {}
+
+        /** A quick horizontal swipe to the right occurred (used for previous track if [BehaviourPreferences] allow it). */
+        fun onSwipeRight() {}
     }
 
     var callbacks: Callbacks? = null
@@ -617,6 +623,13 @@ class MiniPlayer @JvmOverloads constructor(
                 return true
             }
         }
+
+        if (velocityX < -2000f) {
+            callbacks?.onSwipeLeft()
+        } else if (velocityX > 2000f) {
+            callbacks?.onSwipeRight()
+        }
+
         if (scrollEngine.scrollState == SCROLL_STATE_DRAGGING) return false
         scrollEngine.finishDrag(velocityX, dragStartScrollPx)
         return true
