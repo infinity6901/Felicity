@@ -30,16 +30,32 @@ if [ -f "$JKS" ] && [ -f "$INFO" ]; then
   # shellcheck disable=SC1090
   source "$INFO"
 else
-  command -v keytool >/dev/null || { echo "keytool not found (install a JDK)"; exit 1; }
   command -v openssl >/dev/null || { echo "openssl not found"; exit 1; }
   [ -f "$JKS" ] && { echo "$JKS exists but $INFO is missing - refusing to overwrite. Restore $INFO or move the keystore away."; exit 1; }
   STORE_PASS="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
   # PKCS12 keystores use one password for store + key.
-  keytool -genkeypair -v -storetype PKCS12 \
-    -keystore "$JKS" -alias "$ALIAS_NAME" \
-    -keyalg RSA -keysize 4096 -validity 36500 \
-    -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
-    -dname "CN=Felicity, OU=Dev, O=Felicity, C=IN" >/dev/null
+  if command -v keytool >/dev/null; then
+    keytool -genkeypair -v -storetype PKCS12 \
+      -keystore "$JKS" -alias "$ALIAS_NAME" \
+      -keyalg RSA -keysize 4096 -validity 36500 \
+      -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
+      -dname "CN=Felicity, OU=Dev, O=Felicity, C=IN" >/dev/null
+  else
+    # Some environments (e.g. Android/PRoot) cannot run a JVM because anonymous
+    # executable memory is blocked. Produce the same RSA-4096 / PKCS12 keystore
+    # with openssl instead of keytool.
+    echo "keytool not found - generating equivalent PKCS12 keystore with openssl"
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "$TMP"' EXIT
+    openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 36500 \
+      -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
+      -subj "/CN=Felicity/OU=Dev/O=Felicity/C=IN" >/dev/null 2>&1
+    openssl pkcs12 -export -name "$ALIAS_NAME" \
+      -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
+      -out "$JKS" -passout "pass:$STORE_PASS" >/dev/null 2>&1
+    rm -rf "$TMP"
+    trap - EXIT
+  fi
   umask 077
   cat > "$INFO" <<INFO_EOF
 ALIAS_NAME=$ALIAS_NAME
@@ -51,7 +67,12 @@ fi
 source "$INFO"
 echo
 echo "Certificate fingerprint (this must never change between releases):"
-keytool -list -v -keystore "$JKS" -alias "$ALIAS_NAME" -storepass "$STORE_PASS" 2>/dev/null | grep -E "SHA256:|Owner:"
+if command -v keytool >/dev/null; then
+  keytool -list -v -keystore "$JKS" -alias "$ALIAS_NAME" -storepass "$STORE_PASS" 2>/dev/null | grep -E "SHA256:|Owner:"
+else
+  openssl pkcs12 -in "$JKS" -nokeys -passin "pass:$STORE_PASS" 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256 -subject
+fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "DRY_RUN=1 -> skipping GitHub secrets."
