@@ -29,3 +29,8 @@ local.properties
 /music/play/release/*
 /music/foss/release/*
 /blur/build/*
+
+# Release signing material (see scripts/setup-signing.sh) - NEVER commit
+/signing/
+*.jks
+*.keystore

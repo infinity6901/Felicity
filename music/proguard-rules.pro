@@ -39,3 +39,11 @@
 -dontwarn javax.imageio.stream.ImageInputStream
 -dontwarn javax.imageio.stream.ImageOutputStream
 -dontwarn javax.swing.filechooser.FileFilter
+# youtubedl-android (yt-dlp / ffmpeg wrapper) and the JSON models it (de)serializes via
+# reflection. Without these, the release build's shrinker strips them and YouTube
+# streaming/downloading crashes only in release builds.
+-keep class com.yausername.** { *; }
+-dontwarn com.yausername.**
+-keep class com.fasterxml.jackson.** { *; }
+-dontwarn com.fasterxml.jackson.**
+-keep class app.simple.felicity.repository.youtube.** { *; }

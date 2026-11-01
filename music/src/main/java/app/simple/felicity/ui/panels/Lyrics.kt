@@ -1,40 +1,60 @@
 package app.simple.felicity.ui.panels
 
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.format.DateUtils
 import android.util.Log
+import android.widget.Toast
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import app.simple.felicity.R
 import app.simple.felicity.databinding.FragmentLyricsBinding
 import app.simple.felicity.decorations.lrc.view.FelicityLrcView
 import app.simple.felicity.decorations.seekbars.WaveformSeekbar
+import app.simple.felicity.decorations.theme.ThemeImageButton
+import app.simple.felicity.decorations.typeface.TypeFaceTextView
 import app.simple.felicity.decorations.utils.TextViewUtils.setTextWithEffect
+import app.simple.felicity.decorations.views.FelicityMediaControls.Companion.MediaControlListener
 import app.simple.felicity.dialogs.lyrics.AddLyrics
 import app.simple.felicity.dialogs.lyrics.AddLyrics.Companion.showAddLyrics
 import app.simple.felicity.dialogs.lyrics.LyricsMenu
 import app.simple.felicity.dialogs.lyrics.LyricsMenu.Companion.showLyricsMenu
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.extensions.fragments.MediaFragment
-import app.simple.felicity.glide.util.AudioCoverUtils.loadArtCoverWithPayload
+import app.simple.felicity.glide.transformation.Blur
+import app.simple.felicity.glide.transformation.Darken
+import app.simple.felicity.glide.transformation.Greyscale
+import app.simple.felicity.glide.transformation.VignetteTransformation
 import app.simple.felicity.managers.EmbedLyricsResult
 import app.simple.felicity.managers.LyricsLoadingStatus
+import app.simple.felicity.preferences.AlbumArtPreferences
 import app.simple.felicity.preferences.LyricsPreferences
+import app.simple.felicity.preferences.UserInterfacePreferences
 import app.simple.felicity.repository.constants.MediaConstants
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.utils.AudioUtils.getProperArtists
 import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
+import app.simple.felicity.shared.utils.ViewUtils.gone
+import app.simple.felicity.shared.utils.ViewUtils.visible
+import app.simple.felicity.theme.managers.ThemeUtils
+import app.simple.felicity.ui.panels.Lyrics.Companion.TEXT_SIZE_DEBOUNCE_MS
 import app.simple.felicity.ui.subpanels.LrcEditor
 import app.simple.felicity.ui.subpanels.LyricsSearch
 import app.simple.felicity.viewmodels.player.LyricsViewModel
 import app.simple.felicity.viewmodels.player.WaveformViewModel
+import com.bumptech.glide.Glide
+import com.bumptech.glide.load.Transformation
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.resource.bitmap.CenterCrop
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.Transition
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -48,6 +68,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
      * Compared in [onAudio] to distinguish a genuine song change from a
      * predictive-back resume that replays [MediaPlaybackManager.songPositionFlow] for
      * the same song — the latter must NOT reset the view.
+     *
+     * Also used to re-seek seekbar and lrc view to the correct position when a predictive-back resumes
      */
     private var currentAudioPath: String? = null
 
@@ -81,6 +103,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         requireHiddenMiniPlayer()
         setAlignment()
         applyTextSize()
+        setAlbumArtBackground(animate = false)
         updateState()
 
         binding.lrc.setOnLrcClickListener { timeInMillis, _ ->
@@ -91,10 +114,12 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             childFragmentManager.showLyricsMenu().setOnMenuListener(object : LyricsMenu.Companion.LyricsMenuListener {
                 override fun onTimeMinusClicked() {
                     lyricsViewModel.seekBy(-SEEK_JUMP_MS)
+                    // syncOffset is updated inside LyricsManager.seekBy() — no extra line needed
                 }
 
                 override fun onTimePlusClicked() {
                     lyricsViewModel.seekBy(SEEK_JUMP_MS)
+                    // Same as above — the manager keeps track of the accumulated offset
                 }
 
                 override fun onLyricsDelete() {
@@ -102,7 +127,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                         if (sure) {
                             lyricsViewModel.deleteLrc {
                                 binding.lrc.reset()
-                                Log.d("LyricsFragment", "Lyrics deleted successfully.")
+                                Log.d(TAG, "Lyrics deleted successfully.")
                             }
                         }
                     }
@@ -131,35 +156,49 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             })
         }
 
-        binding.next.setOnClickListener {
-            MediaPlaybackManager.next()
-        }
+        binding.mediaControls.setMediaControlListener(object : MediaControlListener {
+            override fun onPreviousClick() {
+                MediaPlaybackManager.previous()
+            }
 
-        binding.previous.setOnClickListener {
-            MediaPlaybackManager.previous()
-        }
+            override fun onNextClick() {
+                MediaPlaybackManager.next()
+            }
 
-        binding.play.setOnClickListener {
-            MediaPlaybackManager.flipState()
-        }
+            override fun onPlayClick() {
+                MediaPlaybackManager.flipState()
+            }
+
+            override fun onForwardStep() {
+                MediaPlaybackManager.seekRelative(SEEK_PER_PULSE_MS)
+            }
+
+            override fun onRewindStep() {
+                MediaPlaybackManager.seekRelative(-SEEK_PER_PULSE_MS)
+            }
+        })
 
         binding.search.setOnClickListener {
             openFragment(LyricsSearch.newInstance(), LyricsSearch.TAG)
         }
 
+        // Collect from the shared manager — every screen collecting this StateFlow
+        // always gets the same data, so the lyrics panel never shows a stale song.
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.lrcData.collect { lrcData ->
                 if (lrcData == null || lrcData.isEmpty) {
-                    Log.d("LyricsFragment", "No lyrics found for the current song.")
+                    Log.d(TAG, "No lyrics found for the current song.")
                     binding.lrc.setEmptyLrcData()
                 } else {
-                    Log.d("LyricsFragment", "Loaded lyrics with ${lrcData.size()} lines.")
+                    Log.d(TAG, "Loaded lyrics with ${lrcData.size()} lines.")
                     binding.lrc.setLrcData(
                             lrcData, MediaPlaybackManager.getSeekPosition() + lyricsViewModel.syncOffset)
                 }
             }
         }
 
+        // Watch the loading status and update the empty-text in the lrc view so the user
+        // knows what is happening while the app is talking to the internet.
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.loadingStatus.collect { status ->
                 val message = when (status) {
@@ -171,6 +210,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             }
         }
 
+        // Listen for the signal from LyricsSearch that a new .lrc sidecar was saved so that
+        // the lyrics panel refreshes immediately without requiring a close/reopen cycle.
         viewLifecycleOwner.lifecycleScope.launch {
             lyricsViewModel.embedResult.collect { result ->
                 when (result) {
@@ -187,6 +228,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             }
         }
 
+        // Online (YouTube) tracks have no Audio row, so onAudio never fires for them.
         viewLifecycleOwner.lifecycleScope.launch {
             MediaPlaybackManager.currentOnlineTrackFlow.collect { onlineTrack ->
                 if (onlineTrack != null) {
@@ -197,13 +239,15 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
         parentFragmentManager.setFragmentResultListener(
                 LyricsSearch.REQUEST_KEY_LYRICS_SAVED, viewLifecycleOwner) { _, _ ->
-            Log.d("LyricsFragment", "Lyrics saved signal received, reloading lrc data.")
+            Log.d(TAG, "Lyrics saved signal received, reloading lrc data.")
             lyricsViewModel.reloadLrcData()
         }
 
+        // Listen for the signal from LrcEditor that the user has saved a newly edited .lrc
+        // file, so this panel can reload without requiring the user to close and reopen.
         parentFragmentManager.setFragmentResultListener(
                 LrcEditor.REQUEST_KEY_LRC_SAVED, viewLifecycleOwner) { _, _ ->
-            Log.d("LyricsFragment", "LRC editor saved signal received, reloading lrc data.")
+            Log.d(TAG, "LRC editor saved signal received, reloading lrc data.")
             lyricsViewModel.reloadLrcData()
         }
 
@@ -238,22 +282,24 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         }
     }
 
+    /** Applies the current text-size preferences to the view immediately. */
     private fun applyTextSize() {
         val normal = LyricsPreferences.getLrcTextSize()
         binding.lrc.setTextSizes(normal, normal * LRC_HIGHLIGHT_TIMES)
     }
 
+    /**
+     * Schedules [applyTextSize] after [TEXT_SIZE_DEBOUNCE_MS] ms, cancelling any
+     * previously pending call.  Rapid slider events therefore collapse into one update
+     * that fires only once the user stops (or nearly stops) dragging.
+     */
     private fun scheduleTextSizeUpdate() {
         textSizeHandler.removeCallbacks(textSizeRunnable)
         textSizeHandler.postDelayed(textSizeRunnable, TEXT_SIZE_DEBOUNCE_MS)
     }
 
     private fun updatePlayButtonState(isPlaying: Boolean) {
-        if (isPlaying) {
-            binding.play.setPlaying()
-        } else {
-            binding.play.setPaused()
-        }
+        binding.mediaControls.setPlaying(isPlaying)
     }
 
     private fun updateState() {
@@ -262,42 +308,108 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             currentAudioPath = "online:${onlineTrack.source}:${onlineTrack.id}"
             binding.title.text = onlineTrack.title
             binding.artists.text = onlineTrack.subtitle
-            binding.cover.loadArtCoverWithPayload(onlineTrack.artworkUrl ?: "")
+            loadArtCover(onlineTrack.artworkUrl ?: "")
             val duration = onlineTrack.durationMs ?: 0L
             binding.lrc.setDuration(duration)
             binding.seekbar.setDurationWithReset(duration)
             binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = false)
             updatePlayButtonState(MediaPlaybackManager.isPlaying())
-        } else {
-            val audio = MediaPlaybackManager.getCurrentSong()
-            if (audio != null) {
-                val isSameSong = audio.uri == currentAudioPath
-                currentAudioPath = audio.uri
-
-                val forward = MediaPlaybackManager.lastNavigationDirection
-                binding.title.setTextWithEffect(audio.getProperTitle(), forward)
-                binding.artists.setTextWithEffect(audio.getProperArtists(), forward, 50L)
-                binding.cover.loadArtCoverWithPayload(audio)
-                binding.lrc.setDuration(audio.duration)
-                binding.seekbar.setDurationWithReset(audio.duration)
-                binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = false)
-                updatePlayButtonState(MediaPlaybackManager.isPlaying())
-
-                if (!isSameSong) {
-                    lyricsViewModel.loadLrcData()
-                }
-
-                loadWaveformWhenReady(audio)
-            }
+            return
         }
+
+        val audio = MediaPlaybackManager.getCurrentSong() ?: return
+        currentAudioPath = audio.uri
+        binding.title.text = audio.getProperTitle()
+        binding.artists.text = audio.getProperArtists()
+        loadArtCover(audio)
+        binding.lrc.setDuration(audio.duration)
+        binding.seekbar.setDuration(audio.duration)
+        binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = false)
+        updatePlayButtonState(MediaPlaybackManager.isPlaying())
+
+        binding.seekbar.optics = UserInterfacePreferences.getWaveformOptics()
+
+        binding.seekbar.layoutMode = if (UserInterfacePreferences.isWaveformFullMode()) {
+            WaveformSeekbar.LAYOUT_MODE_FULL
+        } else {
+            WaveformSeekbar.LAYOUT_MODE_SCROLLING
+        }
+
+        // Defer waveform decoding until ExoPlayer is actually playing to avoid
+        // Amplituda and ExoPlayer fighting over the same file I/O resources.
+        loadWaveformWhenReady(audio)
     }
 
+    /**
+     * Schedules waveform decoding for [audio].
+     *
+     * The decode starts immediately when the player is already playing or in a ready state
+     * (paused or playing). If the player is still buffering or idle, [audio] is stored in
+     * [pendingWaveformAudio] and the decode is deferred until [onPlaybackStateChanged]
+     * receives [MediaConstants.PLAYBACK_READY] or [MediaConstants.PLAYBACK_PLAYING].
+     *
+     * This prevents Amplituda and ExoPlayer from contending over the same file I/O
+     * resources during the initial buffering phase.
+     *
+     * @param audio the track whose waveform should be decoded
+     */
     private fun loadWaveformWhenReady(audio: Audio) {
         if (MediaPlaybackManager.isPlaying() || MediaPlaybackManager.isPlayerReady()) {
             waveformViewModel.loadWaveform(audio)
             pendingWaveformAudio = null
         } else {
             pendingWaveformAudio = audio
+        }
+    }
+
+    @Suppress("SameParameterValue")
+    private fun setAlbumArtBackground(animate: Boolean = false) {
+        val enabled = LyricsPreferences.isAlbumArtBackground()
+
+        binding.lrc.setAlbumArtBackground(enabled)
+
+        if (enabled) {
+            if (animate) {
+                binding.coverContainer.animate()
+                    .alpha(1f)
+                    .setDuration(300L)
+                    .withStartAction { binding.coverContainer.visible(false) }
+                    .start()
+            } else {
+                binding.coverContainer.animate().cancel()
+                binding.coverContainer.visible(false)
+                binding.coverContainer.alpha = 1f
+            }
+
+            binding.title.setTextColorMode(TypeFaceTextView.WHITE)
+            binding.artists.setTextColorMode(TypeFaceTextView.SECONDARY_WHITE)
+            binding.search.setTintMode(ThemeImageButton.WHITE)
+            binding.settings.setTintMode(ThemeImageButton.WHITE)
+            requireLightBarIcons()
+        } else {
+            if (animate) {
+                binding.coverContainer.animate()
+                    .alpha(0f)
+                    .setDuration(300L)
+                    .withEndAction { binding.coverContainer.gone(false) }
+                    .start()
+            } else {
+                binding.coverContainer.animate().cancel()
+                binding.coverContainer.gone(false)
+                binding.coverContainer.alpha = 0f
+            }
+
+            binding.title.setTextColorMode(TypeFaceTextView.BOLD)
+            binding.artists.setTextColorMode(TypeFaceTextView.SECONDARY)
+            binding.search.setTintMode(ThemeImageButton.REGULAR)
+            binding.settings.setTintMode(ThemeImageButton.REGULAR)
+
+            /**
+             * We cannot just set dark bar colors since user can be on any theme
+             * and each theme may set their own bar colors. So we just reapply
+             * the theme's bar colors to ensure consistency.
+             */
+            ThemeUtils.setBarColors(resources, requireActivity().window)
         }
     }
 
@@ -309,6 +421,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         when (key) {
             LyricsPreferences.LRC_ALIGNMENT -> setAlignment(animate = true)
             LyricsPreferences.LRC_TEXT_SIZE -> scheduleTextSizeUpdate()
+            LyricsPreferences.ALBUM_ART_BACKGROUND -> setAlbumArtBackground(animate = true)
         }
     }
 
@@ -319,6 +432,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
     override fun onResume() {
         super.onResume()
+        // If lyrics data is missing after returning from a long background session,
+        // force a fresh reload so the view is not left blank.
         if (lyricsViewModel.lrcData.value?.isEmpty == true) {
             lyricsViewModel.reloadLrcData()
         }
@@ -333,29 +448,39 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
     override fun onAudio(audio: Audio) {
         super.onAudio(audio)
 
-        val onlineTrack = MediaPlaybackManager.getCurrentOnlineTrack()
-        if (onlineTrack != null) {
-            val onlinePath = "online:${onlineTrack.source}:${onlineTrack.id}"
-            if (currentAudioPath != onlinePath) {
-                updateState()
-            } else {
-                binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = true)
-            }
+        // An online track is playing; its state is driven by currentOnlineTrackFlow.
+        if (MediaPlaybackManager.getCurrentOnlineTrack() != null) {
             return
         }
 
         val isSameSong = audio.uri == currentAudioPath
+        currentAudioPath = audio.uri
+
         if (!isSameSong) {
-            updateState()
-        } else {
-            binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = true)
+            lyricsViewModel.loadLrcData()
+            val forward = MediaPlaybackManager.lastNavigationDirection
+            binding.title.setTextWithEffect(audio.getProperTitle(), forward)
+            binding.artists.setTextWithEffect(audio.getProperArtists(), forward, 50L)
+            loadArtCover(audio)
+            binding.lrc.setDuration(audio.duration)
+            binding.seekbar.setDurationWithReset(audio.duration)
         }
+
+        // Always refresh the seek position (covers predictive-back resume and actual changes).
+        binding.seekbar.setProgress(MediaPlaybackManager.getSeekPosition(), animate = true)
+
+        // Defer waveform decoding until ExoPlayer is actually playing to avoid
+        // Amplituda and ExoPlayer fighting over the same file I/O resources.
+        loadWaveformWhenReady(audio)
     }
 
     override fun onPlaybackStateChanged(state: Int) {
         super.onPlaybackStateChanged(state)
         when (state) {
             MediaConstants.PLAYBACK_READY -> {
+                // ExoPlayer has finished buffering and the decoder is ready. This is the
+                // earliest safe moment to run Amplituda's extraction in parallel, regardless
+                // of whether playback will start immediately or stay paused.
                 pendingWaveformAudio?.let { audio ->
                     waveformViewModel.loadWaveform(audio)
                     pendingWaveformAudio = null
@@ -363,6 +488,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             }
             MediaConstants.PLAYBACK_PLAYING -> {
                 updatePlayButtonState(true)
+                // Also drain any pending waveform that was queued before the ready event arrived
+                // (e.g., when the service emits PLAYING without a preceding READY being observed).
                 pendingWaveformAudio?.let { audio ->
                     waveformViewModel.loadWaveform(audio)
                     pendingWaveformAudio = null
@@ -375,7 +502,59 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
     }
 
     override fun onLyricsCreated() {
+        // Reload the lyrics view after the sidecar file has been created
         lyricsViewModel.reloadLrcData()
+    }
+
+    /**
+     * Loads the album art for the given [item] and applies a series of transformations
+     * (crop, blur, greyscale, darken, vignette) before setting it as the background of
+     * the lyrics panel.
+     *
+     * The front cover is also updated with a fade-out/fade-in animation to smoothly
+     * transition to the new image. If loading fails, a default image is displayed.
+     *
+     * @param item The source of the album art, typically an [Audio] object or a URI.
+     */
+    private fun loadArtCover(item: Any) {
+        val transformations = mutableListOf<Transformation<Bitmap>>()
+
+        transformations.add(CenterCrop()) // crop
+        transformations.add(Blur(48)) // blur
+        if (AlbumArtPreferences.isGreyscaleEnabled()) transformations.add(Greyscale()) // greyscale but from user preference
+        transformations.add(Darken(0.3F)) // darken/dim the image
+        transformations.add(VignetteTransformation()) // vignette to smooth out the corners
+
+        Glide.with(this)
+            .asBitmap()
+            .load(item)
+            .dontTransform()
+            .transform(*transformations.toTypedArray())
+            .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .error(R.drawable.ic_felicity)
+            .dontAnimate()
+            .into(object : CustomTarget<Bitmap>() {
+                override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    binding.coverBack.setImageBitmap(resource)
+                    binding.coverBack.alpha = 1f
+
+                    binding.coverFront.animate()
+                        .alpha(0f)
+                        .setDuration(300)
+                        .withEndAction {
+                            binding.coverFront.setImageBitmap(resource)
+                            binding.coverFront.alpha = 1f
+                            binding.coverBack.setImageDrawable(null)
+                        }
+                        .start()
+                }
+
+                override fun onLoadFailed(errorDrawable: Drawable?) {
+                    binding.coverFront.setImageResource(R.drawable.ic_felicity)
+                }
+
+                override fun onLoadCleared(placeholder: Drawable?) {}
+            })
     }
 
     companion object {
@@ -389,6 +568,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         const val TAG = "LyricsFragment"
 
         private const val LRC_HIGHLIGHT_TIMES = 1.2F
+
+        /** How long to wait after the last slider event before applying the text-size change. */
         private const val TEXT_SIZE_DEBOUNCE_MS = 150L
         private const val SEEK_JUMP_MS = 500L
     }

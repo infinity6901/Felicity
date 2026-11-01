@@ -60,6 +60,15 @@ target_include_directories(felicity_milkdrop PRIVATE
     ${projectm_SOURCE_DIR}/src/libprojectM
     ${projectm_SOURCE_DIR}/src/api/include)
 
+# The PROJECTM_VERSION defines are missing in the generated config.h for some reason,
+# so we inject them directly via compiler flags to fix the build error in ProjectMCWrapper.cpp.
+add_compile_definitions(
+    PROJECTM_VERSION_MAJOR=4
+    PROJECTM_VERSION_MINOR=1
+    PROJECTM_VERSION_PATCH=6
+    PROJECTM_VERSION_STRING="4.1.6"
+)
+
 find_library(log-lib  log)
 find_library(gles-lib GLESv3)
 find_library(egl-lib  EGL)

@@ -24,6 +24,7 @@
     <string name="oboe" translatable="false">Oboe</string>
     <string name="audiotrack" translatable="false">AudioTrack</string>
     <string name="peq" translatable="false">PEQ</string>
+    <string name="parametric_eq" translatable="false">Parametric EQ</string>
 
     <!-- Audio Pipeline Dialog — channel display values -->
     <string name="channel_mono" translatable="false">1 (Mono)</string>
@@ -60,6 +61,15 @@
     <string name="rg_peak_hint" translatable="false">e.g. 0.9876</string>
     <string name="rg_track_peak" translatable="false">Track Peak</string>
     <string name="rg_album_peak" translatable="false">Album Peak</string>
-    <string name="active_years">%1$s – %2$s</string>
-    <string name="usb_dac">USB DAC</string>
+    <string name="active_years" translatable="false">%1$s – %2$s</string>
+    <string name="usb_dac" translatable="false">USB DAC</string>
+    <string name="artflow" translatable="false">ArtFlow</string>
+    <string name="amoled" translatable="false">AMOLED</string>
+    <string name="replay_gain" translatable="false">Replay Gain</string>
+
+    <string name="fft_resolution_very_low" translatable="false">Very Low (256)</string>
+    <string name="fft_resolution_low" translatable="false">Low (512)</string>
+    <string name="fft_resolution_normal" translatable="false">Normal (1024)</string>
+    <string name="fft_resolution_high" translatable="false">High (2048)</string>
+    <string name="fft_resolution_ultra" translatable="false">Ultra (4096)</string>
 </resources>

@@ -27,6 +27,7 @@ import app.simple.felicity.engine.managers.MediaPlaybackManager.removeQueueItemS
 import app.simple.felicity.engine.managers.MediaPlaybackManager.setSongs
 import app.simple.felicity.engine.managers.MediaPlaybackManager.switchToQueue
 import app.simple.felicity.engine.managers.MediaPlaybackManager.updatePosition
+import app.simple.felicity.preferences.PlayerPreferences
 import app.simple.felicity.preferences.ShufflePreferences
 import app.simple.felicity.repository.constants.MediaConstants
 import app.simple.felicity.repository.listeners.MediaStateListener
@@ -359,6 +360,9 @@ object MediaPlaybackManager {
         playCurrentOnlineQueueEntry()
     }
 
+    /** True while an online (YouTube playlist) queue is driving playback. */
+    fun isOnlineQueueActive(): Boolean = _onlineQueueFlow.value.isNotEmpty()
+
     fun hasNextInOnlineQueue(): Boolean =
         _onlineQueueFlow.value.isNotEmpty() && _onlineQueueIndexFlow.value < _onlineQueueFlow.value.lastIndex
 
@@ -403,15 +407,32 @@ object MediaPlaybackManager {
     }
 
     fun clearOnlineQueue() {
+        onlineQueueJob?.cancel()
+        onlineQueueJob = null
         _onlineQueueFlow.value = emptyList()
         _onlineQueueIndexFlow.value = -1
     }
 
-    private fun playCurrentOnlineQueueEntry() {
-        val track = _onlineQueueFlow.value.getOrNull(_onlineQueueIndexFlow.value) ?: return
+    /**
+     * The in-flight resolve+play for the current online-queue entry. Each new request cancels
+     * the previous one, and the result is re-checked against the live index after resolving,
+     * so rapidly tapping next/previous can't let an older resolve finish last and play a track
+     * that no longer matches the index the UI shows.
+     */
+    private var onlineQueueJob: Job? = null
 
-        scope.launch {
+    private fun playCurrentOnlineQueueEntry() {
+        val expectedIndex = _onlineQueueIndexFlow.value
+        val track = _onlineQueueFlow.value.getOrNull(expectedIndex) ?: return
+
+        onlineQueueJob?.cancel()
+        onlineQueueJob = scope.launch {
             val url = onlineStreamResolver?.invoke(track)
+            // Superseded while resolving (another next/previous, reorder, or the queue was cleared).
+            if (_onlineQueueIndexFlow.value != expectedIndex ||
+                    _onlineQueueFlow.value.getOrNull(expectedIndex)?.id != track.id) {
+                return@launch
+            }
             if (url != null) {
                 playOnlineTrack(track, url)
 
@@ -581,6 +602,7 @@ object MediaPlaybackManager {
     }
 
     fun getSongs(): List<Audio> = songs
+    fun getQueueSize(): Int = songs.size
 
     /**
      * Returns the queue in its original, unshuffled order. When shuffle is off this is
@@ -727,6 +749,52 @@ object MediaPlaybackManager {
                     mediaController?.play()
                 }
                 _songPositionFlow.emit(newCurrentPosition)
+            }
+        }
+
+        scope.launch {
+            _songListFlow.emit(this@MediaPlaybackManager.songs)
+        }
+    }
+
+    /**
+     * Removes every song from the queue except the currently playing one, without
+     * interrupting playback. The currently playing song becomes the sole item in the
+     * queue at index 0. Safe to call for a "Clear queue" action.
+     *
+     * Unlike [moveQueueItemSilently] (a pure reorder), the queue actually shrinks here and
+     * the playing song's index genuinely changes (e.g. 3 -> 0) — exactly like the "some other
+     * item removed, current position shifts" branch of [removeQueueItemSilently]. So this
+     * DOES let [currentSongPosition]'s normal setter run and emit [_songPositionFlow],
+     * ensuring every observer that keys off the raw index (not just the song list) learns
+     * the position is now 0 instead of being left showing the old, stale index.
+     */
+    fun clearQueueExceptCurrent() {
+        if (songs.size <= 1) return
+        val current = getCurrentSong() ?: return
+        val currentIndex = currentSongPosition.coerceIn(0, songs.size - 1)
+
+        this.songs = listOf(current)
+        currentSongPosition = 0
+
+        // Surgically remove every item except the current one from ExoPlayer's queue —
+        // no setMediaItems, no prepare, no gap in playback.
+        val controller = mediaController
+        if (controller != null) {
+            val count = controller.mediaItemCount
+            if (count > 1) {
+                if (currentIndex + 1 < count) {
+                    controller.removeMediaItems(currentIndex + 1, count)
+                }
+                if (currentIndex > 0) {
+                    controller.removeMediaItems(0, currentIndex)
+                }
+            }
+            // Belt-and-suspenders: explicitly confirm the controller's active index now
+            // matches position 0, in case ExoPlayer doesn't reflect the reindex in
+            // currentMediaItemIndex immediately after the surgical removals above.
+            if (controller.currentMediaItemIndex != 0) {
+                controller.seekTo(0, controller.currentPosition)
             }
         }
 
@@ -1235,14 +1303,32 @@ object MediaPlaybackManager {
      * Applies the current repeat mode behavior:
      *  - REPEAT_ONE / REPEAT_QUEUE: ExoPlayer handles natively, this is a no-op.
      *  - REPEAT_OFF: pause and seek back to the first song.
+     *  - Online queue active: advance / wrap (repeat-all) / stop, honouring the end-of-track sleep timer.
      */
     fun handleQueueEnded() {
-        // A single online track finishing playback also fires STATE_ENDED (it's a
-        // one-item "queue" as far as ExoPlayer is concerned) — advance the online queue
-        // instead of resetting/pausing, same as ExoPlayer's own multi-item auto-advance
-        // does for local playback.
-        if (hasNextInOnlineQueue()) {
-            nextInOnlineQueue()
+        // Online queue: ExoPlayer holds one item at a time, so this is the only place an
+        // online queue's "end of song" is ever observed.
+        if (_onlineQueueFlow.value.isNotEmpty()) {
+            // End-of-track sleep timer: the song just finished, so stop here instead of advancing.
+            if (SleepTimerManager.consumeIfArmedForEndOfTrack()) {
+                mediaController?.pause()
+                return
+            }
+            if (hasNextInOnlineQueue()) {
+                nextInOnlineQueue()
+                return
+            }
+            if (PlayerPreferences.getRepeatMode() == MediaConstants.REPEAT_QUEUE) {
+                // Repeat-all: wrap around to the first entry.
+                _onlineQueueIndexFlow.value = 0
+                playCurrentOnlineQueueEntry()
+                return
+            }
+            // End of the online queue with repeat off: stop on the last track. The LOCAL queue
+            // position is deliberately untouched — it isn't what just finished.
+            mediaController?.pause()
+            scope.launch { _playbackStateFlow.emit(MediaConstants.PLAYBACK_PAUSED) }
+            stopSeekPositionUpdates()
             return
         }
 
@@ -1272,12 +1358,21 @@ object MediaPlaybackManager {
         seekJob?.cancel()
         seekJob = scope.launch {
             var lastEmittedPosition: Long? = null
+
             while (isActive) {
                 val position = getSeekPosition()
-                // Only emit if position actually changed to reduce overhead
+
                 if (position != lastEmittedPosition) {
-                    _songSeekPositionFlow.value = position
-                    lastEmittedPosition = position
+                    // If the position drops backward by less than 1000ms, it's likely a pipeline correction.
+                    // Ignore it and let the next loop catch up naturally.
+                    val isMinorStutter = lastEmittedPosition != null &&
+                            position < lastEmittedPosition &&
+                            (lastEmittedPosition - position) < 1000L
+
+                    if (!isMinorStutter) {
+                        _songSeekPositionFlow.value = position
+                        lastEmittedPosition = position
+                    }
                 }
 
                 delay(intervalMs.milliseconds)

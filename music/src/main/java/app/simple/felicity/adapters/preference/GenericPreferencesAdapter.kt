@@ -142,10 +142,18 @@ class GenericPreferencesAdapter(
                 if (preference.icon != -1) {
                     holder.binding.icon.setImageResource(preference.icon)
                 }
-                holder.binding.slider.setProgress(seekbarState.position, false)
+                // setMax()/setMin() MUST run before setProgress(): setProgress() clamps the
+                // given value against whatever range the view (possibly a recycled
+                // ViewHolder from a completely different slider preference) currently has.
+                // Calling it first meant a wide/unusual range like a duration-in-milliseconds
+                // slider could get clamped against a stale small range, then setMin()
+                // afterwards would "correct" that already-wrong value by snapping it down to
+                // the new minimum — so the displayed value silently collapsed to whatever the
+                // slider's minimum was, no matter what was actually stored in preferences.
                 holder.binding.slider.setDefaultProgress(seekbarState.default)
                 holder.binding.slider.setMax(seekbarState.max)
                 holder.binding.slider.setMin(seekbarState.min)
+                holder.binding.slider.setProgress(seekbarState.position, false)
                 holder.binding.slider.setLeftLabelEnabled(seekbarState.leftLabel)
                 holder.binding.slider.setRightLabelEnabled(seekbarState.rightLabel)
 
