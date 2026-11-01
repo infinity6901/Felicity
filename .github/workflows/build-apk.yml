@@ -1,0 +1,168 @@
+name: Build APKs
+
+# Builds the FOSS flavor (the GitHub / sideload build) as:
+#   - debug   : felicity-foss-debug.apk    (versionName gets a "-dev" suffix)
+#   - release : felicity-foss-release.apk  (minified + shrunk)
+# BOTH are signed with the SAME key stored in the repo secrets, so any build can be installed
+# over any other and future updates never hit "App not installed / signatures conflict".
+#
+# Triggers
+#   - Manual  : Actions -> "Build APKs" -> Run workflow (pick debug / release / publish)
+#   - Push to main/master : debug APK only (quick sanity build)
+#   - Push of a tag "v*"  : debug + release, and publishes a GitHub Release with the APKs
+#
+# One-time setup: run scripts/setup-signing.sh (creates the keystore + the 4 secrets below).
+# Required secrets: SIGN_KEY (base64 .jks), ALIAS, KEY_PASSWORD, KEY_STORE_PASSWORD
+
+on:
+    workflow_dispatch:
+        inputs:
+            build_debug:
+                description: 'Build the debug APK'
+                type: boolean
+                default: true
+            build_release:
+                description: 'Build the release APK'
+                type: boolean
+                default: true
+            publish_release:
+                description: 'Publish a GitHub Release (tag = v<versionName>)'
+                type: boolean
+                default: false
+    push:
+        branches: [ main, master ]
+        tags: [ 'v*' ]
+
+permissions:
+    contents: write
+
+concurrency:
+    group: build-apk-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build:
+        name: Build FOSS APKs
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@v4
+
+            -   name: Decide what to build
+                id: plan
+                run: |
+                    DEBUG=false; RELEASE=false; PUBLISH=false
+                    if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                      DEBUG="${{ inputs.build_debug }}"
+                      RELEASE="${{ inputs.build_release }}"
+                      PUBLISH="${{ inputs.publish_release }}"
+                    elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+                      DEBUG=true; RELEASE=true; PUBLISH=true
+                    else
+                      DEBUG=true
+                    fi
+                    # Publishing needs a release APK.
+                    if [ "$PUBLISH" = "true" ]; then RELEASE=true; fi
+                    echo "debug=$DEBUG"     >> "$GITHUB_OUTPUT"
+                    echo "release=$RELEASE"  >> "$GITHUB_OUTPUT"
+                    echo "publish=$PUBLISH"  >> "$GITHUB_OUTPUT"
+
+                    VERSION_NAME=$(grep -oP 'versionName "\K[^"]*' music/build.gradle)
+                    VERSION_CODE=$(grep -oP 'versionCode \K\d+' music/build.gradle)
+                    echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+                    echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+                    echo "Plan: debug=$DEBUG release=$RELEASE publish=$PUBLISH (v$VERSION_NAME / $VERSION_CODE)"
+
+            -   name: Check signing secrets
+                env:
+                    SIGN_KEY: ${{ secrets.SIGN_KEY }}
+                    ALIAS: ${{ secrets.ALIAS }}
+                    KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+                    KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+                run: |
+                    MISSING=""
+                    [ -z "$SIGN_KEY" ] && MISSING="$MISSING SIGN_KEY"
+                    [ -z "$ALIAS" ] && MISSING="$MISSING ALIAS"
+                    [ -z "$KEY_PASSWORD" ] && MISSING="$MISSING KEY_PASSWORD"
+                    [ -z "$KEY_STORE_PASSWORD" ] && MISSING="$MISSING KEY_STORE_PASSWORD"
+                    if [ -n "$MISSING" ]; then
+                      echo "::error::Missing repository secret(s):$MISSING. Run scripts/setup-signing.sh once (see .github/workflows/build-apk.yml)."
+                      echo "Refusing to build with a throw-away key: such an APK could never be updated by a later build."
+                      exit 1
+                    fi
+
+            -   name: Set up JDK 21
+                uses: actions/setup-java@v4
+                with:
+                    java-version: '21'
+                    distribution: 'temurin'
+
+            -   name: Install Android NDK + CMake
+                run: |
+                    yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+                    "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "cmake;3.22.1"
+
+            -   name: Set up Gradle (with caching)
+                uses: gradle/actions/setup-gradle@v4
+
+            # build.gradle looks for the keystore at ~/work/_temp/keystore/key.jks and reads the
+            # passwords from the SIGNING_* environment variables below.
+            -   name: Decode keystore
+                env:
+                    SIGN_KEY: ${{ secrets.SIGN_KEY }}
+                run: |
+                    mkdir -p "$HOME/work/_temp/keystore"
+                    echo "$SIGN_KEY" | base64 -d > "$HOME/work/_temp/keystore/key.jks"
+                    test -s "$HOME/work/_temp/keystore/key.jks"
+
+            -   name: Build APKs
+                env:
+                    SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+                    SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+                    SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+                run: |
+                    chmod +x ./gradlew
+                    TASKS=""
+                    [ "${{ steps.plan.outputs.debug }}" = "true" ] && TASKS="$TASKS assembleFossDebug"
+                    [ "${{ steps.plan.outputs.release }}" = "true" ] && TASKS="$TASKS assembleFossRelease"
+                    if [ -z "$TASKS" ]; then echo "::error::Nothing selected to build."; exit 1; fi
+                    ./gradlew $TASKS --stacktrace
+
+            -   name: Collect and verify APKs
+                id: apks
+                run: |
+                    mkdir -p out
+                    VN="${{ steps.plan.outputs.version_name }}"
+                    for T in debug release; do
+                      APK=$(find music/build/outputs/apk -path "*foss*" -path "*/$T/*" -name "*.apk" | head -n 1)
+                      if [ -n "$APK" ]; then
+                        cp "$APK" "out/felicity-foss-$T-$VN.apk"
+                      fi
+                    done
+                    ls -la out
+                    APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort -V | tail -n 1)
+                    for F in out/*.apk; do
+                      echo "== $F"
+                      "$APKSIGNER" verify --print-certs "$F" | grep -E "SHA-256|Signer #1 certificate DN"
+                    done
+                    echo "Both APKs above must print the SAME SHA-256 digest (and it must stay the same across runs)."
+
+            -   name: Upload APKs
+                uses: actions/upload-artifact@v4
+                with:
+                    name: felicity-apks-${{ steps.plan.outputs.version_name }}
+                    path: out/*.apk
+                    retention-days: 30
+                    if-no-files-found: error
+
+            -   name: Publish GitHub Release
+                if: steps.plan.outputs.publish == 'true'
+                uses: softprops/action-gh-release@v2
+                with:
+                    tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.plan.outputs.version_name) }}
+                    name: Felicity ${{ steps.plan.outputs.version_name }}
+                    files: out/*.apk
+                    generate_release_notes: true
+                    prerelease: ${{ contains(steps.plan.outputs.version_name, 'alpha') || contains(steps.plan.outputs.version_name, 'beta') }}

@@ -56,6 +56,19 @@ class SimpleBaseKnobDrawable(
     private var accentColor: Int = DEFAULT_ACCENT_COLOR
 
     @ColorInt
+    var customAccentColor: Int = Color.TRANSPARENT
+        set(value) {
+            if (field != value) {
+                field = value
+                currentStateColor = lerpColor(idleColor, getEffectiveAccentColor(), stateProgress)
+                invalidateSelf()
+            }
+        }
+
+    @ColorInt
+    private fun getEffectiveAccentColor(): Int = if (customAccentColor == 0 || customAccentColor == Color.TRANSPARENT) accentColor else customAccentColor
+
+    @ColorInt
     private var idleColor: Int = DEFAULT_IDLE_COLOR
 
     @ColorInt
@@ -68,7 +81,7 @@ class SimpleBaseKnobDrawable(
      */
     private var glowEnabled: Boolean = false
 
-    // ── Paints ──────────────────────────────────────────────────────────────────
+    // == Paints ======
 
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -95,7 +108,7 @@ class SimpleBaseKnobDrawable(
         style = Paint.Style.FILL
     }
 
-    // ── Animation state ──────────────────────────────────────────────────────────
+    // == Animation state ==========================================================
 
     /**
      * Normalized press / release state in [0..1].
@@ -115,14 +128,14 @@ class SimpleBaseKnobDrawable(
     private var indicatorGlowProgress: Float = 0f
     private var indicatorGlowAnimator: ValueAnimator? = null
 
-    // ── State color ───────────────────────────────────────────────────────────────
+    // == State color ===============================================================
 
     @ColorInt
     @get:JvmName("getAnimatedStateColor")
     var currentStateColor: Int = idleColor
         private set
 
-    // ── BaseKnobDrawable ───────────────────────────────────────────────────────
+    // == BaseKnobDrawable =======================================================
 
     override fun getCurrentStateColor(): Int = currentStateColor
 
@@ -150,7 +163,7 @@ class SimpleBaseKnobDrawable(
             interpolator = if (pressed) AccelerateDecelerateInterpolator() else DecelerateInterpolator()
             addUpdateListener { anim ->
                 stateProgress = anim.animatedValue as Float
-                currentStateColor = lerpColor(idleColor, accentColor, stateProgress)
+                currentStateColor = lerpColor(idleColor, getEffectiveAccentColor(), stateProgress)
                 invalidateSelf()
             }
             start()
@@ -208,7 +221,7 @@ class SimpleBaseKnobDrawable(
         }
     }
 
-    // ── ThemeChangedListener ──────────────────────────────────────────────────────
+    // == ThemeChangedListener ======================================================
 
     override fun onThemeChanged(theme: Theme, animate: Boolean) {
         applyTheme(theme)
@@ -218,7 +231,7 @@ class SimpleBaseKnobDrawable(
         applyAccent(accent)
     }
 
-    // ── Drawable ─────────────────────────────────────────────────────────────────
+    // == Drawable =================================================================
 
     override fun draw(canvas: Canvas) {
         val b = bounds
@@ -254,7 +267,7 @@ class SimpleBaseKnobDrawable(
         // Indicator: independent glow that also responds to programmatic position pulses.
         // Taking max() means a programmatic pulse is visible only when the knob is not pressed.
         val indicatorT = maxOf(stateProgress, indicatorGlowProgress)
-        val indicatorColor = lerpColor(idleColor, accentColor, indicatorT)
+        val indicatorColor = lerpColor(idleColor, getEffectiveAccentColor(), indicatorT)
         val indicatorGlowRadius = if (glowEnabled) maxGlowRadius * indicatorT else 0f
         if (indicatorGlowRadius > 0f) {
             indicatorPaint.setShadowLayer(indicatorGlowRadius, 0f, 0f, indicatorColor)
@@ -285,7 +298,7 @@ class SimpleBaseKnobDrawable(
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
-    // ── Helpers ──────────────────────────────────────────────────────────────────
+    // == Helpers ======
 
     /** Immediately snaps to the idle state without animation (useful when attaching to a new view). */
     fun resetToIdle() {
@@ -333,7 +346,7 @@ class SimpleBaseKnobDrawable(
     private fun applyAccent(accent: Accent) {
         accentColor = accent.primaryAccentColor
         // Refresh currentStateColor so the arc / tick marks stay in sync with the new accent.
-        currentStateColor = lerpColor(idleColor, accentColor, stateProgress)
+        currentStateColor = lerpColor(idleColor, getEffectiveAccentColor(), stateProgress)
         invalidateSelf()
     }
 

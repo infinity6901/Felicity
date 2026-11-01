@@ -52,7 +52,6 @@ import app.simple.felicity.engine.R
 import app.simple.felicity.engine.audio.FelicityAudioSink
 import app.simple.felicity.engine.managers.AudioPipelineManager
 import app.simple.felicity.engine.managers.AudioProcessorManager
-import app.simple.felicity.engine.managers.BluetoothProfileManager
 import app.simple.felicity.engine.managers.EqualizerManager
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.engine.managers.PlaybackStateManager
@@ -66,11 +65,13 @@ import app.simple.felicity.manager.SharedPreferences.initRegisterSharedPreferenc
 import app.simple.felicity.manager.SharedPreferences.unregisterSharedPreferenceChangeListener
 import app.simple.felicity.preferences.AppearancePreferences
 import app.simple.felicity.preferences.AudioPreferences
+import app.simple.felicity.preferences.CrossfadePreferences
 import app.simple.felicity.preferences.EqualizerPreferences
 import app.simple.felicity.preferences.PlayerPreferences
 import app.simple.felicity.preferences.ShufflePreferences
 import app.simple.felicity.preferences.UserInterfacePreferences
 import app.simple.felicity.repository.constants.MediaConstants
+import app.simple.felicity.repository.database.instances.AudioDatabase
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.repositories.AudioRepository
 import app.simple.felicity.repository.repositories.SongStatRepository
@@ -90,6 +91,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -207,6 +211,39 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     /** Runs the gradual volume ramp-down when a [SleepTimerManager] countdown finishes with fade-out enabled. */
     private var sleepTimerFadeJob: Job? = null
 
+    // ---- Crossfade ---------------------------------------------------------------------------
+    //
+    // A temporary, second ExoPlayer plays the first few seconds of the upcoming track while
+    // [player]'s volume fades out and the temp player's volume fades in; once the fade completes,
+    // [player] jumps straight to the same position the temp player had reached and takes back
+    // over, so the MediaSession/notification/controllers stay bound to the one stable [player]
+    // instance throughout — no swapping the player object the session was built with.
+    //
+    // Deliberately built with a *plain* ExoPlayer.Builder(this) rather than [renderersFactory],
+    // so the temp player does NOT share [audioProcessorManager]'s native DSP chain (EQ, reverb,
+    // etc.) with the main player — that chain's native processors are one shared instance tied to
+    // one active audio stream, not built for two ExoPlayer instances driving it concurrently.
+    // The practical effect: the few seconds of overlap play back through the stock Android audio
+    // path (no custom EQ/effects yet) until the handoff completes, at which point the track
+    // continues through the real pipeline exactly as normal. Also only ever engages for the local
+    // queue — an [MediaPlaybackManager]-driven online (YouTube) track skips this entirely.
+    private var crossfadePlayer: ExoPlayer? = null
+    private var crossfadeFadeJob: Job? = null
+    private var crossfadeTickerJob: Job? = null
+
+    /** The artificial silence gap used when gapless playback is off; cancelled if the user/timer intervenes. */
+    private var gapJob: Job? = null
+    private val isCrossfading get() = crossfadePlayer != null
+
+    /**
+     * Set by [finishCrossfade] just before it seeks [player] onto the next item. That seek
+     * makes ExoPlayer report `MEDIA_ITEM_TRANSITION_REASON_SEEK`, but from the app's point of
+     * view it is an automatic track change — [onMediaItemTransition] consumes this flag and
+     * treats the transition as AUTO so stats (skip/replay), and the end-of-track sleep timer,
+     * don't misread every crossfade handoff as a manual navigation.
+     */
+    private var crossfadeHandoffPending = false
+
     /**
      * An in-memory copy of the full audio library, kept fresh by collecting the Room
      * Flow in [onCreate]. Using a Flow means we never need to hit the database on every
@@ -278,7 +315,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Listen for Sleep Timer events so a countdown or end-of-track timer armed from the
         // UI actually pauses (and optionally fades out) playback when it fires.
         SleepTimerManager.registerListener(sleepTimerListener)
-        BluetoothProfileManager.register(this)
+
+        // Re-derive ExoPlayer's repeat mode whenever an online queue starts/ends (see applyRepeatMode).
+        serviceScope.launch(Dispatchers.Main) {
+            MediaPlaybackManager.onlineQueueFlow
+                .map { it.isNotEmpty() }
+                .distinctUntilChanged()
+                .collect {
+                    if (::player.isInitialized) applyRepeatMode(PlayerPreferences.getRepeatMode())
+                }
+        }
+        app.simple.felicity.engine.managers.BluetoothProfileManager.register(this)
 
         // Expose the processor via VisualizerManager so the player fragment can call
         // setDirectOutput() and wire the lock-free twin-buffer path without a service bind.
@@ -413,6 +460,21 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Set initial repeat button in the notification
         mediaSession?.setCustomLayout(listOf(buildRepeatCommandButton(PlayerPreferences.getRepeatMode())))
 
+        // Keep the notification's favorite button in sync with the currently playing song's
+        // favorite state no matter where the toggle happened (notification button, in-app song
+        // menu, mini/full player heart icon, etc.). Every one of those call sites eventually
+        // calls MediaPlaybackManager.notifyCurrentSongUpdated() (or otherwise emits
+        // songPositionFlow), so collecting it here guarantees both surfaces stay consistent.
+        serviceScope.launch(Dispatchers.Main.immediate) {
+            MediaPlaybackManager.songPositionFlow.collect {
+                val isFavorite = MediaPlaybackManager.getCurrentSong()?.isFavorite ?: false
+                val repeatMode = PlayerPreferences.getRepeatMode()
+                mediaSession?.setCustomLayout(
+                        listOf(buildRepeatCommandButton(repeatMode), buildFavoriteCommandButton(isFavorite))
+                )
+            }
+        }
+
         // Detect the current output device and subscribe to future device changes so the
         // snapshot is refreshed whenever headphones or a BT device is connected / disconnected.
         currentOutputDevice = detectActiveOutputDevice()
@@ -528,6 +590,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val playWhenReady = player.playWhenReady
 
         // Release the old player to free up codecs/resources
+        // The temp crossfade player was built against the OLD player's state; finishing it
+        // onto a freshly built player would seek the wrong item. Abort it first.
+        cancelCrossfadeIfActive()
         player.removeListener(playerListener)
         player.release()
 
@@ -560,6 +625,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         Log.i(TAG, "Switching audio mode to: ${if (hiresEnabled) "Hi-Res (32-bit Float)" else "Standard (16-bit PCM)"}")
 
         // Release the old player to free up audio resources
+        // The temp crossfade player was built against the OLD player's state; finishing it
+        // onto a freshly built player would seek the wrong item. Abort it first.
+        cancelCrossfadeIfActive()
         player.removeListener(playerListener)
         player.release()
 
@@ -594,7 +662,15 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 player.repeatMode = Player.REPEAT_MODE_ONE
             }
             MediaConstants.REPEAT_QUEUE -> {
-                player.repeatMode = Player.REPEAT_MODE_ALL
+                // While an online queue is active ExoPlayer only ever holds the ONE current
+                // item, so REPEAT_MODE_ALL would loop that single track forever and never reach
+                // STATE_ENDED. Keep it OFF and let MediaPlaybackManager.handleQueueEnded() wrap
+                // the online queue itself.
+                player.repeatMode = if (MediaPlaybackManager.isOnlineQueueActive()) {
+                    Player.REPEAT_MODE_OFF
+                } else {
+                    Player.REPEAT_MODE_ALL
+                }
             }
             else -> { // REPEAT_OFF
                 player.repeatMode = Player.REPEAT_MODE_OFF
@@ -679,6 +755,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Temporarily force the FFmpeg extension without touching user preferences.
         renderersFactory?.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
+        // The temp crossfade player was built against the OLD player's state; finishing it
+        // onto a freshly built player would seek the wrong item. Abort it first.
+        cancelCrossfadeIfActive()
         player.removeListener(playerListener)
         player.release()
 
@@ -713,6 +792,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val currentPos = player.currentPosition
         val playWhenReady = player.playWhenReady
 
+        // The temp crossfade player was built against the OLD player's state; finishing it
+        // onto a freshly built player would seek the wrong item. Abort it first.
+        cancelCrossfadeIfActive()
         player.removeListener(playerListener)
         player.release()
 
@@ -904,6 +986,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             }
 
             if (isPlaying) {
+                startCrossfadeTicker()
                 MediaPlaybackManager.notifyPlaybackState(MediaConstants.PLAYBACK_PLAYING)
                 startPeriodicStateSaving()
                 startSnapshotPulse() // internally calls buildAndPushSnapshot() immediately, no need to call it again here
@@ -918,6 +1001,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // The temporary crossfade player has no audio-focus / becoming-noisy handling of
+            // its own, so a pause of the main player (user, phone call, headphones unplugged)
+            // would otherwise leave the incoming track playing out loud until the fade ends.
+            crossfadePlayer?.playWhenReady = playWhenReady
+
+            // Any manual play/pause (or an external pause) supersedes the pending gap resume.
+            if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                gapJob?.cancel()
+                gapJob = null
+            }
+
             if (!playWhenReady) {
                 // Silence the active native route (AAudio/Oboe) right now, on this thread,
                 // instead of waiting for the internal playback thread to get around to its
@@ -950,7 +1044,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
                     // The track ended and the player paused itself automatically.
                     // Now we introduce our artificial gap.
-                    serviceScope.launch(Dispatchers.Main) {
+                    gapJob?.cancel()
+                    gapJob = serviceScope.launch(Dispatchers.Main) {
                         delay(GAP_DURATION_MS.milliseconds) // time of silence
                         player.play() // Move on to the next track
                     }
@@ -985,7 +1080,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     // Only treat as a true "ended" event in REPEAT_OFF mode.
                     // For REPEAT_ONE / REPEAT_QUEUE, ExoPlayer loops automatically and
                     // STATE_ENDED is never actually reached.
-                    if (PlayerPreferences.getRepeatMode() == MediaConstants.REPEAT_OFF) {
+                    // An online queue is one item at a time as far as ExoPlayer is concerned, so
+                    // STATE_ENDED fires for every online track regardless of repeat mode (repeat-all
+                    // is mapped to OFF in applyRepeatMode while one is active); the manager decides
+                    // whether to advance, wrap or stop.
+                    if (PlayerPreferences.getRepeatMode() == MediaConstants.REPEAT_OFF ||
+                            MediaPlaybackManager.isOnlineQueueActive()) {
                         MediaPlaybackManager.handleQueueEnded()
                     }
                     stopPeriodicStateSaving()
@@ -1066,14 +1166,31 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             }
         }
 
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reportedReason: Int) {
+            // A crossfade handoff is a seek as far as ExoPlayer is concerned, but it is an
+            // automatic track change as far as the app is concerned — see crossfadeHandoffPending.
+            // Consumed unconditionally: finishCrossfade() arms it only for a seek that is
+            // guaranteed to produce exactly one transition callback.
+            val wasCrossfadeHandoff = crossfadeHandoffPending
+            crossfadeHandoffPending = false
+            val reason = if (wasCrossfadeHandoff && reportedReason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
+                Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+            } else {
+                reportedReason
+            }
+
             // Sleep timer: an automatic transition means the previous track finished playing
             // on its own — exactly the moment an end-of-track sleep timer is waiting for.
             // Pause immediately so the incoming track is never actually heard. Because this
             // runs before the "record a play" block below, player.playWhenReady is already
             // false by the time that block executes, so the new song correctly does NOT get
             // counted as played — it'll be recorded normally later if the user resumes by hand.
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && SleepTimerManager.consumeIfArmedForEndOfTrack()) {
+            //
+            // REPEAT counts too: with repeat-one, "the song ended" is reported as a REPEAT
+            // transition, never AUTO, so without it the timer would silently never fire.
+            val songEndedNaturally = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+            if (songEndedNaturally && SleepTimerManager.consumeIfArmedForEndOfTrack()) {
                 Log.i(TAG, "Sleep timer: end of track reached, pausing playback.")
                 player.pause()
             }
@@ -1209,6 +1326,27 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 reason: Int
         ) {
             super.onPositionDiscontinuity(oldPosition, newPosition, reason)
+
+            // Only a genuinely external seek/skip should abort an in-progress crossfade.
+            // DISCONTINUITY_REASON_AUTO_TRANSITION is ExoPlayer's own normal gapless
+            // auto-advance to the next queued item — if our fade loop's timer (driven by
+            // delay() calls, not by the player's actual clock) runs even slightly behind the
+            // real track boundary, the player can reach the natural end and auto-advance to
+            // the next item at position 0 BEFORE finishCrossfade() gets to run. Treating that
+            // as "the user skipped, cancel" is exactly what caused the bug this comment is
+            // explaining: the crossfade got cancelled right as the natural transition landed
+            // on the next track at 0:00, and cancelling forces volume back to 1 immediately —
+            // so the next track appeared to "restart from 00:00" at full volume out of nowhere.
+            // DISCONTINUITY_REASON_INTERNAL is similarly not something the user did.
+            val isExternalDiscontinuity = reason == Player.DISCONTINUITY_REASON_SEEK ||
+                    reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT ||
+                    reason == Player.DISCONTINUITY_REASON_SKIP ||
+                    reason == Player.DISCONTINUITY_REASON_REMOVE
+
+            if (isCrossfading && isExternalDiscontinuity) {
+                cancelCrossfadeIfActive()
+            }
+
             // We want to capture the outgoing song's position and duration before ExoPlayer
             // hands control to the next item. This fires BEFORE onMediaItemTransition, so
             // player.duration still reflects the old track — perfect timing for us.
@@ -1235,6 +1373,163 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 // check in the unlikely event that STATE_READY is delayed for the new item.
                 currentItemDurationMs = 0L
             }
+        }
+    }
+
+    /**
+     * Wakes roughly 3 times a second to check whether it's time to start crossfading into the
+     * next track — but only while it can actually matter: crossfade enabled AND something
+     * playing (or a fade already running). Otherwise the loop ends and the main thread is left
+     * alone; it's restarted from [onIsPlayingChanged] and when the crossfade preference flips.
+     */
+    private fun startCrossfadeTicker() {
+        if (crossfadeTickerJob?.isActive == true) return
+        if (!CrossfadePreferences.isCrossfadeEnabled()) return
+        crossfadeTickerJob = serviceScope.launch(Dispatchers.Main) {
+            while (isActive && CrossfadePreferences.isCrossfadeEnabled() && (player.isPlaying || isCrossfading)) {
+                delay(300)
+                maybeStartCrossfade()
+            }
+            crossfadeTickerJob = null
+        }
+    }
+
+    private fun maybeStartCrossfade() {
+        if (!CrossfadePreferences.isCrossfadeEnabled()) return
+        if (isCrossfading) return
+        if (!player.isPlaying) return
+        if (!player.hasNextMediaItem()) return
+        // The temp player is a stock ExoPlayer on the default AudioTrack route: no ReplayGain,
+        // no DSP chain, and it can't share a USB DAC / AAudio / Oboe stream. Crossfading there
+        // would jump in loudness at the handoff or fight the exclusive output, so skip it.
+        if (UsbDacManager.isActive || FelicityAudioSink.isAAudioStreamActive || FelicityAudioSink.isOboeStreamActive) return
+        // Crossfading resolved, short-lived YouTube stream URLs adds a lot of fragility
+        // (a second resolve, in the middle of a fade, for a URL that might already be
+        // close to expiring) for comparatively little benefit — local-queue tracks only.
+        if (MediaPlaybackManager.getCurrentOnlineTrack() != null) return
+
+        // Repeat-one must repeat THIS track. hasNextMediaItem()/nextMediaItemIndex use
+        // getRepeatModeForNavigation(), which maps REPEAT_MODE_ONE to OFF — so ExoPlayer
+        // happily reports "there is a next item" mid-queue and the handoff would advance
+        // to it instead of repeating the current song.
+        if (player.repeatMode == Player.REPEAT_MODE_ONE) return
+
+        // With a single-item queue and repeat-all, "next" resolves to the item itself.
+        // Crossfading into yourself ends with finishCrossfade() seeking the main player
+        // back to ~0:00 several seconds before the track actually ends.
+        if (player.nextMediaItemIndex == player.currentMediaItemIndex) return
+
+        // "Stop after this song" must play the track out to its natural end so the
+        // AUTO-transition hook can pause. A crossfade would start the next song audibly
+        // first, and its handoff is a seek (not an AUTO transition) anyway.
+        if (SleepTimerManager.currentMode() is SleepTimerManager.Mode.EndOfTrack) return
+
+        val duration = player.duration
+        if (duration <= 0 || duration == C.TIME_UNSET) return
+
+        val fadeMs = CrossfadePreferences.getCrossfadeDurationMs()
+        val remaining = duration - player.currentPosition
+        if (remaining > fadeMs) return
+
+        beginCrossfade(fadeMs, remaining.coerceAtLeast(1L))
+    }
+
+    /**
+     * Starts a temporary second ExoPlayer on the upcoming track and ramps volumes between it
+     * and [player] over [fadeMs] (clamped to however much of the current track is actually
+     * left, via [actualRemainingMs]). See the field-level kdoc on [crossfadePlayer] for why
+     * this uses a plain `ExoPlayer.Builder`, not [renderersFactory].
+     */
+    private fun beginCrossfade(fadeMs: Long, actualRemainingMs: Long) {
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return
+        val nextItem = player.getMediaItemAt(nextIndex)
+
+        val temp = ExoPlayer.Builder(this).build()
+        temp.setMediaItem(nextItem)
+        temp.volume = 0f
+        temp.prepare()
+        temp.playWhenReady = true
+        crossfadePlayer = temp
+
+        val fadeDurationMs = fadeMs.coerceAtMost(actualRemainingMs)
+        val steps = 20
+        val stepDelayMs = (fadeDurationMs / steps).coerceAtLeast(10)
+
+        crossfadeFadeJob = serviceScope.launch(Dispatchers.Main) {
+            for (step in 1..steps) {
+                // Bail immediately if something else (a manual skip/seek, or the service
+                // tearing down) already cancelled this crossfade out from under us.
+                if (crossfadePlayer !== temp) return@launch
+
+                // The race this guards against: player's own natural end-of-track
+                // gapless auto-advance can land on nextIndex before this fixed delay()
+                // schedule finishes, since the two run on independent clocks. If that
+                // happens, stop pretending we're still fading and finish the handoff
+                // right away instead of continuing to fade player's volume down on a
+                // track it's no longer even playing.
+                if (player.currentMediaItemIndex == nextIndex) {
+                    finishCrossfade(temp, nextIndex)
+                    return@launch
+                }
+
+                val t = step.toFloat() / steps
+                player.volume = (1f - t).coerceIn(0f, 1f)
+                temp.volume = t.coerceIn(0f, 1f)
+                delay(stepDelayMs)
+            }
+
+            if (crossfadePlayer === temp) {
+                finishCrossfade(temp, nextIndex)
+            }
+        }
+    }
+
+    /** Hands playback back to [player] at the exact position [temp] had already reached, then releases [temp]. */
+    private fun finishCrossfade(temp: ExoPlayer, nextIndex: Int) {
+        val handoffPositionMs = temp.currentPosition
+        crossfadePlayer = null // consumed before seekTo() below, so the discontinuity listener treats this as our own handoff, not an external skip
+
+        // player's volume is already ~0 from the fade loop above — the seek below jumps to an
+        // arbitrary mid-track position ExoPlayer's own gapless read-ahead never pre-buffered
+        // (it only pre-buffers the START of the next queued item), so it can cause a brief
+        // re-buffering stall. The bug this fixes: that stall used to happen AFTER volume was
+        // already restored to 1, making it audible as "a gap right as the track changes".
+        // Keeping player silent through the seek, and keeping temp alive an extra moment as a
+        // safety-net bridge, means a stall here is inaudible even when it does happen.
+        player.volume = 0f
+        // Only a seek onto a DIFFERENT item produces a media-item transition. If the natural
+        // auto-advance already landed on nextIndex (the race handled in the fade loop), this
+        // seek is just a position correction — arming the flag then would hijack the next
+        // genuine user seek.
+        crossfadeHandoffPending = player.currentMediaItemIndex != nextIndex
+        player.seekTo(nextIndex, handoffPositionMs)
+
+        serviceScope.launch(Dispatchers.Main) {
+            val deadlineMs = System.currentTimeMillis() + 1500L
+            while (isActive && System.currentTimeMillis() < deadlineMs) {
+                if (player.playbackState == Player.STATE_READY &&
+                    player.isPlaying &&
+                    player.currentMediaItemIndex == nextIndex
+                ) {
+                    break
+                }
+                delay(20)
+            }
+            player.volume = 1f
+            temp.release()
+        }
+    }
+
+    /** Aborts a crossfade in progress (external seek/skip, or service teardown) and restores [player] to full volume. */
+    private fun cancelCrossfadeIfActive() {
+        crossfadeFadeJob?.cancel()
+        crossfadeFadeJob = null
+        crossfadePlayer?.release()
+        crossfadePlayer = null
+        crossfadeHandoffPending = false
+        if (::player.isInitialized) {
+            player.volume = 1f
         }
     }
 
@@ -1322,6 +1617,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private val sleepTimerListener = object : SleepTimerManager.Listener {
         override fun onSleepTimerFinished(fadeOut: Boolean) {
             serviceScope.launch(Dispatchers.Main) {
+                // Otherwise the crossfade loop keeps fighting over player.volume and the
+                // temp player keeps playing the next track after the timer "stopped" playback.
+                cancelCrossfadeIfActive()
+                gapJob?.cancel()
+                gapJob = null
                 if (fadeOut && player.isPlaying) {
                     fadeOutAndPause()
                 } else {
@@ -1349,13 +1649,18 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         sleepTimerFadeJob = serviceScope.launch(Dispatchers.Main) {
             val steps = 20
             val stepDurationMs = SLEEP_TIMER_FADE_DURATION_MS / steps
-            for (step in steps downTo 0) {
-                if (!isActive) return@launch
-                player.volume = step / steps.toFloat()
-                delay(stepDurationMs)
+            try {
+                for (step in steps downTo 0) {
+                    if (!isActive) return@launch
+                    player.volume = step / steps.toFloat()
+                    delay(stepDurationMs)
+                }
+                player.pause()
+            } finally {
+                // Also runs when the job is cancelled mid-fade, which used to leave the
+                // player stuck at a partial volume.
+                player.volume = 1f
             }
-            player.pause()
-            player.volume = 1f
         }
         sleepTimerFadeJob?.join()
     }
@@ -1367,6 +1672,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             AudioPreferences.AUDIO_DECODER -> {
                 Log.d(TAG, "Audio decoder preference changed, switching decoder...")
                 switchDecoder()
+            }
+            AudioPreferences.FFT_RESOLUTION -> {
+                val newFftSize = AudioPreferences.getFftResolution()
+                Log.d(TAG, "FFT resolution changed to: $newFftSize")
+                audioProcessorManager.visualizerProcessor.updateFftResolution(newFftSize)
             }
             AudioPreferences.HIRES_OUTPUT -> {
                 val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
@@ -1396,6 +1706,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 // correct stream immediately. Without this, the change only takes effect the
                 // next time a song starts — the existing sink never learns about the preference flip.
                 switchAudioMode()
+            }
+            CrossfadePreferences.CROSSFADE_ENABLED -> {
+                if (CrossfadePreferences.isCrossfadeEnabled()) startCrossfadeTicker() else cancelCrossfadeIfActive()
             }
             PlayerPreferences.REPEAT_MODE -> {
                 val repeatMode = PlayerPreferences.getRepeatMode()
@@ -1531,6 +1844,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         SleepTimerManager.cancel()
         sleepTimerFadeJob?.cancel()
 
+        // Same idea for the crossfade ticker/temp player — a leaked temp ExoPlayer would hold
+        // onto a native audio track after this service instance is gone.
+        crossfadeTickerJob?.cancel()
+        gapJob?.cancel()
+        cancelCrossfadeIfActive()
+
         // Stop the periodic snapshot pulse before releasing resources.
         stopSnapshotPulse()
 
@@ -1587,9 +1906,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private fun broadcastWidgetUpdate() {
         val mediaItem = player.currentMediaItem ?: return
+        // Only trust the local-queue song if it IS the item playing — during online playback
+        // getCurrentSong() still returns whatever local song played last.
         val currentSong = MediaPlaybackManager.getCurrentSong()
-        val title = currentSong?.getProperTitle()
-        val artist = currentSong?.getProperArtists()
+            ?.takeIf { it.id.toString() == mediaItem.mediaId }
+        val title = currentSong?.getProperTitle() ?: mediaItem.mediaMetadata.title?.toString()
+        val artist = currentSong?.getProperArtists() ?: mediaItem.mediaMetadata.artist?.toString()
         val isPlaying = player.isPlaying
         val songId = mediaItem.mediaId.toLongOrNull() ?: -1L
 
@@ -2277,6 +2599,77 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
             Log.d(TAG, "Resolved ${updatedMediaItems.size} media items")
             updatedMediaItems
+        }
+
+        /**
+         * Restores the last-known playback queue and position when the system starts this
+         * service without an active player state — e.g. a media button event (Bluetooth
+         * play/pause, headset button, or a resumption request from the system/Android Auto)
+         * arriving while the app process is dead.
+         *
+         * Without this override, [Context.startForegroundService] is invoked by
+         * [androidx.media3.session.MediaButtonReceiver] but the player never receives any
+         * media items to play. Since nothing ever starts playing, [MediaSessionService]
+         * never promotes the service to the foreground via [Service.startForeground], and
+         * the framework kills the app with a
+         * `ForegroundServiceDidNotStartInTimeException` a few seconds later.
+         *
+         * By returning the previously saved queue here, media3 automatically sets it on the
+         * player and calls play(), which lets the service post its notification and call
+         * startForeground() in time.
+         */
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun onPlaybackResumption(
+                mediaSession: MediaSession,
+                controller: MediaSession.ControllerInfo
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = serviceScope.future {
+            Log.d(TAG, "onPlaybackResumption requested by: ${controller.packageName}")
+
+            val db = AudioDatabase.getInstance(applicationContext)
+            val state = PlaybackStateManager.fetchPlaybackState(db)
+            val restoredSongs = PlaybackStateManager.getAudiosFromQueueIDs(db)
+
+            if (restoredSongs.isNullOrEmpty()) {
+                Log.w(TAG, "onPlaybackResumption: no saved queue found; nothing to resume.")
+                return@future MediaSession.MediaItemsWithStartPosition(
+                        emptyList(), C.INDEX_UNSET, C.TIME_UNSET
+                )
+            }
+
+            val savedIndex = (state?.index ?: 0).coerceIn(0, restoredSongs.size - 1)
+            val savedPositionMs = (state?.position ?: 0L).coerceAtLeast(0L)
+
+            // Keep MediaPlaybackManager's in-memory state in sync so the widget, notification
+            // favorite/repeat buttons, and stat recording all reflect the resumed queue —
+            // mediaController is null at this point so this call only updates local state.
+            withContext(Dispatchers.Main) {
+                MediaPlaybackManager.setSongs(
+                        restoredSongs, savedIndex, savedPositionMs, autoPlay = false, isRestore = true
+                )
+                state?.activeQueueId?.let { MediaPlaybackManager.setActiveQueueId(it) }
+            }
+
+            val mediaItems = restoredSongs.map { audio: Audio ->
+                MediaItem.Builder()
+                    .setMediaId(audio.id.toString())
+                    .setUri(audio.uri)
+                    .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(audio.getProperTitle())
+                                .setArtist(audio.getProperArtists())
+                                .setAlbumTitle(audio.getProperAlbum())
+                                .setIsPlayable(true)
+                                .build()
+                    )
+                    .build()
+            }
+
+            Log.d(
+                    TAG, "onPlaybackResumption: restoring ${mediaItems.size} items, " +
+                    "startIndex=$savedIndex, startPositionMs=$savedPositionMs"
+            )
+
+            MediaSession.MediaItemsWithStartPosition(mediaItems, savedIndex, savedPositionMs)
         }
     }
 

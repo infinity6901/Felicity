@@ -70,15 +70,8 @@ import app.simple.felicity.repository.models.WaveformData
  *   samples as a comma-separated TEXT column. On first play the samples are extracted
  *   from the audio file and saved here; every subsequent play just reads this row
  *   instead of decoding the file again.
- *   22 → 23: Added nullable {@code cue_start_ms} and {@code cue_end_ms} columns to the
- *   {@code audio} table for cue-sheet support (see
- *   {@code app.simple.felicity.repository.parsers.CueSheetParser}). A row with both NULL
- *   is an ordinary track, unaffected. A row with both set is a "virtual" track sharing its
- *   {@code uri} with sibling rows from the same cue sheet; playback must be clipped to
- *   [cue_start_ms, cue_end_ms) via {@code MediaItem.ClippingConfiguration} — see
- *   {@code MediaPlaybackManager.toMediaItem()}. {@code cue_end_ms} stays NULL even on a
- *   virtual track when it is the sheet's last one, since that track has no defined end and
- *   plays to the physical end of the file.
+ *   22 → 23: Added {@code last_used} timestamp to {@code saved_queue} so that we can
+ *   find the least recently used or oldest queue slot.
  *
  * @author Hamza417
  */
@@ -376,17 +369,12 @@ abstract class AudioDatabase : RoomDatabase() {
         }
 
         /**
-         * Adds nullable {@code cue_start_ms} and {@code cue_end_ms} columns to the
-         * {@code audio} table for cue-sheet support. Existing rows get NULL for both, which
-         * is exactly correct — they are ordinary, non-cue tracks and this migration does not
-         * (and cannot, from SQL alone) retroactively split any existing single-file rip into
-         * virtual per-track rows. That split only happens going forward, the next time the
-         * library is scanned and a `.cue` sheet is found alongside its audio file.
+         * Adds a timestamp to each saved queue to identify when it was last used, allowing us
+         * to find the oldest or least recently used queue slot.
          */
         private val MIGRATION_22_23 = object : Migration(22, 23) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `audio` ADD COLUMN `cue_start_ms` INTEGER")
-                db.execSQL("ALTER TABLE `audio` ADD COLUMN `cue_end_ms` INTEGER")
+                db.execSQL("ALTER TABLE `saved_queue` ADD COLUMN `last_used` INTEGER NOT NULL DEFAULT 0")
             }
         }
 

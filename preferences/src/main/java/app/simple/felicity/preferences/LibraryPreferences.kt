@@ -22,6 +22,39 @@ object LibraryPreferences {
     const val SKIP_HIDDEN_FILES = "skip_hidden_files"
     const val SKIP_HIDDEN_FOLDERS = "skip_hidden_folders"
 
+    /**
+     * Key used to store whether the user wants a confirmation dialog before an existing,
+     * non-empty playback queue is silently replaced (e.g. when tapping a song inside a
+     * Music Folder / Album / Artist / Playlist page while a different queue is loaded).
+     */
+    const val CONFIRM_QUEUE_REPLACEMENT = "confirm_queue_replacement"
+
+    private const val ARTIST_WHITELIST = "artist_whitelist"
+
+    // ----------------------------------------------------------------------------------------------------- //
+
+    fun getArtistWhitelist(): Set<String> {
+        return SharedPreferences.getSharedPreferences()
+            .getStringSet(ARTIST_WHITELIST, emptySet()) ?: emptySet()
+    }
+
+    fun addWhitelistedArtist(artist: String) {
+        val current = getArtistWhitelist().toMutableSet()
+        current.add(artist)
+        SharedPreferences.getSharedPreferences().edit {
+            putStringSet(ARTIST_WHITELIST, current)
+        }
+    }
+
+    fun removeWhitelistedArtist(artist: String) {
+        val current = getArtistWhitelist().toMutableSet()
+        current.remove(artist)
+
+        SharedPreferences.getSharedPreferences().edit {
+            putStringSet(ARTIST_WHITELIST, current)
+        }
+    }
+
     // ----------------------------------------------------------------------------------------------------- //
 
     fun getMinimumAudioLength(): Int {
@@ -141,6 +174,18 @@ object LibraryPreferences {
         val current = getExcludedFolders().toMutableSet()
         current.remove(folderPath)
         setExcludedFolders(current)
+    }
+
+    /**
+     * Disabled by default so existing behavior (tapping a song always replaces the active
+     * queue) is unchanged unless the user explicitly opts in.
+     */
+    fun isConfirmQueueReplacementEnabled(): Boolean {
+        return SharedPreferences.getSharedPreferences().getBoolean(CONFIRM_QUEUE_REPLACEMENT, false)
+    }
+
+    fun setConfirmQueueReplacementEnabled(enabled: Boolean) {
+        SharedPreferences.getSharedPreferences().edit { putBoolean(CONFIRM_QUEUE_REPLACEMENT, enabled) }
     }
 }
 
