@@ -664,7 +664,7 @@ abstract class BasePlayerFragment : MediaFragment() {
     /** Dims and disables every control that would otherwise act on a local [Audio] the player screen is no longer actually showing. */
     private fun setOnlineModeControlsEnabled(enabled: Boolean) {
         val alpha = if (enabled) 1f else 0.4f
-        for (view in listOf(equalizer, lyrics, queue)) {
+        for (view in listOf(equalizer, lyrics)) {
             view.isEnabled = true
             view.alpha = 1f
         }

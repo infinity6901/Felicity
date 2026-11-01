@@ -330,15 +330,6 @@
                 android:clipChildren="false"
                 android:clipToPadding="false" />
 
-            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
-                android:id="@+id/queue"
-                android:layout_width="@dimen/button_size"
-                android:layout_height="@dimen/button_size"
-                android:layout_gravity="center_vertical"
-                android:layout_marginEnd="@dimen/padding_1"
-                android:src="@drawable/ic_queue"
-                app:buttonTintType="regular" />
-
         </LinearLayout>
 
     </app.simple.felicity.decorations.views.FlexStackLayout>
