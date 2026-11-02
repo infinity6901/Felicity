@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_md_pill_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="6dp"
+    android:paddingVertical="4dp">
+
+    <ImageView
+        android:id="@+id/widget_album_art"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/widget_md_button_primary"
+        android:clipToOutline="true"
+        android:contentDescription="@string/album_art"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/md_widget_on_container"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:alpha="0.75"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/md_widget_on_container"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/widget_play_pause"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/widget_md_button_primary"
+        android:contentDescription="@string/widget_play_pause"
+        android:padding="10dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_play"
+        android:tint="@color/md_widget_on_primary" />
+
+    <ImageButton
+        android:id="@+id/widget_next"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="2dp"
+        android:background="@null"
+        android:contentDescription="@string/widget_next"
+        android:padding="10dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_skip_next"
+        android:tint="@color/md_widget_on_container" />
+
+</LinearLayout>

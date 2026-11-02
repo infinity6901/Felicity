@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_lyrics_description">Shows the current lyric line, in sync with the song. Follows your system colors.</string>
+    <string name="widget_md_player_description">Album art with previous, play/pause and next controls. Follows your system colors.</string>
+    <string name="widget_md_tile_description">A square album art tile with a play/pause button. Follows your system colors.</string>
+    <string name="widget_play_pause">Play or pause</string>
+    <string name="widget_previous">Previous</string>
+    <string name="widget_next">Next</string>
+    <string name="widget_no_lyrics">No lyrics for this song</string>
+    <string name="widget_lyrics_unsynced">Lyrics aren\'t time-synced — open Felicity to read them</string>
+    <string name="widget_nothing_playing">Nothing playing</string>
+    <string name="widget_glass_player_description">Frosted-glass player card over blurred album art, with previous, play/pause and next.</string>
+    <string name="widget_glass_lyrics_description">Frosted-glass lyrics widget over blurred album art, following the current line.</string>
+    <string name="widget_glass_card_description">Square album art with a floating frosted-glass title strip and play/pause button.</string>
+    <string name="widget_md_pill_description">A slim Material You pill with art, title, play/pause and next. Follows your system colors.</string>
+    <string name="widget_up_next_description">The next songs in your queue, with play/pause and next. Follows your system colors.</string>
+    <string name="widget_up_next">Up next</string>
+    <string name="widget_queue_empty">Nothing else in the queue</string>
+    <string name="widget_queue_more">+%1$d more</string>
+</resources>

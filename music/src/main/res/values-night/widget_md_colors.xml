@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material You widget palette. Dark fallback for Android 10/11 (no dynamic color). -->
+<resources>
+    <color name="md_widget_surface">#2B2930</color>
+    <color name="md_widget_on_surface">#E6E1E5</color>
+    <color name="md_widget_primary">#D0BCFF</color>
+    <color name="md_widget_on_primary">#381E72</color>
+    <color name="md_widget_container">#4A4458</color>
+    <color name="md_widget_on_container">#E8DEF8</color>
+    <color name="md_widget_subtle">#CAC4D0</color>
+</resources>
