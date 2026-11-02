@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +59,10 @@ object YtDlpManager {
                         Log.w(TAG, "yt-dlp background update skipped or failed", e)
                     }
                 }
-            } catch (e: YoutubeDLException) {
+            } catch (e: Throwable) {
+                // Deliberately Throwable, not just YoutubeDLException: this runs on a bare background
+                // thread from Application.onCreate, so ANY escaped error (a NoClassDefFoundError or
+                // UnsatisfiedLinkError in a release build, say) would kill the whole app at launch.
                 initFailed = true
                 Log.e(TAG, "Failed to initialize yt-dlp runtime — falling back to InnerTube-only extraction", e)
             }

@@ -29,6 +29,10 @@ on:
                 description: 'Publish a GitHub Release (tag = v<versionName>)'
                 type: boolean
                 default: false
+            smoke_test:
+                description: 'Launch the release APK on an emulator and fail if it crashes'
+                type: boolean
+                default: true
     push:
         branches: [ main, master ]
         tags: [ 'v*' ]
@@ -45,6 +49,9 @@ jobs:
         name: Build FOSS APKs
         runs-on: ubuntu-latest
         timeout-minutes: 90
+        outputs:
+            release: ${{ steps.plan.outputs.release }}
+            version_name: ${{ steps.plan.outputs.version_name }}
 
         steps:
             -   name: Checkout code
@@ -166,3 +173,45 @@ jobs:
                     files: out/*.apk
                     generate_release_notes: true
                     prerelease: ${{ contains(steps.plan.outputs.version_name, 'alpha') || contains(steps.plan.outputs.version_name, 'beta') }}
+
+    # Installs the release APK on an Android emulator and checks that it launches and stays alive.
+    # R8/minification problems only show up in release builds, so debug builds can't catch them.
+    smoke-test:
+        name: Launch release APK on emulator
+        needs: build
+        if: needs.build.outputs.release == 'true' && (github.event_name != 'workflow_dispatch' || inputs.smoke_test)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@v4
+
+            -   name: Download APKs
+                uses: actions/download-artifact@v4
+                with:
+                    name: felicity-apks-${{ needs.build.outputs.version_name }}
+                    path: apks
+
+            -   name: Enable KVM
+                run: |
+                    echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                    sudo udevadm control --reload-rules
+                    sudo udevadm trigger --name-match=kvm
+
+            -   name: Launch on emulator
+                uses: reactivecircus/android-emulator-runner@v2
+                with:
+                    api-level: 34
+                    arch: x86_64
+                    target: google_apis
+                    disable-animations: true
+                    script: bash .github/scripts/smoke-test.sh apks/felicity-foss-release-${{ needs.build.outputs.version_name }}.apk smoke-out
+
+            -   name: Upload logcat
+                if: always()
+                uses: actions/upload-artifact@v4
+                with:
+                    name: smoke-test-logs
+                    path: smoke-out
+                    if-no-files-found: ignore
