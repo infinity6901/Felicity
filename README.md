@@ -138,6 +138,10 @@ close to the hardware as possible.
   only from Felicity's own in-app search.
 - **Home Screen Widgets:** Multiple widget styles (compact, minimal, and full) for controlling
   playback and seeing what's playing without opening the app.
+  Includes Material You widgets that follow your system's dynamic colors (Android 12+, with a
+  matching fallback palette on older versions): a **Lyrics** widget that shows the previous /
+  current / next line in sync with the song, a 4×2 **player card**, a 2×2 **album-art tile**, a 3×1 **pill**, and an **Up next** queue widget.
+  There are also frosted **Glass** widgets (player card, lyrics, album-art card) drawn over blurred artwork.
 
 ### Online Sources
 

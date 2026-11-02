@@ -2705,7 +2705,15 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         private val WIDGET_PROVIDER_CLASS_NAMES = listOf(
                 "app.simple.felicity.widget.FelicityWidgetProvider",
                 "app.simple.felicity.widget.CompactWidgetProvider",
-                "app.simple.felicity.widget.MinimalWidgetProvider"
+                "app.simple.felicity.widget.MinimalWidgetProvider",
+                "app.simple.felicity.widget.LyricsWidgetProvider",
+                "app.simple.felicity.widget.MaterialYouPlayerWidgetProvider",
+                "app.simple.felicity.widget.MaterialYouTileWidgetProvider",
+                "app.simple.felicity.widget.GlassPlayerWidgetProvider",
+                "app.simple.felicity.widget.GlassLyricsWidgetProvider",
+                "app.simple.felicity.widget.GlassCardWidgetProvider",
+                "app.simple.felicity.widget.MaterialYouPillWidgetProvider",
+                "app.simple.felicity.widget.UpNextWidgetProvider"
         )
 
         /** Custom session command sent when the user taps the repeat button in the notification. */

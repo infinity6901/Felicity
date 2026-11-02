@@ -3,6 +3,7 @@ package app.simple.felicity.application;
 import android.app.Application;
 import android.content.SharedPreferences;
 
+import app.simple.felicity.widget.WidgetBootstrap;
 import dagger.hilt.android.HiltAndroidApp;
 
 /**
@@ -18,7 +19,9 @@ public class FelicityApplication extends Application {
         super.onCreate();
         resetAudioDatabaseForSAFMigration();
         initYoutubeDl();
+        WidgetBootstrap.startUpdaters(this);
     }
+
 
     /**
      * Initializes the bundled yt-dlp/ffmpeg runtime (see

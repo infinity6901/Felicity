@@ -122,6 +122,110 @@
                 android:resource="@xml/widget_minimal_info" />
         </receiver>
 
+        <!-- Material You lyrics widget (4×2) — follows the current lyric line, see LyricsWidgetProvider. -->
+        <receiver
+            android:name=".widget.LyricsWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_lyrics_info" />
+        </receiver>
+
+        <!-- Material You 4×2 player card — see MaterialYouPlayerWidgetProvider. -->
+        <receiver
+            android:name=".widget.MaterialYouPlayerWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_md_player_info" />
+        </receiver>
+
+        <!-- Material You 2×2 album art tile — see MaterialYouTileWidgetProvider. -->
+        <receiver
+            android:name=".widget.MaterialYouTileWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_md_tile_info" />
+        </receiver>
+
+        <!-- Glass 4×2 player card — see GlassPlayerWidgetProvider. -->
+        <receiver
+            android:name=".widget.GlassPlayerWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_glass_player_info" />
+        </receiver>
+
+        <!-- Glass 4×2 lyrics widget — see GlassLyricsWidgetProvider. -->
+        <receiver
+            android:name=".widget.GlassLyricsWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_glass_lyrics_info" />
+        </receiver>
+
+        <!-- Glass 2×2 art card — see GlassCardWidgetProvider. -->
+        <receiver
+            android:name=".widget.GlassCardWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_glass_card_info" />
+        </receiver>
+
+        <!-- Material You 3×1 pill — see MaterialYouPillWidgetProvider. -->
+        <receiver
+            android:name=".widget.MaterialYouPillWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_md_pill_info" />
+        </receiver>
+
+        <!-- Material You 4×3 "Up next" queue widget — see UpNextWidgetProvider. -->
+        <receiver
+            android:name=".widget.UpNextWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="app.simple.felicity.ACTION_WIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_up_next_info" />
+        </receiver>
+
         <!-- Handles the actual button taps (play/pause, next, prev) from the widget. -->
         <receiver
             android:name=".widget.WidgetActionReceiver"
