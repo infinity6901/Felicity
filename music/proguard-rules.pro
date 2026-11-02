@@ -14,7 +14,7 @@
 
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
@@ -47,3 +47,26 @@
 -keep class com.fasterxml.jackson.** { *; }
 -dontwarn com.fasterxml.jackson.**
 -keep class app.simple.felicity.repository.youtube.** { *; }
+
+# ---------------------------------------------------------------------------------------------
+# Release-only crash hardening (the foss release APK closed immediately on launch).
+#
+# Felicity is open source and already built with -dontobfuscate, so shrinking its OWN code buys
+# very little size but is risky: the app leans on things R8 cannot see through —
+#   * C++ that looks classes/constructors up by name (TagLibMetadata via FindClass/GetMethodID),
+#   * Gson/Jackson/Room/Hilt/WorkManager reflection, fragments recreated by name,
+#   * classes instantiated only from XML, manifests, widgets and service bindings.
+# So keep every class in the app's own modules and let R8 shrink only third-party libraries.
+-keep class app.simple.felicity.** { *; }
+
+# Any class with native methods keeps them (and the class) for System.loadLibrary / RegisterNatives.
+-keepclasseswithmembers,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# Readable release stack traces (names aren't obfuscated, so lines are enough).
+-keepattributes *Annotation*,InnerClasses,EnclosingMethod,Signature,Exceptions
+
+# Gson TypeToken subclasses need their generic signature at runtime.
+-keep class * extends com.google.gson.reflect.TypeToken
+-dontwarn com.google.gson.**
