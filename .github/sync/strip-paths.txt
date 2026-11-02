@@ -1,0 +1,25 @@
+# Paths (git pathspec globs) that must NOT exist in this fork. After every upstream merge,
+# anything matching is deleted again. This is how the removed trial / purchase / Play-billing
+# code stays removed. One glob per line; lines starting with # are comments.
+#
+# Add a line here if a new upstream release brings back something you don't want.
+
+# Play Store flavor + Gumroad license flavor (these directories only ever held paywall code)
+music/src/play/**
+music/src/foss/**
+**/play_strings.xml
+
+# Trial / purchase / license UI and logic
+**/TrialExpired.kt
+**/TrialPreferences.kt
+**/PurchaseViewModel.kt
+**/GumroadLicence*.kt
+**/GumroadLicense*.kt
+**/Purchase.kt
+**/fragment_purchase.xml
+**/fragment_trial_expired.xml
+**/dialog_license_key.xml
+**/ic_gumroad.xml
+**/ic_locked.xml
+**/ic_unlocked.xml
+music/release/**

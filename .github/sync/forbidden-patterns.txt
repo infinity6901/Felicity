@@ -1,0 +1,12 @@
+# Extended regexes (grep -E). If any LINE ADDED by an upstream merge matches one of these, the
+# sync is NOT auto-opened as a PR; an issue is filed instead so you can decide what to do.
+TrialPreferences
+TrialExpired
+PurchaseViewModel
+Gumroad
+gumroad
+billingclient
+BillingClient
+playImplementation
+ic_gumroad
+R\.string\.(trial|purchase|restore_purchase|enter_license_key|verify_license|grace_)
