@@ -70,3 +70,11 @@
 # Gson TypeToken subclasses need their generic signature at runtime.
 -keep class * extends com.google.gson.reflect.TypeToken
 -dontwarn com.google.gson.**
+
+# yt-dlp's unzip (youtubedl-android -> commons-compress) builds its zip "extra field" classes
+# reflectively. Without this R8 turned AsiExtraField into a non-concrete class and yt-dlp could
+# not initialise in release builds ("AsiExtraField is not a concrete class").
+-keep class org.apache.commons.compress.** { *; }
+-dontwarn org.apache.commons.compress.**
+-keep class org.apache.commons.io.** { *; }
+-dontwarn org.apache.commons.io.**

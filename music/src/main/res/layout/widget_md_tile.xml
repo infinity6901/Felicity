@@ -13,10 +13,13 @@
         android:contentDescription="@string/album_art"
         android:scaleType="centerCrop" />
 
-    <View
+    <!-- Plain <View> is not allowed in RemoteViews (the launcher shows "An error occurred when
+         loading widget"), so the overlay is an ImageView that only draws its background. -->
+    <ImageView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@drawable/widget_md_scrim" />
+        android:background="@drawable/widget_md_scrim"
+        android:importantForAccessibility="no" />
 
     <LinearLayout
         android:layout_width="match_parent"
