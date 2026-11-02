@@ -1,0 +1,67 @@
+name: Sync with upstream release
+
+# Once a day, checks whether the official Felicity repo (Hamza417/Felicity) has published a new
+# RELEASE. If so, merges it into a branch, keeps the removed trial/purchase code removed, opens a
+# pull request and starts the APK build on it. Nothing touches your main branch by itself.
+# See .github/scripts/sync-upstream.sh and the rules in .github/sync/.
+#
+# One-time setup:
+#   * Settings -> Actions -> General -> Workflow permissions: "Read and write permissions" and
+#     tick "Allow GitHub Actions to create and approve pull requests".
+#   * Optional secret SYNC_TOKEN (personal access token with `repo` + `workflow` scopes). Needed
+#     only if GitHub refuses to push a merge that contains upstream workflow changes.
+# Note: GitHub pauses scheduled workflows after 60 days without repository activity.
+
+on:
+    schedule:
+        - cron: '23 2 * * *'   # 02:23 UTC daily
+    workflow_dispatch:
+        inputs:
+            force_tag:
+                description: 'Sync this upstream release tag instead of the newest one (optional)'
+                type: string
+                required: false
+            include_prereleases:
+                description: 'Also follow releases marked "pre-release"'
+                type: boolean
+                default: true
+            dry_run:
+                description: 'Merge and check only; do not push, open PRs/issues or build'
+                type: boolean
+                default: false
+
+permissions:
+    contents: write
+    pull-requests: write
+    issues: write
+    actions: write
+
+concurrency:
+    group: sync-upstream
+    cancel-in-progress: false
+
+jobs:
+    sync:
+        name: Check upstream release
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            -   name: Checkout
+                uses: actions/checkout@v4
+                with:
+                    fetch-depth: 0
+                    token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+            -   name: Git identity
+                run: |
+                    git config user.name  "felicity-sync[bot]"
+                    git config user.email "felicity-sync@users.noreply.github.com"
+
+            -   name: Sync
+                env:
+                    GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+                    SYNC_TAG: ${{ inputs.force_tag }}
+                    INCLUDE_PRERELEASES: ${{ github.event_name == 'workflow_dispatch' && inputs.include_prereleases || 'true' }}
+                    DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+                    BASE_BRANCH: ${{ github.event.repository.default_branch }}
+                run: bash .github/scripts/sync-upstream.sh
