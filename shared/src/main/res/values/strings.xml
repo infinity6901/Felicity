@@ -181,6 +181,8 @@
     <string name="gapless_playback">Gapless Playback</string>
     <string name="gapless_playback_summary">Play audio files gaplessly.</string>
     <string name="crossfade">Crossfade</string>
+    <string name="crossfade_dual_player">Dual-player crossfade (experimental)</string>
+    <string name="crossfade_dual_player_summary">A second player with its own equaliser and effects gets the next song ready and takes over at the end of the fade, so there is no seek or gap at the handover. Works on its own; uses another crossfade mode when it can\'t be used.</string>
     <string name="crossfade_dsp_mode">DSP crossfade (experimental)</string>
     <string name="crossfade_dsp_mode_summary">Crossfade by mixing the next track in before the equaliser and effects, so they apply to the whole fade. Works on its own; uses the standard crossfade when it can\'t be used.</string>
     <string name="crossfade_summary">Smoothly blend the end of one track into the start of the next instead of a hard cut.</string>

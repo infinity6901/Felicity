@@ -198,7 +198,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * Manages the balance and downmix [androidx.media3.common.audio.ChannelMixingAudioProcessor]
      * instances. Extracted to keep audio processing logic out of the service.
      */
-    private val audioProcessorManager = AudioProcessorManager()
+    private var audioProcessorManager = AudioProcessorManager()
 
     /**
      * Posts silent error notifications when a track cannot be played.
@@ -231,6 +231,27 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private var crossfadePlayer: ExoPlayer? = null
     private var crossfadeFadeJob: Job? = null
     private var crossfadeTickerJob: Job? = null
+
+    // --- Dual-player crossfade (experimental) ------------------------------------------------------
+    /** A full second player, prepared on the next track with its own DSP chain, waiting to take over. */
+    private class StandbySlot(
+            val player: ExoPlayer,
+            val manager: AudioProcessorManager,
+            val factory: DefaultRenderersFactory,
+            val sink: FelicityAudioSink?,
+            val forMediaId: String,
+            val queueIds: List<String>
+    )
+
+    private var standby: StandbySlot? = null
+    private var dualFading = false
+    private var dualFadeJob: Job? = null
+
+    /** mediaId for which the dual-player path gave up. */
+    private var dualFailedFor: String? = null
+
+    /** mediaId a "dual-player unavailable" note was already shown for. */
+    private var dualNotedFor: String? = null
 
     // --- DSP-integrated crossfade (experimental; see CrossfadeStage) -----------------------------
     /** Decodes the next track's head and arms the mixer; null when no plan is being prepared. */
@@ -356,113 +377,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         EqualizerManager.attachProcessor(audioProcessorManager.nativeDspProcessor)
 
         // Initialize the RenderersFactory once.
-        renderersFactory = object : DefaultRenderersFactory(this) {
-            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableOffload: Boolean): AudioSink {
-                val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
-
-                // Check if the user WANTS to preserve surround sound for their USB DAC
-                // You'd add this boolean to your AudioPreferences
-                val forceStereoDownmix = AudioPreferences.isStereoDownmixForced()
-
-                audioProcessorManager.applyBalance(EqualizerPreferences.getBalance())
-                audioProcessorManager.applyStereoWidth(EqualizerPreferences.getStereoWidth())
-                audioProcessorManager.applyTapeSaturationDrive(EqualizerPreferences.getTapeSaturationDrive())
-                audioProcessorManager.applyKaraokeMode(EqualizerPreferences.isKaraokeModeEnabled())
-                audioProcessorManager.applyNightMode(EqualizerPreferences.isNightModeEnabled())
-                // applyEqualizerState covers 10-band EQ, bass, treble, preamp, and enabled flag.
-                audioProcessorManager.applyEqualizerState()
-                // Reverb is applied after all tone-shaping so it adds only spatial depth.
-                audioProcessorManager.applyReverb(
-                        EqualizerPreferences.getReverbMix(),
-                        EqualizerPreferences.getReverbDecay(),
-                        EqualizerPreferences.getReverbDamp(),
-                        EqualizerPreferences.getReverbSize()
-                )
-
-                // Build the processor array dynamically
-                val processors = mutableListOf<AudioProcessor>()
-
-                if (AudioPreferences.isSkipSilenceEnabled()) {
-                    // Trim digital silence first while the stream is uncolored.
-                    processors.add(audioProcessorManager.silenceTrimmingProcessor)
-                }
-
-                if (forceStereoDownmix) {
-                    processors.add(audioProcessorManager.downmixProcessor)
-                }
-
-                // Vocal removal runs before the EQ/effects chain so center-channel
-                // subtraction is not colored by subsequent tonal processing.
-                processors.add(audioProcessorManager.karaokeProcessor)
-
-                // Unified native DSP: EQ → bass/treble shelves → M/S widening → balance → saturation.
-                // Also feeds the processed mono downmix to the shared FFTContext.
-                processors.add(audioProcessorManager.nativeDspProcessor)
-
-                // Dynamic range compression runs after all tonal/spatial effects so it
-                // can respond to the final loudness of the mix.
-                processors.add(audioProcessorManager.nightModeProcessor)
-
-                // Visualizer always goes last so the spectrum display reflects every
-                // active effect in the chain.
-                processors.add(audioProcessorManager.visualizerProcessor)
-
-                val audioSink = DefaultAudioSink.Builder(context)
-                    .setEnableFloatOutput(hiresEnabled)
-                    // CRITICAL FOR USB DACs: Tell ExoPlayer to read the USB/HDMI capabilities
-                    .setAudioCapabilities(AudioCapabilities.getCapabilities(context))
-                    .setAudioProcessors(processors.toTypedArray())
-                    .build()
-
-                // If the user has a home theater / USB DAC, we MIGHT want offload for Atmos/Dolby
-                val offloadMode = if (!forceStereoDownmix) {
-                    if (AudioPreferences.isGaplessPlaybackEnabled()) {
-                        DefaultAudioSink.OFFLOAD_MODE_ENABLED_GAPLESS_REQUIRED
-                    } else {
-                        DefaultAudioSink.OFFLOAD_MODE_ENABLED_GAPLESS_NOT_REQUIRED
-                    }
-                } else {
-                    DefaultAudioSink.OFFLOAD_MODE_DISABLED
-                }
-
-                audioSink.setOffloadMode(offloadMode)
-
-                /**
-                 * Wrap the [DefaultAudioSink] with [FelicityAudioSink] as an exclusive router.
-                 * The wrapper selects exactly one output path — USB DAC, AAudio, Oboe, or the
-                 * standard AudioTrack — and routes all audio there. The [DefaultAudioSink] is
-                 * only used when the AudioTrack path is active; for native paths it is kept
-                 * idle (via the factory) so no AudioTrack is ever created unnecessarily.
-                 */
-                return FelicityAudioSink(
-                        defaultSinkProvider = { audioSink },
-                        context = context,
-                        nativeDsp = audioProcessorManager.nativeDspProcessor,
-                        visualizer = audioProcessorManager.visualizerProcessor)
-            }
-
-            override fun buildAudioRenderers(
-                    context: Context,
-                    extensionRendererMode: Int,
-                    mediaCodecSelector: MediaCodecSelector,
-                    enableDecoderFallback: Boolean,
-                    audioSink: AudioSink,
-                    eventHandler: Handler,
-                    eventListener: AudioRendererEventListener,
-                    out: ArrayList<Renderer>
-            ) {
-                super.buildAudioRenderers(
-                        context,
-                        extensionRendererMode,
-                        mediaCodecSelector,
-                        enableDecoderFallback,
-                        audioSink,
-                        eventHandler,
-                        eventListener,
-                        out
-                )
-            }
-        }
+        renderersFactory = createRenderersFactory(audioProcessorManager)
 
         // Build the initial player instance
         buildPlayer()
@@ -515,6 +430,130 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         serviceScope.launch {
             audioRepository.getAllAudio().collect { list ->
                 cachedSongList = list
+            }
+        }
+    }
+
+    /**
+     * Builds a renderers factory whose audio sink runs through [manager]'s own DSP chain
+     * (EQ, effects, visualizer). The main player uses the service's manager; the standby player
+     * of the dual-player crossfade gets a second, independent one so the two never share
+     * per-stream processor state. [forceDefaultRoute] keeps a standby sink off the exclusive
+     * USB/AAudio/Oboe routes, and [onSink] hands back the sink it created.
+     */
+    private fun createRenderersFactory(
+            manager: AudioProcessorManager,
+            forceDefaultRoute: Boolean = false,
+            onSink: ((FelicityAudioSink) -> Unit)? = null
+    ): DefaultRenderersFactory {
+        return object : DefaultRenderersFactory(this@FelicityPlayerService) {
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableOffload: Boolean): AudioSink {
+                val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
+
+                // Check if the user WANTS to preserve surround sound for their USB DAC
+                // You'd add this boolean to your AudioPreferences
+                val forceStereoDownmix = AudioPreferences.isStereoDownmixForced()
+
+                manager.applyBalance(EqualizerPreferences.getBalance())
+                manager.applyStereoWidth(EqualizerPreferences.getStereoWidth())
+                manager.applyTapeSaturationDrive(EqualizerPreferences.getTapeSaturationDrive())
+                manager.applyKaraokeMode(EqualizerPreferences.isKaraokeModeEnabled())
+                manager.applyNightMode(EqualizerPreferences.isNightModeEnabled())
+                // applyEqualizerState covers 10-band EQ, bass, treble, preamp, and enabled flag.
+                manager.applyEqualizerState()
+                // Reverb is applied after all tone-shaping so it adds only spatial depth.
+                manager.applyReverb(
+                        EqualizerPreferences.getReverbMix(),
+                        EqualizerPreferences.getReverbDecay(),
+                        EqualizerPreferences.getReverbDamp(),
+                        EqualizerPreferences.getReverbSize()
+                )
+
+                // Build the processor array dynamically
+                val processors = mutableListOf<AudioProcessor>()
+
+                if (AudioPreferences.isSkipSilenceEnabled()) {
+                    // Trim digital silence first while the stream is uncolored.
+                    processors.add(manager.silenceTrimmingProcessor)
+                }
+
+                if (forceStereoDownmix) {
+                    processors.add(manager.downmixProcessor)
+                }
+
+                // Vocal removal runs before the EQ/effects chain so center-channel
+                // subtraction is not colored by subsequent tonal processing.
+                processors.add(manager.karaokeProcessor)
+
+                // Unified native DSP: EQ → bass/treble shelves → M/S widening → balance → saturation.
+                // Also feeds the processed mono downmix to the shared FFTContext.
+                processors.add(manager.nativeDspProcessor)
+
+                // Dynamic range compression runs after all tonal/spatial effects so it
+                // can respond to the final loudness of the mix.
+                processors.add(manager.nightModeProcessor)
+
+                // Visualizer always goes last so the spectrum display reflects every
+                // active effect in the chain.
+                processors.add(manager.visualizerProcessor)
+
+                val audioSink = DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(hiresEnabled)
+                    // CRITICAL FOR USB DACs: Tell ExoPlayer to read the USB/HDMI capabilities
+                    .setAudioCapabilities(AudioCapabilities.getCapabilities(context))
+                    .setAudioProcessors(processors.toTypedArray())
+                    .build()
+
+                // If the user has a home theater / USB DAC, we MIGHT want offload for Atmos/Dolby
+                val offloadMode = if (!forceStereoDownmix) {
+                    if (AudioPreferences.isGaplessPlaybackEnabled()) {
+                        DefaultAudioSink.OFFLOAD_MODE_ENABLED_GAPLESS_REQUIRED
+                    } else {
+                        DefaultAudioSink.OFFLOAD_MODE_ENABLED_GAPLESS_NOT_REQUIRED
+                    }
+                } else {
+                    DefaultAudioSink.OFFLOAD_MODE_DISABLED
+                }
+
+                audioSink.setOffloadMode(offloadMode)
+
+                /**
+                 * Wrap the [DefaultAudioSink] with [FelicityAudioSink] as an exclusive router.
+                 * The wrapper selects exactly one output path — USB DAC, AAudio, Oboe, or the
+                 * standard AudioTrack — and routes all audio there. The [DefaultAudioSink] is
+                 * only used when the AudioTrack path is active; for native paths it is kept
+                 * idle (via the factory) so no AudioTrack is ever created unnecessarily.
+                 */
+                val felicitySink = FelicityAudioSink(
+                        defaultSinkProvider = { audioSink },
+                        context = context,
+                        nativeDsp = manager.nativeDspProcessor,
+                        visualizer = manager.visualizerProcessor,
+                        forceDefaultRoute = forceDefaultRoute)
+                onSink?.invoke(felicitySink)
+                return felicitySink
+            }
+
+            override fun buildAudioRenderers(
+                    context: Context,
+                    extensionRendererMode: Int,
+                    mediaCodecSelector: MediaCodecSelector,
+                    enableDecoderFallback: Boolean,
+                    audioSink: AudioSink,
+                    eventHandler: Handler,
+                    eventListener: AudioRendererEventListener,
+                    out: ArrayList<Renderer>
+            ) {
+                super.buildAudioRenderers(
+                        context,
+                        extensionRendererMode,
+                        mediaCodecSelector,
+                        enableDecoderFallback,
+                        audioSink,
+                        eventHandler,
+                        eventListener,
+                        out
+                )
             }
         }
     }
@@ -1028,6 +1067,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // its own, so a pause of the main player (user, phone call, headphones unplugged)
             // would otherwise leave the incoming track playing out loud until the fade ends.
             crossfadePlayer?.playWhenReady = playWhenReady
+            // The standby player of a dual-player fade follows play/pause too.
+            if (dualFading) standby?.player?.playWhenReady = playWhenReady
 
             // Any manual play/pause (or an external pause) supersedes the pending gap resume.
             if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
@@ -1191,6 +1232,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             revalidateDspPlan()
+            revalidateStandby()
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -1202,6 +1244,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             dspPlannedFor = null
             dspFailedFor = null
             dspAttempts = 0
+            dualFailedFor = null
             // A crossfade handoff is a seek as far as ExoPlayer is concerned, but it is an
             // automatic track change as far as the app is concerned — see crossfadeHandoffPending.
             // Consumed unconditionally: finishCrossfade() arms it only for a seek that is
@@ -1382,7 +1425,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     reason == Player.DISCONTINUITY_REASON_SKIP ||
                     reason == Player.DISCONTINUITY_REASON_REMOVE
 
-            if (isCrossfading && isExternalDiscontinuity) {
+            if ((isCrossfading || dualFading) && isExternalDiscontinuity) {
                 cancelCrossfadeIfActive()
             }
 
@@ -1469,6 +1512,10 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         val duration = player.duration
         if (duration <= 0 || duration == C.TIME_UNSET) return
+
+        // Experimental dual-player path comes first: a second full player takes over at the end of
+        // the fade, so there is no seek at the handover. Returns false to let the next mode try.
+        if (CrossfadePreferences.isDualPlayerEnabled() && handleDualCrossfade(duration)) return
 
         // Experimental DSP path: owns the track when it can; returns false to let the classic
         // two-player crossfade below run instead.
@@ -1631,6 +1678,271 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         FelicityAudioSink.dspCrossfadeStage()?.cancel(abortActive)
     }
 
+    // =============================================================================================
+    // Dual-player crossfade
+    //
+    // A second full ExoPlayer ("standby") is built on the next track a few seconds before the fade
+    // is due, with its OWN AudioProcessorManager so the two never share per-stream DSP state. At
+    // the fade start it begins playing silently and the two volumes cross over (equal power). At
+    // the end of the fade the standby is promoted to be THE player: no seek, no re-buffer, so
+    // nothing can gap or repeat at the handover. The old player is released.
+    // =============================================================================================
+
+    private fun dualNote(msg: String) {
+        Log.i(TAG, "DualPlayer: $msg")
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        serviceScope.launch(Dispatchers.Main) {
+            android.widget.Toast.makeText(applicationContext, "Dual xfade: $msg", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun musicAudioAttributes(): AudioAttributes = AudioAttributes.Builder()
+        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+        .setUsage(C.USAGE_MEDIA)
+        .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
+        .build()
+
+    /**
+     * Called from the ticker once the usual crossfade guards passed.
+     * @return true when the dual-player path owns this track, false to let another mode have it.
+     */
+    private fun handleDualCrossfade(durationMs: Long): Boolean {
+        val currentId = player.currentMediaItem?.mediaId ?: return false
+        if (dualFailedFor == currentId) return false
+        fun unavailable(reason: String): Boolean {
+            if (dualNotedFor != currentId) {
+                dualNotedFor = currentId
+                dualNote("unavailable ($reason), using another crossfade mode")
+            }
+            return false
+        }
+        if (!AudioPreferences.isGaplessPlaybackEnabled()) return unavailable("gapless playback is off")
+        if (!FelicityAudioSink.isDefaultRouteActive()) return unavailable("output isn't the standard route")
+        if (dualFading) return true
+
+        val fadeMs = CrossfadePreferences.getCrossfadeDurationMs().coerceAtMost(durationMs / 2)
+        val remaining = durationMs - player.currentPosition
+        if (remaining > fadeMs + DUAL_PREP_MS) return true // too early: wait
+
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return false
+
+        var slot = standby
+        if (slot == null || slot.forMediaId != currentId) {
+            releaseStandby()
+            slot = buildStandby(currentId, nextIndex)
+            if (slot == null) {
+                dualFailedFor = currentId
+                return unavailable("could not build the second player")
+            }
+            standby = slot
+            dualNote("second player preparing (fade $fadeMs ms)")
+        }
+
+        if (remaining > fadeMs) return true // standby is buffering; the fade isn't due yet
+
+        // Fade is due. The standby must really be ready, or the fade would start with silence.
+        if (slot.player.playbackState != Player.STATE_READY) {
+            if (remaining > maxOf(600L, fadeMs / 4)) return true // give it a little longer
+            releaseStandby()
+            dualFailedFor = currentId
+            dualNote("second player wasn't ready in time, falling back")
+            return false
+        }
+        beginDualFade(slot, fadeMs, remaining)
+        return true
+    }
+
+    /** Builds the standby player on [nextIndex] with the current queue, settings and its own DSP chain. */
+    private fun buildStandby(currentId: String, nextIndex: Int): StandbySlot? {
+        return try {
+            val manager = AudioProcessorManager()
+            var sinkRef: FelicityAudioSink? = null
+            val factory = createRenderersFactory(manager, forceDefaultRoute = true) { sinkRef = it }
+            factory.setExtensionRendererMode(
+                    if (AudioPreferences.getAudioDecoder() == AudioPreferences.FFMPEG) {
+                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                    } else {
+                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                    }
+            )
+            val loadControl = if (AudioPreferences.isHiresOutputEnabled()) {
+                DefaultLoadControl.Builder().setBufferDurationsMs(5000, 15000, 2000, 3000)
+                    .setPrioritizeTimeOverSizeThresholds(false).build()
+            } else {
+                DefaultLoadControl.Builder().setBufferDurationsMs(2500, 10000, 1000, 2000)
+                    .setPrioritizeTimeOverSizeThresholds(true).build()
+            }
+            // Audio focus and "becoming noisy" are handled by whichever player is the main one, so
+            // the standby leaves them off until it is promoted.
+            val p = ExoPlayer.Builder(this, factory)
+                .setAudioAttributes(musicAudioAttributes(), false)
+                .setLoadControl(loadControl)
+                .setHandleAudioBecomingNoisy(false)
+                .setWakeMode(C.WAKE_MODE_LOCAL)
+                .setMediaSourceFactory(buildStreamingMediaSourceFactory())
+                .build()
+
+            val items = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }
+            p.setMediaItems(items, nextIndex, 0L)
+            p.repeatMode = player.repeatMode
+            p.skipSilenceEnabled = player.skipSilenceEnabled
+            p.pauseAtEndOfMediaItems = player.pauseAtEndOfMediaItems
+            p.playbackParameters = player.playbackParameters
+            p.volume = 0f
+            p.playWhenReady = false
+            p.prepare()
+
+            // The next track's ReplayGain, so the fade-in is at the right level from the start.
+            items.getOrNull(nextIndex)?.mediaId?.toLongOrNull()?.let { audioId ->
+                serviceScope.launch(Dispatchers.IO) {
+                    val audio = audioRepository.getAudioById(audioId)
+                    val db = if (EqualizerPreferences.isAutoReplayGainEnabled() && audio != null) {
+                        parseReplayGainDb(audio, EqualizerPreferences.getReplayGainMode())
+                    } else {
+                        0f
+                    }
+                    manager.applyTagReplayGain(db)
+                }
+            }
+            StandbySlot(p, manager, factory, sinkRef, currentId, items.map { it.mediaId })
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not build the standby player: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun releaseStandby() {
+        val s = standby ?: return
+        standby = null
+        try {
+            s.player.release()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Standby release failed: ${e.message}")
+        }
+    }
+
+    /** Aborts a dual-player fade or a waiting standby (skip, seek, queue edit, settings change, teardown). */
+    private fun cancelDualIfActive() {
+        val wasFading = dualFading
+        dualFading = false
+        dualFadeJob?.cancel()
+        dualFadeJob = null
+        releaseStandby()
+        if (wasFading && ::player.isInitialized) player.volume = 1f
+    }
+
+    /** The standby was built from a snapshot of the queue; if the queue changed, throw it away. */
+    private fun revalidateStandby() {
+        val s = standby ?: return
+        val now = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
+        if (now != s.queueIds || player.currentMediaItem?.mediaId != s.forMediaId) {
+            cancelDualIfActive()
+        }
+    }
+
+    private fun beginDualFade(slot: StandbySlot, fadeMs: Long, remainingMs: Long) {
+        dualFading = true
+        val outgoing = player
+        val startIndex = outgoing.currentMediaItemIndex
+        // Finish a little before the outgoing track ends so its own auto-advance can't race us.
+        val fadeDurationMs = fadeMs.coerceAtMost((remainingMs - 250L).coerceAtLeast(200L))
+        val steps = (fadeDurationMs / 50L).toInt().coerceIn(20, 240)
+        val stepDelayMs = (fadeDurationMs / steps).coerceAtLeast(10)
+
+        slot.player.volume = 0f
+        slot.player.playWhenReady = outgoing.playWhenReady
+        dualNote("fading ($fadeDurationMs ms)")
+
+        dualFadeJob = serviceScope.launch(Dispatchers.Main) {
+            // Make sure the standby is really producing audio before ducking the current track.
+            val readyDeadline = System.currentTimeMillis() + 1000L
+            while (standby === slot && dualFading && !slot.player.isPlaying && slot.player.playWhenReady) {
+                if (System.currentTimeMillis() > readyDeadline) break
+                delay(10)
+            }
+            for (step in 1..steps) {
+                if (standby !== slot || !dualFading || player !== outgoing) return@launch
+                if (outgoing.currentMediaItemIndex != startIndex) {
+                    // The outgoing player already auto-advanced and the app has handled that.
+                    promoteStandby(alreadyAdvanced = true)
+                    return@launch
+                }
+                val angle = (step.toFloat() / steps) * (Math.PI.toFloat() / 2f)
+                outgoing.volume = kotlin.math.cos(angle).coerceIn(0f, 1f)
+                slot.player.volume = kotlin.math.sin(angle).coerceIn(0f, 1f)
+                delay(stepDelayMs)
+            }
+            if (standby === slot && dualFading) {
+                promoteStandby(alreadyAdvanced = outgoing.currentMediaItemIndex != startIndex)
+            }
+        }
+    }
+
+    /**
+     * Makes the standby the main player: it is already playing the next track at the right
+     * position, so everything the app tracks (session, listeners, EQ, visualizer, audio focus)
+     * is simply pointed at it, and the old player is released.
+     */
+    private fun promoteStandby(alreadyAdvanced: Boolean) {
+        val s = standby ?: return
+        standby = null
+        dualFading = false
+        dualFadeJob = null
+
+        val old = player
+        val oldPositionMs = old.currentPosition
+        val oldWasPlaying = old.playWhenReady
+        old.removeListener(playerListener)
+        old.removeAnalyticsListener(analyticsListener)
+        old.volume = 0f
+        old.playWhenReady = false
+
+        player = s.player
+        // Future player rebuilds (decoder / audio-mode switches) need a normal factory bound to the
+        // chain that is now the main one; the standby's own factory is route-locked.
+        renderersFactory = createRenderersFactory(s.manager)
+        audioProcessorManager = s.manager
+        player.volume = 1f
+        // Take over audio focus / noisy-output handling and the service's listeners.
+        player.setAudioAttributes(musicAudioAttributes(), true)
+        player.setHandleAudioBecomingNoisy(true)
+        player.addListener(playerListener)
+        player.addAnalyticsListener(analyticsListener)
+        s.sink?.markActive()
+
+        // Point the shared singletons at the new chain and re-push the saved EQ state to it.
+        EqualizerManager.attachProcessor(s.manager.nativeDspProcessor)
+        VisualizerManager.processor = s.manager.visualizerProcessor
+        s.manager.applyEqualizerState()
+        EqualizerManager.applyPeqBandsFromPreference()
+        EqualizerManager.applyPreampFromPreference()
+        mediaSession?.player = player
+
+        if (!alreadyAdvanced) {
+            // The app learns about track changes from ExoPlayer's transition callback, which a
+            // swap never produces, so replay what the old player's auto-advance would have caused.
+            previousItemEndPositionMs = oldPositionMs
+            previousItemDurationMs = currentItemDurationMs
+            wasPlayingBeforeTransition = oldWasPlaying
+            currentItemDurationMs = 0L
+            playerListener.onMediaItemTransition(player.currentMediaItem, Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+        }
+        playerListener.onPlaybackStateChanged(player.playbackState)
+        playerListener.onIsPlayingChanged(player.isPlaying)
+        dualNote("handover done at ${player.currentPosition} ms")
+
+        // Release the old player a moment later, once nothing depends on it any more.
+        serviceScope.launch(Dispatchers.Main) {
+            delay(300)
+            try {
+                old.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Old player release failed: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Starts a temporary second ExoPlayer on the upcoming track and ramps volumes between it
      * and [player] over [fadeMs] (clamped to however much of the current track is actually
@@ -1767,6 +2079,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
     /** Aborts a crossfade in progress (external seek/skip, or service teardown) and restores [player] to full volume. */
     private fun cancelCrossfadeIfActive() {
+        cancelDualIfActive()
         crossfadeFadeJob?.cancel()
         crossfadeFadeJob = null
         crossfadePlayer?.release()
@@ -1951,10 +2264,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 // next time a song starts — the existing sink never learns about the preference flip.
                 switchAudioMode()
             }
-            CrossfadePreferences.CROSSFADE_ENABLED, CrossfadePreferences.CROSSFADE_DSP_MODE -> {
+            CrossfadePreferences.CROSSFADE_ENABLED, CrossfadePreferences.CROSSFADE_DSP_MODE, CrossfadePreferences.CROSSFADE_DUAL_PLAYER -> {
                 // Either switch can turn crossfading on, so the ticker follows their union. A plan
                 // made under the previous settings must not fire.
                 invalidateDspPlan(abortActive = true)
+                cancelDualIfActive()
                 if (CrossfadePreferences.isActive()) {
                     startCrossfadeTicker()
                 } else {
@@ -2927,6 +3241,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     companion object {
         /** How long before the fade is due the DSP crossfade starts decoding the next track. */
         private const val DSP_PREP_MS = 8000L
+
+        /** How long before a dual-player fade is due the standby player is built and starts buffering. */
+        private const val DUAL_PREP_MS = 8000L
 
         /** Head start given to the player's seek onto the next track to cover its re-buffer stall. */
         private const val CROSSFADE_SEEK_LEAD_MS = 150L

@@ -16,6 +16,7 @@ object CrossfadePreferences {
     const val CROSSFADE_ENABLED = "crossfade_enabled"
     private const val CROSSFADE_DURATION_MS = "crossfade_duration_ms"
     const val CROSSFADE_DSP_MODE = "crossfade_dsp_mode"
+    const val CROSSFADE_DUAL_PLAYER = "crossfade_dual_player"
 
     /** Minimum crossfade length selectable via the settings slider. */
     const val MIN_DURATION_MS = 1000L
@@ -58,9 +59,24 @@ object CrossfadePreferences {
      * crossfades even if the main switch is off, falling back to the standard crossfade whenever
      * the DSP path can't be used. Everything that decides "should we crossfade at all" uses this.
      */
-    fun isActive(): Boolean = isCrossfadeEnabled() || isDspModeEnabled()
+    fun isActive(): Boolean = isCrossfadeEnabled() || isDspModeEnabled() || isDualPlayerEnabled()
 
     // ---------------------------------------------------------------------------------------------------------- //
+
+    fun setDualPlayerEnabled(enabled: Boolean) {
+        SharedPreferences.getSharedPreferences().edit {
+            putBoolean(CROSSFADE_DUAL_PLAYER, enabled)
+        }
+    }
+
+    /**
+     * Experimental. A second full player (with its own DSP chain) is prepared on the next track
+     * and takes over from the first at the end of the fade, so the handoff involves no seek
+     * and no re-buffering. Falls back to the other crossfade modes when it can't be used.
+     */
+    fun isDualPlayerEnabled(): Boolean {
+        return SharedPreferences.getSharedPreferences().getBoolean(CROSSFADE_DUAL_PLAYER, false)
+    }
 
     fun setDspModeEnabled(enabled: Boolean) {
         SharedPreferences.getSharedPreferences().edit {

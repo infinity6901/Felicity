@@ -77,7 +77,13 @@ class FelicityAudioSink(
         private val defaultSinkProvider: () -> DefaultAudioSink,
         private val context: Context,
         private val nativeDsp: NativeDspAudioProcessor,
-        private val visualizer: VisualizerProcessor
+        private val visualizer: VisualizerProcessor,
+        /**
+         * When true this sink only ever uses the standard AudioTrack route and never registers as
+         * the app's active sink. Used for the standby player of the dual-player crossfade, which
+         * must not open an exclusive USB/AAudio/Oboe stream beside the playing one.
+         */
+        private var forceDefaultRoute: Boolean = false
 ) : AudioSink {
 
     // -----------------------------------------------------------------------------------------
@@ -809,7 +815,7 @@ class FelicityAudioSink(
         // Record ourselves as the reachable instance so requestImmediatePause() can find
         // us from anywhere in the app without needing a reference threaded all the way
         // through the service and MediaSession machinery.
-        activeInstance = this
+        if (!forceDefaultRoute) activeInstance = this
     }
 
     // -----------------------------------------------------------------------------------------
@@ -907,6 +913,14 @@ class FelicityAudioSink(
      * The position is only ever read on the playback thread (see [publishAhead]); this method
      * just ages the last published value, so it is safe to call from the main thread.
      */
+    /** Makes this the sink [requestImmediatePause] and the route statics refer to (a promoted standby player). */
+    internal fun markActive() {
+        // A promoted standby may now follow the user's routing choice like any main sink; the next
+        // configure() re-evaluates the route.
+        forceDefaultRoute = false
+        activeInstance = this
+    }
+
     internal fun queuedAheadUs(): Long {
         val snapshot = aheadSnapshotUs
         if (snapshot < 0 || activeSinkType != SinkType.DEFAULT) return -1L
@@ -1126,6 +1140,7 @@ class FelicityAudioSink(
      * a DAC is physically connected.
      */
     private fun targetSinkType(): SinkType = when {
+        forceDefaultRoute -> SinkType.DEFAULT
         UsbDacManager.isActive -> SinkType.USB
         AudioPreferences.getOutputSink() == AudioPreferences.SINK_AAUDIO -> SinkType.AAUDIO
         AudioPreferences.getOutputSink() == AudioPreferences.SINK_OBOE -> SinkType.OBOE
@@ -1327,6 +1342,9 @@ class FelicityAudioSink(
         fun requestImmediatePause() {
             activeInstance?.activeSink?.muteImmediately()
         }
+
+        /** True when the live sink is on the standard route, the only one two players can share. */
+        fun isDefaultRouteActive(): Boolean = activeInstance?.activeSinkType == SinkType.DEFAULT
 
         /** The crossfade mixer of the live sink, or null when no sink exists or a native route is active. */
         fun dspCrossfadeStage(): CrossfadeStage? {
