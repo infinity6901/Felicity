@@ -181,6 +181,8 @@
     <string name="gapless_playback">Gapless Playback</string>
     <string name="gapless_playback_summary">Play audio files gaplessly.</string>
     <string name="crossfade">Crossfade</string>
+    <string name="crossfade_dsp_mode">DSP crossfade (experimental)</string>
+    <string name="crossfade_dsp_mode_summary">Mix the next track in before the equaliser and effects, so they apply to the whole fade. Falls back to the standard crossfade when it can\'t be used.</string>
     <string name="crossfade_summary">Smoothly blend the end of one track into the start of the next instead of a hard cut.</string>
     <string name="crossfade_duration">Crossfade Duration</string>
     <string name="crossfade_duration_summary">How long the overlap between two tracks lasts.</string>

@@ -1121,6 +1121,19 @@ abstract class PreferenceFragment : MediaFragment() {
                 }
         )
 
+        val crossfadeDspMode = Preference(
+                title = R.string.crossfade_dsp_mode,
+                summary = R.string.crossfade_dsp_mode_summary,
+                icon = R.drawable.ic_crossfade,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, callback ->
+                    CrossfadePreferences.setDspModeEnabled((view as FelicitySwitch).isChecked)
+                },
+                valueProvider = Supplier {
+                    CrossfadePreferences.isDspModeEnabled()
+                }
+        )
+
         val crossfadeDuration = Preference(
                 title = R.string.crossfade_duration,
                 summary = R.string.crossfade_duration_summary,
@@ -1161,6 +1174,7 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(skipSilenceToggle)
         preferences.add(crossfadeHeader)
         preferences.add(crossfadeToggle)
+        preferences.add(crossfadeDspMode)
         preferences.add(crossfadeDuration)
         preferences.add(replayGainHeader)
         preferences.add(autoReplayGainToggle)

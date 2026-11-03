@@ -50,6 +50,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import app.simple.felicity.engine.R
 import app.simple.felicity.engine.audio.FelicityAudioSink
+import app.simple.felicity.engine.audio.crossfade.IncomingDecoder
 import app.simple.felicity.engine.managers.AudioPipelineManager
 import app.simple.felicity.engine.managers.AudioProcessorManager
 import app.simple.felicity.engine.managers.EqualizerManager
@@ -230,6 +231,19 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private var crossfadePlayer: ExoPlayer? = null
     private var crossfadeFadeJob: Job? = null
     private var crossfadeTickerJob: Job? = null
+
+    // --- DSP-integrated crossfade (experimental; see CrossfadeStage) -----------------------------
+    /** Decodes the next track's head and arms the mixer; null when no plan is being prepared. */
+    private var dspPlanJob: Job? = null
+
+    /** mediaId of the item a DSP plan was already made for, so the 300 ms ticker plans once per track. */
+    private var dspPlannedFor: String? = null
+
+    /** mediaId of the track the armed plan will crossfade INTO; a queue edit that changes it voids the plan. */
+    private var dspPlanNextId: String? = null
+
+    /** mediaId for which the DSP path gave up; the classic crossfade may take that track instead. */
+    private var dspFailedFor: String? = null
 
     /** The artificial silence gap used when gapless playback is off; cancelled if the user/timer intervenes. */
     private var gapJob: Job? = null
@@ -657,6 +671,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     private fun applyRepeatMode(repeatMode: Int) {
+        // Repeat mode decides what "next" means, so a DSP crossfade plan made under the old mode is void.
+        invalidateDspPlan()
         when (repeatMode) {
             MediaConstants.REPEAT_ONE -> {
                 player.repeatMode = Player.REPEAT_MODE_ONE
@@ -1166,7 +1182,18 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             }
         }
 
+        override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+            revalidateDspPlan()
+        }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            revalidateDspPlan()
+        }
+
         override fun onMediaItemTransition(mediaItem: MediaItem?, reportedReason: Int) {
+            // New current item: forget the previous track's DSP plan and give the next one a clean slate.
+            dspPlannedFor = null
+            dspFailedFor = null
             // A crossfade handoff is a seek as far as ExoPlayer is concerned, but it is an
             // automatic track change as far as the app is concerned — see crossfadeHandoffPending.
             // Consumed unconditionally: finishCrossfade() arms it only for a seek that is
@@ -1327,6 +1354,10 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         ) {
             super.onPositionDiscontinuity(oldPosition, newPosition, reason)
 
+            // A seek or skip invalidates whatever the mixer was told about the tail of the track.
+            // The automatic transition is the planned outcome, so it keeps its plan.
+            if (reason != Player.DISCONTINUITY_REASON_AUTO_TRANSITION) invalidateDspPlan()
+
             // Only a genuinely external seek/skip should abort an in-progress crossfade.
             // DISCONTINUITY_REASON_AUTO_TRANSITION is ExoPlayer's own normal gapless
             // auto-advance to the next queued item — if our fade loop's timer (driven by
@@ -1427,11 +1458,110 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val duration = player.duration
         if (duration <= 0 || duration == C.TIME_UNSET) return
 
+        // Experimental DSP path: owns the track when it can; returns false to let the classic
+        // two-player crossfade below run instead.
+        if (CrossfadePreferences.isDspModeEnabled() && handleDspCrossfade(duration)) return
+
         val fadeMs = CrossfadePreferences.getCrossfadeDurationMs()
         val remaining = duration - player.currentPosition
         if (remaining > fadeMs) return
 
         beginCrossfade(fadeMs, remaining.coerceAtLeast(1L))
+    }
+
+    /**
+     * DSP-integrated crossfade planner. Called from the ticker once every eligibility check in
+     * [maybeStartCrossfade] has passed.
+     *
+     * A few seconds before the fade is due it decodes the head of the next track off the main
+     * thread, works out how many frames of the current track are still ahead of the decoder, and
+     * arms the mixer in [FelicityAudioSink]. From there the mixing happens on the playback thread,
+     * ahead of the DSP chain; nothing more is needed from this class until the track changes.
+     *
+     * @return true when the DSP path owns this track (waiting, planned or running), false when the
+     *         classic crossfade should be used for it.
+     */
+    private fun handleDspCrossfade(durationMs: Long): Boolean {
+        val currentId = player.currentMediaItem?.mediaId ?: return false
+        if (dspFailedFor == currentId) return false
+        val stage = FelicityAudioSink.dspCrossfadeStage() ?: return false
+        if (dspPlannedFor == currentId) return true
+
+        val fadeMs = CrossfadePreferences.getCrossfadeDurationMs()
+        val remaining = durationMs - player.currentPosition
+        if (remaining > fadeMs + DSP_PREP_MS) return true // too early: wait, and don't let the classic path act either
+
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return false
+        val nextItem = player.getMediaItemAt(nextIndex)
+        val uri = nextItem.localConfiguration?.uri
+        if (uri == null) {
+            dspFailedFor = currentId
+            return false
+        }
+
+        val rate = stage.sampleRate
+        val channels = stage.channelCount
+        val fadeFrames = (fadeMs * rate / 1000L).toInt()
+        // Slack past the fade: if the track runs a little longer than predicted, the incoming
+        // audio keeps playing solo instead of running dry.
+        val incomingFrames = fadeFrames + 2 * rate
+        val nextId = nextItem.mediaId
+        dspPlannedFor = currentId
+        dspPlanNextId = nextId
+
+        dspPlanJob?.cancel()
+        dspPlanJob = serviceScope.launch(Dispatchers.Main) {
+            val decoded = IncomingDecoder.decodeHead(this@FelicityPlayerService, uri, rate, channels, incomingFrames)
+
+            fun giveUp() {
+                // Let the classic crossfade have this track.
+                if (player.currentMediaItem?.mediaId == currentId) dspFailedFor = currentId
+            }
+
+            // Anything could have happened while decoding: skip, seek, queue edit.
+            if (player.currentMediaItem?.mediaId != currentId) return@launch
+            val currentNext = player.nextMediaItemIndex
+            if (currentNext == C.INDEX_UNSET || player.getMediaItemAt(currentNext).mediaId != nextId) {
+                dspPlannedFor = null
+                return@launch
+            }
+            val liveStage = FelicityAudioSink.dspCrossfadeStage()
+            val aheadUs = FelicityAudioSink.dspQueuedAheadUs()
+            if (decoded == null || liveStage == null || aheadUs < 0 || decoded.frames < fadeFrames) {
+                giveUp()
+                return@launch
+            }
+
+            // How much of the current track is still to come through the mixer: what is left to
+            // hear, minus what the sink has already accepted but not played yet.
+            val remainingAtHeadMs = (player.duration - player.currentPosition) - aheadUs / 1000L
+            val framesToEnd = remainingAtHeadMs * rate / 1000L
+            val usableFade = minOf(fadeFrames.toLong(), framesToEnd).toInt()
+            if (usableFade < rate / 2) { // under half a second left: not worth a fade
+                giveUp()
+                return@launch
+            }
+            val armed = liveStage.arm(decoded.samples, decoded.frames, usableFade, framesToEnd - usableFade)
+            if (!armed) giveUp()
+        }
+        return true
+    }
+
+    /** Voids the plan when the queue, shuffle or repeat changed what comes after the current track. */
+    private fun revalidateDspPlan() {
+        if (dspPlannedFor == null) return
+        val idx = player.nextMediaItemIndex
+        val nowNext = if (idx == C.INDEX_UNSET) null else player.getMediaItemAt(idx).mediaId
+        if (nowNext != dspPlanNextId) invalidateDspPlan()
+    }
+
+    /** Drops any DSP crossfade plan that hasn't started mixing yet (seek, skip, queue edit). */
+    private fun invalidateDspPlan() {
+        dspPlanJob?.cancel()
+        dspPlanJob = null
+        dspPlannedFor = null
+        FelicityAudioSink.dspCrossfadeStage()?.cancel()
     }
 
     /**
@@ -2674,6 +2804,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     companion object {
+        /** How long before the fade is due the DSP crossfade starts decoding the next track. */
+        private const val DSP_PREP_MS = 6000L
+
         private const val TAG = "FelicityPlayerService"
         private const val GAP_DURATION_MS = 800L // Duration of silence gap when gapless playback is disabled
 

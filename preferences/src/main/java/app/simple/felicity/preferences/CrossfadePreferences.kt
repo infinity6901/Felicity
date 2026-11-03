@@ -15,6 +15,7 @@ object CrossfadePreferences {
 
     const val CROSSFADE_ENABLED = "crossfade_enabled"
     private const val CROSSFADE_DURATION_MS = "crossfade_duration_ms"
+    const val CROSSFADE_DSP_MODE = "crossfade_dsp_mode"
 
     /** Minimum crossfade length selectable via the settings slider. */
     const val MIN_DURATION_MS = 1000L
@@ -49,5 +50,22 @@ object CrossfadePreferences {
     fun getCrossfadeDurationMs(): Long {
         return SharedPreferences.getSharedPreferences()
             .getLong(CROSSFADE_DURATION_MS, DEFAULT_DURATION_MS)
+    }
+
+    // ---------------------------------------------------------------------------------------------------------- //
+
+    fun setDspModeEnabled(enabled: Boolean) {
+        SharedPreferences.getSharedPreferences().edit {
+            putBoolean(CROSSFADE_DSP_MODE, enabled)
+        }
+    }
+
+    /**
+     * Experimental. When on, the next track is mixed into the current one before the DSP chain,
+     * so the equaliser and effects apply to the whole fade. Falls back to the classic
+     * two-player crossfade whenever that can't be done. Off by default.
+     */
+    fun isDspModeEnabled(): Boolean {
+        return SharedPreferences.getSharedPreferences().getBoolean(CROSSFADE_DSP_MODE, false)
     }
 }

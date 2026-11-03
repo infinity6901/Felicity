@@ -14,6 +14,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.AuxEffectInfo
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
@@ -21,6 +22,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import app.simple.felicity.engine.audio.FelicityAudioSink.Companion.requestImmediatePause
 import app.simple.felicity.engine.processors.AaudioOutputProcessor
+import app.simple.felicity.engine.audio.crossfade.CrossfadeStage
 import app.simple.felicity.engine.processors.NativeDspAudioProcessor
 import app.simple.felicity.engine.processors.OboeOutputProcessor
 import app.simple.felicity.engine.processors.VisualizerProcessor
@@ -638,6 +640,18 @@ class FelicityAudioSink(
     private var activeSinkType = SinkType.DEFAULT
 
     /**
+     * Mixes the next track into the tail of the current one before anything downstream sees
+     * the audio (see [CrossfadeStage]). Only used on the DEFAULT route: the native routes keep
+     * their own wall-clock position and can't re-anchor after frames are dropped.
+     */
+    internal val crossfadeStage = CrossfadeStage()
+    private val crossfadeOut = CrossfadeStage.Out()
+
+    /** Presentation time of the end of the last buffer the sink accepted (playback thread writes). */
+    @Volatile
+    private var queuedEndUs: Long = Long.MIN_VALUE
+
+    /**
      * The listener that ExoPlayer's audio renderer registered via [setListener].
      * Stored here so native sinks can forward position and state callbacks directly
      * instead of routing them through the idle [DefaultAudioSink], which would never
@@ -816,6 +830,8 @@ class FelicityAudioSink(
         currentSampleRate = sr
         currentChannelCount = ch
 
+        crossfadeStage.configure(sr, ch, currentEncoding, inputFormat.sampleMimeType == MimeTypes.AUDIO_RAW)
+
         // Re-configure the DSP before any audio reaches handleBuffer so the
         // filter coefficients are correct from the very first frame.
         val audioFormat = AudioProcessor.AudioFormat(sr, ch, currentEncoding)
@@ -847,7 +863,45 @@ class FelicityAudioSink(
         if (rerouteNeeded.compareAndSet(true, false)) {
             rerouteStreamForDeviceChange()
         }
-        return activeSink.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        if (activeSinkType != SinkType.DEFAULT) {
+            crossfadeStage.cancel()
+            return activeSink.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
+
+        // Crossfade stage: untouched pass-through unless a plan is armed or running.
+        val stage = crossfadeStage
+        val out = crossfadeOut
+        stage.transform(buffer, presentationTimeUs, out)
+        val forward = out.buffer
+        if (forward == null) {
+            // The whole buffer belonged to the part of the next track the listener already heard.
+            stage.commit(buffer)
+            return true
+        }
+        val bytes = forward.remaining()
+        val consumed = activeSink.handleBuffer(forward, out.ptsUs, encodedAccessUnitCount)
+        if (consumed) {
+            if (forward !== buffer) stage.commit(buffer)
+            val frameBytes = stage.frameBytes()
+            if (frameBytes > 0 && stage.sampleRate > 0) {
+                queuedEndUs = out.ptsUs + (bytes / frameBytes) * 1_000_000L / stage.sampleRate
+            }
+        }
+        return consumed
+    }
+
+    /**
+     * How much audio the sink has accepted that has not been heard yet, in microseconds, or -1
+     * when that can't be told. The service uses it to work out how far into the track the
+     * decoder is, which decides where the crossfade has to begin.
+     */
+    internal fun queuedAheadUs(): Long {
+        val end = queuedEndUs
+        if (end == Long.MIN_VALUE || activeSinkType != SinkType.DEFAULT) return -1L
+        val pos = activeSink.getCurrentPositionUs(false)
+        if (pos == Long.MIN_VALUE || pos == AudioSink.CURRENT_POSITION_NOT_SET) return -1L
+        val ahead = end - pos
+        return if (ahead in 0..120_000_000L) ahead else -1L
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
@@ -867,6 +921,8 @@ class FelicityAudioSink(
     override fun flush() {
         nativeSourceEnded = false
         nativeEndDeadlineMs = 0L
+        crossfadeStage.reset()
+        queuedEndUs = Long.MIN_VALUE
         activeSink.flush()
     }
 
@@ -910,6 +966,8 @@ class FelicityAudioSink(
     }
 
     override fun reset() {
+        crossfadeStage.reset()
+        queuedEndUs = Long.MIN_VALUE
         nativeSourceEnded = false
         nativeEndDeadlineMs = 0L
         activeSink.release()
@@ -977,6 +1035,8 @@ class FelicityAudioSink(
 
     override fun handleDiscontinuity() {
         if (activeSinkType == SinkType.DEFAULT) {
+            // Must run first: turns a fade in progress into "drop what was already heard".
+            crossfadeStage.onDiscontinuity()
             defaultSink.handleDiscontinuity()
         } else {
             // Notify ExoPlayer that the audio position has jumped (e.g. after a seek).
@@ -1238,5 +1298,14 @@ class FelicityAudioSink(
         fun requestImmediatePause() {
             activeInstance?.activeSink?.muteImmediately()
         }
+
+        /** The crossfade mixer of the live sink, or null when no sink exists or a native route is active. */
+        fun dspCrossfadeStage(): CrossfadeStage? {
+            val inst = activeInstance ?: return null
+            return if (inst.activeSinkType == SinkType.DEFAULT && inst.crossfadeStage.supported) inst.crossfadeStage else null
+        }
+
+        /** See [queuedAheadUs]; -1 when unknown. */
+        fun dspQueuedAheadUs(): Long = activeInstance?.queuedAheadUs() ?: -1L
     }
 }
