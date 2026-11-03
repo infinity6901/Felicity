@@ -52,7 +52,7 @@ on:
         type: boolean
         default: true
   push:
-    branches: [ 'dual-player*' ]
+    branches: [ 'dual-player*', 'Felicity-Remake', 'master', 'main' ]
   pull_request:
     branches: [ main, master ]
 
