@@ -14,6 +14,9 @@ import app.simple.felicity.decorations.lrc.parser.WordLrcParser
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.managers.LyricsManager.Companion.SYNC_SAVE_DEBOUNCE_MS
 import app.simple.felicity.preferences.LyricsPreferences
+import app.simple.felicity.levyra.lyrics.FelicityLyricsAdapter
+import app.simple.felicity.levyra.lyrics.LyricSection
+import app.simple.felicity.levyra.lyrics.LyricsPhraseMatcher
 import app.simple.felicity.repository.metadata.LyricsMetaHelper
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.online.OnlineTrack
@@ -27,6 +30,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,7 +54,8 @@ import javax.inject.Singleton
 @Singleton
 class LyricsManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val lrcRepository: LrcRepository
+    private val lrcRepository: LrcRepository,
+    private val multiProviderLyricsEngine: MultiProviderLyricsEngine
 ) {
 
     private val TAG = "LyricsManager"
@@ -70,6 +80,26 @@ class LyricsManager @Inject constructor(
      * - non-empty   → lyrics are ready to display.
      */
     val lrcData: StateFlow<LrcData?> = _lrcData.asStateFlow()
+
+    private val _detectedSections = MutableStateFlow<List<LyricSection>>(emptyList())
+
+    /** Automatically inferred INTRO/VERSE/CHORUS/BRIDGE ranges for the active lyrics. */
+    val detectedSections: StateFlow<List<LyricSection>> = _detectedSections.asStateFlow()
+
+    /** Find the best local lyric-line match for a phrase without making a network request. */
+    fun findPhrase(phrase: String): Int? {
+        if (!LyricsPhraseMatcher.isSearchable(phrase)) return null
+        val lines = _lrcData.value?.let(FelicityLyricsAdapter::toLines).orEmpty()
+        return LyricsPhraseMatcher.match(phrase, lines.map { it.text })?.lineIndex
+    }
+
+
+    suspend fun searchPhraseAcrossTracks(phrase: String): List<MultiProviderLyricsEngine.PhraseHit> =
+        multiProviderLyricsEngine.searchPhraseAcrossTracks(phrase)
+
+    private val _availableVersions = MutableStateFlow<List<MultiProviderLyricsEngine.Candidate>>(emptyList())
+    /** All matching lyric versions from the available providers for the current track. */
+    val availableVersions: StateFlow<List<MultiProviderLyricsEngine.Candidate>> = _availableVersions.asStateFlow()
 
     private val _loadingStatus = MutableStateFlow<LyricsLoadingStatus>(LyricsLoadingStatus.Idle)
 
@@ -117,6 +147,11 @@ class LyricsManager @Inject constructor(
     private var loadingJob: Job? = null
 
     init {
+        scope.launch {
+            _lrcData.collect { data ->
+                _detectedSections.value = data?.let { FelicityLyricsAdapter.sections(it).sections }.orEmpty()
+            }
+        }
         // Watch the playback queue — whenever a new song starts, reload lyrics automatically.
         scope.launch {
             MediaPlaybackManager.songPositionFlow.collect {
@@ -176,6 +211,7 @@ class LyricsManager @Inject constructor(
 
         // Plant our flag — any result that arrives after this for a different path is stale.
         lastLoadedPath = currentSongPath
+        _availableVersions.value = emptyList()
 
         // Fresh slate for sync state on the new song.
         syncOffset = 0L
@@ -314,12 +350,59 @@ class LyricsManager @Inject constructor(
             parse: suspend (String) -> LrcData
     ) {
         try {
-            val parsed = withContext(Dispatchers.Default) { parse(content) }
+            var parsed = withContext(Dispatchers.Default) {
+                val data = parse(content)
+                if (LyricsPreferences.isAutoRomanizeLyrics()) addAutomaticRomanization(data) else data
+            }
+            parsed = applyStudioTranslation(parsed)
             emitIfStillRelevant(songPath, parsed)
         } catch (e: LyricsParseException) {
             e.printStackTrace()
             emitIfStillRelevant(songPath, fallback)
         }
+    }
+
+
+    /** Applies opt-in line translations while preserving original text and timestamps. */
+    private suspend fun applyStudioTranslation(data: LrcData): LrcData {
+        if (!LyricsPreferences.isStudioTranslationEnabled() || data.isEmpty) return data
+        return coroutineScope {
+            val translated = LrcData()
+            data.metadata.forEach { (key, value) -> translated.addMetadata(key, value) }
+            val entries = data.entries
+            val semaphore = Semaphore(4)
+            val translations = withTimeoutOrNull(30_000L) {
+                entries.take(80).map { entry ->
+                    async { semaphore.withPermit { multiProviderLyricsEngine.translateLine(entry.text).orEmpty() } }
+                }.awaitAll()
+            }.orEmpty()
+            entries.forEachIndexed { index, entry ->
+                val translation = translations.getOrNull(index).orEmpty()
+                translated.addEntry(LrcEntry(
+                    entry.timeInMillis, entry.text, entry.romanization,
+                    entry.adlib?.takeIf { it.isNotBlank() } ?: translation, entry.words
+                ))
+            }
+            translated
+        }
+    }
+
+    /** Adds generated romanization only where the lyric source did not provide one. */
+    private fun addAutomaticRomanization(data: LrcData): LrcData {
+        val enriched = LrcData()
+        data.entries.forEach { entry ->
+            val romanization = entry.romanization ?: LyricsRomanizer.romanize(entry.text)
+            enriched.addEntry(
+                LrcEntry(
+                    entry.timeInMillis,
+                    entry.text,
+                    romanization,
+                    entry.adlib,
+                    entry.words
+                )
+            )
+        }
+        return enriched
     }
 
     /**
@@ -364,7 +447,7 @@ class LyricsManager @Inject constructor(
     }
 
     /**
-     * Fetches synced lyrics from LrcLib, saves them as a sidecar, and emits the result.
+     * Fetches and ranks lyric candidates from multiple providers, saves the selected result as a sidecar, and emits it.
      * This is the only place that updates [loadingStatus] — local reads are too fast
      * to be worth announcing.
      *
@@ -378,68 +461,84 @@ class LyricsManager @Inject constructor(
             songPath: String
     ) {
         _loadingStatus.value = LyricsLoadingStatus.Searching(trackName)
-
-        val result = lrcRepository.searchLyrics(trackName, artistName)
-
+        val candidates = multiProviderLyricsEngine.search(trackName, artistName)
         if (!isStillRelevant(songPath)) {
             _loadingStatus.value = LyricsLoadingStatus.Idle
             return
         }
-
-        result.onSuccess { results ->
-            val firstMatch = results.firstOrNull()
-            val synced = firstMatch?.syncedLyrics
-            val plain = firstMatch?.plainLyrics
-            val isInstrumental = firstMatch?.isInstrumental == true
-
-            if (!synced.isNullOrBlank()) {
-                _loadingStatus.value = LyricsLoadingStatus.Downloading(trackName)
-                try {
-                    val parsed = withContext(Dispatchers.Default) { selectParser(synced).parse(synced) }
-                    if (audioPath.startsWith("content://")) {
-                        withContext(Dispatchers.IO) { lrcRepository.saveLrcToFile(synced, audioPath) }
-                        Log.d(TAG, "Downloaded and saved synced .lrc lyrics for '$trackName'.")
-                    } else {
-                        Log.d(TAG, "Downloaded synced lyrics for online track '$trackName'.")
-                    }
-                    emitIfStillRelevant(songPath, parsed)
-                } catch (e: LyricsParseException) {
-                    e.printStackTrace()
-                    emitIfStillRelevant(songPath, LrcData())
-                }
-            } else if (!plain.isNullOrBlank()) {
-                _loadingStatus.value = LyricsLoadingStatus.Downloading(trackName)
-                try {
-                    val parsed = withContext(Dispatchers.Default) { TxtParser().parse(plain) }
-                    if (audioPath.startsWith("content://")) {
-                        withContext(Dispatchers.IO) { lrcRepository.saveTxtToFile(plain, audioPath) }
-                        Log.d(TAG, "Downloaded and saved plain .txt lyrics for '$trackName'.")
-                    } else {
-                        Log.d(TAG, "Downloaded plain lyrics for online track '$trackName'.")
-                    }
-                    emitIfStillRelevant(songPath, parsed)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    emitIfStillRelevant(songPath, LrcData())
-                }
-            } else if (isInstrumental) {
-                val instrumentalData = LrcData().apply {
-                    addEntry(LrcEntry(0L, "Instrumental track"))
-                }
-                if (audioPath.startsWith("content://")) {
-                    withContext(Dispatchers.IO) { lrcRepository.saveTxtToFile("Instrumental track", audioPath) }
-                }
-                emitIfStillRelevant(songPath, instrumentalData)
-            } else {
-                Log.d(TAG, "No match found online for '$trackName'.")
-                emitIfStillRelevant(songPath, LrcData())
-            }
-        }.onFailure { exception ->
-            exception.printStackTrace()
+        _availableVersions.value = candidates
+        val preferredId = multiProviderLyricsEngine.selectedId(trackName, artistName)
+        val chosen = candidates.firstOrNull { it.id == preferredId } ?: candidates.firstOrNull()
+        if (chosen == null) {
             emitIfStillRelevant(songPath, LrcData())
+            _loadingStatus.value = LyricsLoadingStatus.Idle
+            return
         }
-
+        applyLyricsCandidate(chosen, audioPath, songPath, trackName, artistName, rememberSelection = false)
         _loadingStatus.value = LyricsLoadingStatus.Idle
+    }
+
+    /** Select a different provider/version without restarting playback. */
+    fun selectLyricsVersion(index: Int) {
+        val candidate = _availableVersions.value.getOrNull(index) ?: return
+        val online = MediaPlaybackManager.getCurrentOnlineTrack()
+        val song = if (online == null) MediaPlaybackManager.getCurrentSong() else null
+        val path = online?.let { "online:${it.source}:${it.id}" } ?: song?.uri ?: return
+        val audioPath = path
+        val title = online?.title ?: song?.title.orEmpty()
+        val artist = online?.subtitle ?: song?.artist.orEmpty()
+        scope.launch {
+            applyLyricsCandidate(candidate, audioPath, path, title, artist, rememberSelection = true)
+        }
+    }
+
+    private suspend fun applyLyricsCandidate(
+        candidate: MultiProviderLyricsEngine.Candidate,
+        audioPath: String,
+        songPath: String,
+        title: String,
+        artist: String,
+        rememberSelection: Boolean
+    ) {
+        if (!isStillRelevant(songPath)) return
+        _loadingStatus.value = LyricsLoadingStatus.Downloading(title)
+        try {
+            val raw = candidate.rawLyrics.ifBlank { candidate.plainLyrics }
+            var parsed = withContext(Dispatchers.Default) {
+                if (candidate.synced) selectParser(raw).parse(raw) else TxtParser().parse(raw)
+            }
+            if (candidate.lineExtras.isNotEmpty()) {
+                val extrasByTime = candidate.lineExtras.associateBy { it.timeMs }
+                val enriched = LrcData()
+                parsed.metadata.forEach { (key, value) -> enriched.addMetadata(key, value) }
+                parsed.entries.forEach { entry ->
+                    val extra = extrasByTime[entry.timeInMillis]
+                    enriched.addEntry(LrcEntry(
+                        entry.timeInMillis, entry.text,
+                        extra?.romanization?.takeIf { it.isNotBlank() } ?: entry.romanization,
+                        extra?.translation?.takeIf { it.isNotBlank() } ?: entry.adlib,
+                        extra?.words?.takeIf { it.isNotEmpty() } ?: entry.words
+                    ))
+                }
+                parsed = enriched
+            }
+            if (LyricsPreferences.isAutoRomanizeLyrics()) parsed = addAutomaticRomanization(parsed)
+            parsed = applyStudioTranslation(parsed)
+            if (!isStillRelevant(songPath)) return
+            if (rememberSelection) multiProviderLyricsEngine.select(title, artist, candidate)
+            if (audioPath.startsWith("content://")) {
+                withContext(Dispatchers.IO) {
+                    if (candidate.synced) lrcRepository.saveLrcToFile(raw, audioPath)
+                    else lrcRepository.saveTxtToFile(raw, audioPath)
+                }
+            }
+            emitIfStillRelevant(songPath, parsed)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not parse selected lyrics version from ${candidate.provider}", e)
+            emitIfStillRelevant(songPath, LrcData())
+        } finally {
+            _loadingStatus.value = LyricsLoadingStatus.Idle
+        }
     }
 
     /**

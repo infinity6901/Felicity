@@ -81,6 +81,30 @@ class AudioProcessorManager {
     val nightModeProcessor: NightModeProcessor = NightModeProcessor()
 
     /**
+     * Applies the complete persisted user DSP configuration to this manager's own processor
+     * instances. This method is intentionally instance-scoped: when Felicity runs two players,
+     * each player's AudioProcessorManager must receive the same preferences independently.
+     * No AudioProcessor or native DSP handle is shared between managers.
+     *
+     * Safe to call before a player is prepared and when rebuilding a renderer graph. Live UI
+     * updates should continue to target the manager belonging to the audible player(s).
+     */
+    fun applyCurrentPreferences() {
+        applyBalance(EqualizerPreferences.getBalance())
+        applyStereoWidth(EqualizerPreferences.getStereoWidth())
+        applyTapeSaturationDrive(EqualizerPreferences.getTapeSaturationDrive())
+        applyKaraokeMode(EqualizerPreferences.isKaraokeModeEnabled())
+        applyNightMode(EqualizerPreferences.isNightModeEnabled())
+        applyEqualizerState()
+        applyReverb(
+            EqualizerPreferences.getReverbMix(),
+            EqualizerPreferences.getReverbDecay(),
+            EqualizerPreferences.getReverbDamp(),
+            EqualizerPreferences.getReverbSize()
+        )
+    }
+
+    /**
      * Applies a new stereo balance pan to [nativeDspProcessor].
      *
      * @param pan Pan value in [-1.0, 1.0]. 0.0 = center (no change).

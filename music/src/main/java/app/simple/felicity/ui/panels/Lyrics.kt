@@ -24,6 +24,7 @@ import app.simple.felicity.decorations.utils.TextViewUtils.setTextWithEffect
 import app.simple.felicity.decorations.views.FelicityMediaControls.Companion.MediaControlListener
 import app.simple.felicity.dialogs.lyrics.AddLyrics
 import app.simple.felicity.dialogs.lyrics.AddLyrics.Companion.showAddLyrics
+import app.simple.felicity.dialogs.lyrics.LyricsStudioDialog
 import app.simple.felicity.dialogs.lyrics.LyricsMenu
 import app.simple.felicity.dialogs.lyrics.LyricsMenu.Companion.showLyricsMenu
 import app.simple.felicity.engine.managers.MediaPlaybackManager
@@ -153,6 +154,10 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                         }
                     }
                 }
+
+                override fun onRomanizationPreferenceChanged() {
+                    lyricsViewModel.reloadLrcData()
+                }
             })
         }
 
@@ -177,6 +182,42 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                 MediaPlaybackManager.seekRelative(-SEEK_PER_PULSE_MS)
             }
         })
+
+        binding.studio.setOnClickListener {
+            LyricsStudioDialog.show(
+                requireContext(), binding.lrc,
+                onTranslationChanged = { lyricsViewModel.reloadLrcData() },
+                onPhraseSearch = { phrase ->
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val hits = lyricsViewModel.searchPhraseAcrossTracks(phrase)
+                        val labels = hits.map { "${it.title} · ${it.artist}\n${it.snippet}" }.toTypedArray()
+                        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                            .setTitle(if (hits.isEmpty()) "No verified lyric matches" else "Matching songs")
+                            .setItems(labels, null)
+                            .setPositiveButton("Done", null)
+                            .show()
+                    }
+                }
+            )
+        }
+
+        binding.versions.setOnClickListener {
+            val versions = lyricsViewModel.availableVersions.value
+            if (versions.isNotEmpty()) {
+                androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Choose lyrics version")
+                    .setItems(versions.map { "${it.provider} · ${if (it.synced) "Synced" else "Plain"} · ${it.confidence}%" }.toTypedArray()) { _, which ->
+                        lyricsViewModel.selectLyricsVersion(which)
+                    }
+                    .show()
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            lyricsViewModel.availableVersions.collect { versions ->
+                binding.versions.visibility = if (versions.size > 1) View.VISIBLE else View.GONE
+            }
+        }
 
         binding.search.setOnClickListener {
             openFragment(LyricsSearch.newInstance(), LyricsSearch.TAG)
@@ -286,6 +327,12 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
     private fun applyTextSize() {
         val normal = LyricsPreferences.getLrcTextSize()
         binding.lrc.setTextSizes(normal, normal * LRC_HIGHLIGHT_TIMES)
+        binding.lrc.setLineSpacing(LyricsPreferences.getStudioLineSpacing())
+        val alpha = (LyricsPreferences.getStudioInactiveAlpha() * 255f).toInt().coerceIn(30, 230)
+        binding.lrc.setNormalTextColor(android.graphics.Color.argb(alpha, 220, 220, 220))
+        if (LyricsPreferences.isStudioGlowEnabled()) {
+            binding.lrc.setCurrentTextColor(android.graphics.Color.rgb(100, 210, 255))
+        }
     }
 
     /**

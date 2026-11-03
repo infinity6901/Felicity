@@ -45,6 +45,12 @@ class LyricsMenu : MediaBottomDialogFragment() {
             LyricsPreferences.setAutoDownloadLyrics(isChecked)
         }
 
+        binding.autoRomanizeToggle.isChecked = LyricsPreferences.isAutoRomanizeLyrics()
+        binding.autoRomanizeToggle.setOnCheckedChangeListener { _, isChecked ->
+            LyricsPreferences.setAutoRomanizeLyrics(isChecked)
+            menuListener?.onRomanizationPreferenceChanged()
+        }
+
         binding.textSizeSeekbar.setProgress(LyricsPreferences.getLrcTextSize())
         binding.textSizeSeekbar.setOnSeekChangeListener(object : FelicitySeekbar.OnSeekChangeListener {
             override fun onProgressChanged(seekbar: FelicitySeekbar, progress: Float, fromUser: Boolean) {
@@ -167,6 +173,9 @@ class LyricsMenu : MediaBottomDialogFragment() {
 
             /** Called when the user taps "Embed in file" — the caller must still confirm before writing. */
             fun onEmbedInFile()
+
+            /** Called when automatic on-device lyric romanization is toggled. */
+            fun onRomanizationPreferenceChanged() {}
         }
     }
 }

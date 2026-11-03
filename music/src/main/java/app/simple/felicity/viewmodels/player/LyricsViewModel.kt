@@ -1,9 +1,10 @@
-﻿package app.simple.felicity.viewmodels.player
+package app.simple.felicity.viewmodels.player
 
 import android.app.Application
 import app.simple.felicity.decorations.lrc.model.LrcData
 import app.simple.felicity.extensions.viewmodels.WrappedViewModel
 import app.simple.felicity.managers.EmbedLyricsResult
+import app.simple.felicity.managers.MultiProviderLyricsEngine
 import app.simple.felicity.managers.LyricsLoadingStatus
 import app.simple.felicity.managers.LyricsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -47,6 +48,13 @@ class LyricsViewModel @Inject constructor(
      * text so users aren't left wondering why nothing is showing up.
      */
     val loadingStatus: StateFlow<LyricsLoadingStatus> = lyricsManager.loadingStatus
+
+    /** Provider matches available for manual version selection. */
+    val availableVersions: StateFlow<List<MultiProviderLyricsEngine.Candidate>> = lyricsManager.availableVersions
+
+    fun selectLyricsVersion(index: Int) = lyricsManager.selectLyricsVersion(index)
+
+    suspend fun searchPhraseAcrossTracks(phrase: String) = lyricsManager.searchPhraseAcrossTracks(phrase)
 
     /**
      * The accumulated sync offset as a plain Long so the seek listener on the view

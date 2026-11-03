@@ -30,6 +30,7 @@ import app.simple.felicity.engine.utils.PcmUtils
 import app.simple.felicity.preferences.AudioPreferences
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * An [AudioSink] that acts as an exclusive audio router, directing all PCM output
@@ -785,9 +786,10 @@ class FelicityAudioSink(
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, mainHandler)
 
-        // Record ourselves as the reachable instance so requestImmediatePause() can find
-        // us from anywhere in the app without needing a reference threaded all the way
-        // through the service and MediaSession machinery.
+        // Register every live sink. During dual-player playback both sinks may own an
+        // open native route; an immediate pause must silence both, not merely whichever
+        // sink happened to be constructed most recently.
+        liveInstances += this
         activeInstance = this
     }
 
@@ -927,7 +929,8 @@ class FelicityAudioSink(
         activeSink.release()
         if (defaultSinkDelegate.isInitialized()) defaultSink.release()
 
-        if (activeInstance === this) activeInstance = null
+        liveInstances.remove(this)
+        if (activeInstance === this) activeInstance = liveInstances.lastOrNull()
     }
 
     // -----------------------------------------------------------------------------------------
@@ -1219,6 +1222,9 @@ class FelicityAudioSink(
         @Volatile
         private var activeInstance: FelicityAudioSink? = null
 
+        /** All currently live sinks, including the standby player's sink. */
+        private val liveInstances = CopyOnWriteArraySet<FelicityAudioSink>()
+
         /**
          * Silences whichever native route is currently active right away, without waiting
          * for ExoPlayer's own [pause] call to make its way through the internal playback
@@ -1236,7 +1242,14 @@ class FelicityAudioSink(
          * gets skipped — it just no longer has to be fast for the pause to feel instant.
          */
         fun requestImmediatePause() {
-            activeInstance?.activeSink?.muteImmediately()
+            // A dual-player crossfade can have two native streams producing audio at once.
+            // Muting only the most recently constructed sink can leave the other stream
+            // audible until its playback-thread pause is processed. Silence every live
+            // route synchronously; the normal Player.pause() calls still perform bookkeeping.
+            liveInstances.forEach { sink ->
+                runCatching { sink.activeSink.muteImmediately() }
+                    .onFailure { Log.w(TAG, "Unable to immediately mute an audio route", it) }
+            }
         }
     }
 }

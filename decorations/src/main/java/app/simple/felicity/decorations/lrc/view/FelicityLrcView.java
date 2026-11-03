@@ -114,6 +114,17 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
      * Stays at -1 when the line has no word-sync data or nothing has started yet.
      */
     private int currentWordIndex = -1;
+    private long currentPlaybackTimeMs = 0L;
+    private float glowRadiusPx = 0f;
+    private float glowIntensity = 0f;
+    private int glowColor = Color.MAGENTA;
+    private boolean progressiveWordFill = true;
+    private boolean glassBackgroundEnabled = false;
+    private float glassBackgroundAlpha = 0.16f;
+    private float inactiveLineAlpha = 0.55f;
+    private float edgeBlurMultiplier = 1f;
+    private float activeLineScale = 1f;
+    private float backgroundDimAlpha = 0f;
     // Cache for wrapped text layouts — one pass, one cache, no drama.
     private final HashMap <Integer, LrcLineLayout> normalLayoutCache = new HashMap <>();
     private TextPaint romPaint;
@@ -305,6 +316,23 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             return;
         }
         
+        if (backgroundDimAlpha > 0f) {
+            Paint dim = new Paint(Paint.ANTI_ALIAS_FLAG);
+            dim.setColor(Color.argb(Math.round(255f * backgroundDimAlpha), 0, 0, 0));
+            canvas.drawRect(0, 0, getWidth(), getHeight(), dim);
+        }
+        if (glassBackgroundEnabled) {
+            Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG);
+            glass.setColor(Color.argb(Math.round(255f * glassBackgroundAlpha), 210, 220, 255));
+            float inset = dp2px(getContext(), 10f);
+            float radius = dp2px(getContext(), 24f);
+            canvas.drawRoundRect(inset, inset, getWidth() - inset, getHeight() - inset, radius, radius, glass);
+            Paint edge = new Paint(Paint.ANTI_ALIAS_FLAG);
+            edge.setStyle(Paint.Style.STROKE);
+            edge.setStrokeWidth(dp2px(getContext(), 1f));
+            edge.setColor(Color.argb(65, 255, 255, 255));
+            canvas.drawRoundRect(inset, inset, getWidth() - inset, getHeight() - inset, radius, radius, edge);
+        }
         drawLyrics(canvas);
     }
     
@@ -459,13 +487,13 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         // Top edge blur (within fadeLength from top)
         if (y < fadeLength) {
             float fadeProgress = y / fadeLength;
-            blurAmount = (1f - fadeProgress) * MAX_BLUR_RADIUS;
+            blurAmount = (1f - fadeProgress) * MAX_BLUR_RADIUS * edgeBlurMultiplier;
         }
         // Bottom edge blur (within fadeLength from bottom)
         else if (y > viewHeight - fadeLength) {
             float distanceFromBottom = viewHeight - y;
             float fadeProgress = distanceFromBottom / fadeLength;
-            blurAmount = (1f - fadeProgress) * MAX_BLUR_RADIUS;
+            blurAmount = (1f - fadeProgress) * MAX_BLUR_RADIUS * edgeBlurMultiplier;
         }
         
         // Scale down towards zero as the user's finger is down (blurInterpolation → 1)
@@ -660,7 +688,12 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             float currentY = 0f;
             
             canvas.save();
-            canvas.translate(calculateXPositionForLayout(lrcLayout.mainLayout, normalPaint, i), currentY);
+            float mainX = calculateXPositionForLayout(lrcLayout.mainLayout, normalPaint, i);
+            canvas.translate(mainX, currentY);
+            if (isCurrentHighlight && activeLineScale > 1f) {
+                canvas.scale(activeLineScale, activeLineScale,
+                        lrcLayout.mainLayout.getWidth() / 2f, lrcLayout.mainLayout.getHeight() / 2f);
+            }
             lrcLayout.mainLayout.draw(canvas);
             canvas.restore();
             
@@ -1763,6 +1796,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
      * {@link #AUTO_SCROLL_DELAY} ms of inactivity.
      */
     public void updateTime(long timeInMillis) {
+        currentPlaybackTimeMs = timeInMillis + (lrcData != null ? lrcData.getOffset() : 0L);
         if (lrcData == null || lrcData.isEmpty()) {
             return;
         }
@@ -1811,6 +1845,11 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             invalidate();
         }
         
+        // Progressive fill is time-dependent within a word, so redraw on each player tick.
+        if (progressiveWordFill && currentWordIndex >= 0) {
+            invalidate();
+        }
+
         // Track the active word within the current line (for word-sync files).
         // This runs on every updateTime call — words change inside the same line, so
         // we can't limit this check to when the line index changes.
@@ -2242,6 +2281,50 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         invalidate();
     }
     
+    /** Configure the active-word glow. Radius is in dp; intensity is 0..1. */
+    public void setKaraokeGlow(boolean enabled, float radiusDp, float intensity, @ColorInt int color) {
+        glowRadiusPx = enabled ? dp2px(getContext(), Math.max(0f, radiusDp)) : 0f;
+        glowIntensity = enabled ? Math.max(0f, Math.min(1f, intensity)) : 0f;
+        glowColor = color;
+        // BlurMaskFilter text glow is rendered reliably through the software canvas.
+        setLayerType(glowRadiusPx > 0f && glowIntensity > 0f ? View.LAYER_TYPE_SOFTWARE : View.LAYER_TYPE_HARDWARE, null);
+        invalidate();
+    }
+
+    public void setProgressiveWordFill(boolean enabled) {
+        progressiveWordFill = enabled;
+        invalidate();
+    }
+
+    public void setInactiveLineAlpha(float alpha) {
+        inactiveLineAlpha = Math.max(0.15f, Math.min(0.95f, alpha));
+        int adjusted = Color.argb(Math.round(255f * inactiveLineAlpha),
+                Color.red(normalTextColor), Color.green(normalTextColor), Color.blue(normalTextColor));
+        normalPaint.setColor(adjusted);
+        invalidate();
+    }
+
+    public void setEdgeBlurIntensity(float intensity) {
+        edgeBlurMultiplier = Math.max(0f, Math.min(2f, intensity));
+        invalidate();
+    }
+
+    public void setActiveLineScale(float scale) {
+        activeLineScale = Math.max(1f, Math.min(1.2f, scale));
+        invalidate();
+    }
+
+    public void setBackgroundDim(float alpha) {
+        backgroundDimAlpha = Math.max(0f, Math.min(0.75f, alpha));
+        invalidate();
+    }
+
+    public void setGlassBackground(boolean enabled, float alpha) {
+        glassBackgroundEnabled = enabled;
+        glassBackgroundAlpha = Math.max(0f, Math.min(0.45f, alpha));
+        invalidate();
+    }
+
     private class DynamicMarginSpan extends android.text.style.ReplacementSpan {
         private final int lineIndex;
         private final int wordIndex;
@@ -2310,7 +2393,32 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 }
             }
             
-            canvas.drawText(text, start, end, x + shift, y, paint);
+            float drawX = x + shift;
+            float wordWidth = paint.measureText(text, start, end);
+            boolean activeWord = isCurrentLine && wordIndex == currentWordIndex;
+            int originalColor = paint.getColor();
+            android.graphics.MaskFilter originalMask = paint.getMaskFilter();
+            if (activeWord && glowRadiusPx > 0f && glowIntensity > 0f) {
+                paint.setColor(Color.argb(Math.round(220f * glowIntensity), Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor)));
+                paint.setMaskFilter(new BlurMaskFilter(Math.max(1f, glowRadiusPx), BlurMaskFilter.Blur.NORMAL));
+                canvas.drawText(text, start, end, drawX, y, paint);
+                paint.setMaskFilter(originalMask);
+                paint.setColor(originalColor);
+            }
+            if (activeWord && progressiveWordFill) {
+                WordEntry active = lrcData.getEntries().get(lineIndex).getWords().get(wordIndex);
+                long duration = Math.max(1L, active.getEndMs() - active.getStartMs());
+                float progress = Math.max(0f, Math.min(1f, (float) (currentPlaybackTimeMs - active.getStartMs()) / (float) duration));
+                int save = canvas.save();
+                canvas.clipRect(drawX, top, drawX + wordWidth * progress, bottom);
+                paint.setColor(currentTextColor);
+                canvas.drawText(text, start, end, drawX, y, paint);
+                canvas.restoreToCount(save);
+            } else {
+                canvas.drawText(text, start, end, drawX, y, paint);
+            }
+            paint.setMaskFilter(originalMask);
+            paint.setColor(originalColor);
         }
     }
     
