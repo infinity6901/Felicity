@@ -1,0 +1,599 @@
+name: QA - Build, Test & Release
+
+# Implements as much of Felicity_Android_Test_Plan.pdf as can run in CI:
+#
+#   verify         Stage 1 / Gate 1 : dependencies, Kotlin+Java compile, resources, manifest, debug APK,
+#                                     unit tests, Android Lint, compiler/deprecation warnings, static-review hints
+#   build-release  Release variant (R8) + signature check
+#   device-tests   Stage 2 (the automatable part): instrumented tests, install + cold launch, background/foreground,
+#                                     rotation, lock/unlock, process restart, crash/ANR detection, logcat capture
+#   report         QA report (plan row by row: PASS / FAIL / PARTIAL / NOT RUN) + failure report
+#   release        Optional: GitHub Release with the APKs (workflow_dispatch -> publish_release)
+#
+# Everything the plan says needs real audio / hardware (audible crossfade, DSP, USB DAC, Bluetooth, 50-transition
+# stress ...) is reported as NOT RUN - this workflow never marks a test as passed unless it executed and passed.
+#
+# Artifacts (each uploaded separately, even when a job fails):
+#   unit-test-reports | lint-reports | build-logs | felicity-debug-apk-<ver> | felicity-release-apk-<ver> |
+#   release-build-logs | instrumented-test-reports | device-test-logs | device-logcat | qa-report | failure-report
+#
+# Signing (optional for CI, REQUIRED for publishing): repo secrets SIGN_KEY (base64 .jks), ALIAS, KEY_PASSWORD,
+# KEY_STORE_PASSWORD - the same secrets that build-apk.yml uses (see scripts/setup-signing.sh).
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Also build the release (R8) APK'
+        type: boolean
+        default: true
+      run_device_tests:
+        description: 'Run the emulator tests (instrumented tests + lifecycle checks)'
+        type: boolean
+        default: true
+      lifecycle_cycles:
+        description: 'Repeat count for the emulator background/rotate/lock cycles'
+        type: number
+        default: 5
+      strict_lint:
+        description: 'Fail the run when Android Lint reports errors'
+        type: boolean
+        default: false
+      publish_release:
+        description: 'Publish a GitHub Release with the APKs (needs signing secrets)'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Release tag (empty = dual-player-v<versionName>-<short sha>)'
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark the release as a pre-release (recommended: gates 2-4 need on-device testing)'
+        type: boolean
+        default: true
+  push:
+    branches: [ 'dual-player*' ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qa-build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------------------------------------
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version_name: ${{ steps.plan.outputs.version_name }}
+      build_release: ${{ steps.plan.outputs.build_release }}
+      run_device: ${{ steps.plan.outputs.run_device }}
+      cycles: ${{ steps.plan.outputs.cycles }}
+      strict_lint: ${{ steps.plan.outputs.strict_lint }}
+      publish: ${{ steps.plan.outputs.publish }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide what to run
+        id: plan
+        env:
+          IN_BUILD_RELEASE: ${{ inputs.build_release }}
+          IN_RUN_DEVICE: ${{ inputs.run_device_tests }}
+          IN_CYCLES: ${{ inputs.lifecycle_cycles }}
+          IN_STRICT_LINT: ${{ inputs.strict_lint }}
+          IN_PUBLISH: ${{ inputs.publish_release }}
+          IN_TAG: ${{ inputs.release_tag }}
+          IN_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          # Inputs are empty on push / pull_request events -> use the defaults.
+          BUILD_RELEASE="${IN_BUILD_RELEASE:-true}"
+          RUN_DEVICE="${IN_RUN_DEVICE:-true}"
+          CYCLES="${IN_CYCLES:-5}"
+          STRICT="${IN_STRICT_LINT:-false}"
+          PUBLISH="${IN_PUBLISH:-false}"
+          PRERELEASE="${IN_PRERELEASE:-true}"
+          # Publishing needs a release APK.
+          [ "$PUBLISH" = "true" ] && BUILD_RELEASE=true
+
+          VERSION_NAME=$(grep -oP 'versionName "\K[^"]*' music/build.gradle)
+          TAG="$IN_TAG"
+          [ -z "$TAG" ] && TAG="dual-player-v${VERSION_NAME}-$(echo "$GITHUB_SHA" | cut -c1-7)"
+
+          {
+            echo "version_name=$VERSION_NAME"
+            echo "build_release=$BUILD_RELEASE"
+            echo "run_device=$RUN_DEVICE"
+            echo "cycles=$CYCLES"
+            echo "strict_lint=$STRICT"
+            echo "publish=$PUBLISH"
+            echo "release_tag=$TAG"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Plan: version=$VERSION_NAME release=$BUILD_RELEASE device=$RUN_DEVICE strict_lint=$STRICT publish=$PUBLISH tag=$TAG"
+
+  # ------------------------------------------------------------------------------------------------
+  # Stage 1 / Gate 1
+  verify:
+    name: "Gate 1: build + unit tests + lint"
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      apk_built: ${{ steps.collect.outputs.apk_built }}
+    env:
+      VN: ${{ needs.plan.outputs.version_name }}
+      STRICT_LINT: ${{ needs.plan.outputs.strict_lint }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-android-build
+
+      # Optional here: with the keystore the debug APK is signed with the same key as every other build
+      # (installable over them); without it Gradle falls back to the Android debug key.
+      - name: Decode keystore (if secrets are available)
+        env:
+          SIGN_KEY: ${{ secrets.SIGN_KEY }}
+        run: |
+          if [ -n "$SIGN_KEY" ]; then
+            mkdir -p "$HOME/work/_temp/keystore"
+            echo "$SIGN_KEY" | base64 -d > "$HOME/work/_temp/keystore/key.jks"
+          else
+            echo "No signing secrets - the debug APK will use the default Android debug key."
+          fi
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew .github/scripts/*.sh
+
+      # Every check below is wrapped in ci_step: it records PASS/FAIL and keeps going, so one failure never hides
+      # the results of the checks after it. "Enforce Gate 1" at the end fails the job.
+      - name: "1.1 Dependency resolution"
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          CI_FAIL_IF_LOG_MATCHES: ' FAILED$'
+        run: |
+          source .github/scripts/ci-step.sh
+          ci_step dependencies "Dependency resolution (fossDebugRuntimeClasspath)" \
+            ./gradlew :music:dependencies --configuration fossDebugRuntimeClasspath
+
+      - name: "1.1 Kotlin + Java compilation"
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          source .github/scripts/ci-step.sh
+          # --no-build-cache so the compiler really runs and prints its warnings.
+          ci_step compile "Kotlin + Java compilation (all modules, foss debug)" \
+            ./gradlew :music:compileFossDebugKotlin :music:compileFossDebugJavaWithJavac \
+              --warning-mode all --no-build-cache --stacktrace
+          mkdir -p compiler-warnings
+          touch compiler-warnings/compiler-warnings.txt
+          grep -E '^w: ' ci-logs/compile.log | sort -u > compiler-warnings/compiler-warnings.txt || true
+          grep -iE 'deprecat' compiler-warnings/compiler-warnings.txt > compiler-warnings/deprecated-api-warnings.txt || true
+          grep -iE 'media3|exoplayer' compiler-warnings/compiler-warnings.txt > compiler-warnings/media3-warnings.txt || true
+          touch compiler-warnings/deprecated-api-warnings.txt compiler-warnings/media3-warnings.txt
+          echo "compiler warnings: $(wc -l < compiler-warnings/compiler-warnings.txt)," \
+               "deprecations: $(wc -l < compiler-warnings/deprecated-api-warnings.txt)," \
+               "media3-related: $(wc -l < compiler-warnings/media3-warnings.txt)"
+
+      - name: "1.1 Resource processing + manifest validation"
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          source .github/scripts/ci-step.sh
+          ci_step resources "Resource processing (foss debug)" ./gradlew :music:processFossDebugResources --stacktrace
+          ci_step manifest "Manifest merge (foss debug)" ./gradlew :music:processFossDebugManifest --stacktrace
+
+          mkdir -p manifests
+          MM=$(find music/build -path '*merged_manifest*' -name AndroidManifest.xml | grep -i fossdebug | head -n1)
+          REPORT=$(find music/build -name 'manifest-merger-*fossDebug*-report.txt' | head -n1)
+          [ -n "$MM" ] && cp "$MM" manifests/AndroidManifest.merged.xml
+          [ -n "$REPORT" ] && cp "$REPORT" manifests/manifest-merger-report.txt
+          ci_step manifest-content "Merged manifest is well-formed and declares the player service" python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          p = "manifests/AndroidManifest.merged.xml"
+          try:
+              root = ET.parse(p).getroot()
+          except (OSError, ET.ParseError) as e:
+              print("cannot parse merged manifest:", e); sys.exit(1)
+          ns = "{http://schemas.android.com/apk/res/android}name"
+          services = [s.get(ns) for s in root.iter("service")]
+          perms = [u.get(ns) for u in root.iter("uses-permission")]
+          print("services:", *services, sep="\n  ")
+          print("permissions:", *perms, sep="\n  ")
+          if not any(n and n.endswith("FelicityPlayerService") for n in services):
+              print("FelicityPlayerService is not declared in the merged manifest"); sys.exit(1)
+          PY
+
+      - name: "1.1 Debug APK packaging"
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          source .github/scripts/ci-step.sh
+          ci_step debug-apk "Assemble foss debug APK" ./gradlew :music:assembleFossDebug --stacktrace
+
+      - name: Collect + verify debug APK
+        id: collect
+        run: |
+          source .github/scripts/ci-step.sh
+          mkdir -p out
+          APK=$(find music/build/outputs/apk -path "*foss*" -path "*/debug/*" -name "*.apk" | head -n1)
+          if [ -n "$APK" ]; then
+            cp "$APK" "out/felicity-foss-debug-$VN.apk"
+            echo "apk_built=true" >> "$GITHUB_OUTPUT"
+            ci_step apk-verify "Debug APK: package name, SDK/ABI info, valid signature" \
+              bash .github/scripts/verify-apk.sh "out/felicity-foss-debug-$VN.apk"
+          else
+            echo "apk_built=false" >> "$GITHUB_OUTPUT"
+            ci_record apk-verify FAIL "Debug APK was not produced"
+          fi
+
+      - name: "1.2 Automated unit tests (all modules)"
+        run: |
+          source .github/scripts/ci-step.sh
+          # testDebugUnitTest = library modules, testFossDebugUnitTest = the app module (it has flavors).
+          ci_step unit-tests "Unit tests (all modules)" \
+            ./gradlew testDebugUnitTest testFossDebugUnitTest --continue --no-build-cache --stacktrace
+
+      - name: "1.3 Android Lint"
+        run: |
+          source .github/scripts/ci-step.sh
+          ci_step lint "Android Lint (app + library modules)" \
+            ./gradlew :music:lintFossDebug lintDebug --continue --stacktrace
+
+      - name: "1.3 Static review hints (heuristic, informational)"
+        if: ${{ !cancelled() }}
+        run: bash .github/scripts/static-review.sh static-review
+
+      - name: Upload unit test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            **/build/test-results/test*UnitTest/**
+            **/build/reports/tests/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload lint reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            **/build/reports/lint-results*
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload build logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ci-logs/
+            ci-status/
+            compiler-warnings/
+            static-review/
+            manifests/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload debug APK
+        if: ${{ !cancelled() && steps.collect.outputs.apk_built == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: felicity-debug-apk-${{ needs.plan.outputs.version_name }}
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce Gate 1
+        if: ${{ !cancelled() }}
+        run: |
+          FAIL=0
+          ls ci-status/*.tsv > /dev/null 2>&1 || { echo "::error::No check results were recorded"; exit 1; }
+          for f in ci-status/*.tsv; do
+            IFS=$'\t' read -r id status rc desc < "$f"
+            [ "$status" = "FAIL" ] || continue
+            if [ "$id" = "lint" ] && [ "$STRICT_LINT" != "true" ]; then
+              echo "::warning title=Lint reported problems::$desc (not failing the run: strict_lint=false)"
+              continue
+            fi
+            echo "::error title=Gate 1 failed::$id - $desc"; FAIL=1
+          done
+          exit $FAIL
+
+  # ------------------------------------------------------------------------------------------------
+  build-release:
+    name: Release APK (R8)
+    needs: plan
+    if: needs.plan.outputs.build_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VN: ${{ needs.plan.outputs.version_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-android-build
+
+      - name: Check signing secrets
+        id: signing
+        env:
+          SIGN_KEY: ${{ secrets.SIGN_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          PUBLISH: ${{ needs.plan.outputs.publish }}
+        run: |
+          if [ -n "$SIGN_KEY" ] && [ -n "$ALIAS" ] && [ -n "$KEY_PASSWORD" ] && [ -n "$KEY_STORE_PASSWORD" ]; then
+            mkdir -p "$HOME/work/_temp/keystore"
+            echo "$SIGN_KEY" | base64 -d > "$HOME/work/_temp/keystore/key.jks"
+            test -s "$HOME/work/_temp/keystore/key.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            if [ "$PUBLISH" = "true" ]; then
+              echo "::error::Publishing needs the signing secrets (SIGN_KEY, ALIAS, KEY_PASSWORD, KEY_STORE_PASSWORD). Run scripts/setup-signing.sh once."
+              exit 1
+            fi
+            echo "::warning::No signing secrets: the release APK will be UNSIGNED and cannot be installed."
+          fi
+
+      - name: Build release APK
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          chmod +x ./gradlew .github/scripts/*.sh
+          source .github/scripts/ci-step.sh
+          ci_step release-apk "Assemble foss release APK (R8 minify + shrink)" ./gradlew :music:assembleFossRelease --stacktrace
+
+          mkdir -p out
+          APK=$(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*.apk" | head -n1)
+          if [ -z "$APK" ]; then
+            ci_record release-apk FAIL "Release APK was not produced"
+            ci_record release-apk-verify FAIL "Release APK was not produced"
+          elif [ "$SIGNED" = "true" ]; then
+            cp "$APK" "out/felicity-foss-release-$VN.apk"
+            ci_step release-apk-verify "Release APK: package name + valid signature" \
+              bash .github/scripts/verify-apk.sh "out/felicity-foss-release-$VN.apk"
+          else
+            cp "$APK" "out/felicity-foss-release-UNSIGNED-$VN.apk"
+            ci_record release-apk-verify NOT_RUN "Release APK is unsigned (no signing secrets), so signing was not verified"
+          fi
+          mkdir -p release-extras
+          find music/build/outputs/mapping -type f -exec cp {} release-extras/ \; 2>/dev/null || true
+
+      - name: Upload release APK
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: felicity-release-apk-${{ needs.plan.outputs.version_name }}
+          path: out/*.apk
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload release build logs (+ R8 mapping)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-build-logs
+          path: |
+            ci-logs/
+            ci-status/
+            release-extras/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if the release build failed
+        if: ${{ !cancelled() }}
+        run: |
+          FAIL=0
+          for f in ci-status/*.tsv; do
+            IFS=$'\t' read -r id status rc desc < "$f"
+            [ "$status" = "FAIL" ] && { echo "::error::$id - $desc"; FAIL=1; }
+          done
+          exit $FAIL
+
+  # ------------------------------------------------------------------------------------------------
+  # Stage 2: only what can run on an emulator without a human or audio hardware.
+  device-tests:
+    name: "Stage 2: emulator checks"
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.run_device == 'true' && needs.verify.outputs.apk_built == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VN: ${{ needs.plan.outputs.version_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-android-build
+
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: felicity-debug-apk-${{ needs.plan.outputs.version_name }}
+          path: apks
+
+      - name: Make scripts executable
+        run: chmod +x ./gradlew .github/scripts/*.sh
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run emulator checks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash .github/scripts/device-tests.sh apks/felicity-foss-debug-${{ needs.plan.outputs.version_name }}.apk device-out ${{ needs.plan.outputs.cycles }}
+
+      - name: Drop generated test tones
+        if: ${{ !cancelled() }}
+        run: rm -f device-out/*.wav
+
+      - name: Upload instrumented test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-reports
+          path: |
+            **/build/reports/androidTests/**
+            **/build/outputs/androidTest-results/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload logcat
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-logcat
+          path: |
+            device-out/felicity-logcat.txt
+            device-out/logcat-crash.txt
+            device-out/final-screen.png
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload device test logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-test-logs
+          path: |
+            device-out/ci-logs/
+            device-out/ci-status/
+            device-out/*.txt
+            !device-out/felicity-logcat.txt
+            !device-out/logcat-crash.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce emulator checks
+        if: ${{ !cancelled() }}
+        run: |
+          FAIL=0
+          for f in device-out/ci-status/*.tsv; do
+            [ -e "$f" ] || { echo "::error::no emulator results were recorded"; exit 1; }
+            IFS=$'\t' read -r id status rc desc < "$f"
+            [ "$status" = "FAIL" ] && { echo "::error title=Emulator check failed::$id - $desc"; FAIL=1; }
+          done
+          exit $FAIL
+
+  # ------------------------------------------------------------------------------------------------
+  report:
+    name: QA + failure report
+    needs: [plan, verify, build-release, device-tests]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Build reports
+        env:
+          VERSION_NAME: ${{ needs.plan.outputs.version_name }}
+          STRICT_LINT: ${{ needs.plan.outputs.strict_lint }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 .github/scripts/qa_report.py artifacts report-out
+          mkdir -p qa-report failure-report
+          cp report-out/qa-report.md qa-report/
+          cp report-out/failure-report.md failure-report/
+          # Also show both on the run summary page.
+          { cat report-out/qa-report.md; echo; echo '---'; echo; cat report-out/failure-report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload QA report
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report
+          path: qa-report/
+          retention-days: 90
+
+      - name: Upload failure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-report
+          path: failure-report/
+          retention-days: 90
+
+  # ------------------------------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [plan, verify, build-release, device-tests, report]
+    # Only when requested, and only when the build + unit tests + signed release APK are good and the emulator
+    # checks did not fail (skipped is fine: they are optional).
+    if: >-
+      ${{ !cancelled()
+          && needs.plan.outputs.publish == 'true'
+          && needs.verify.result == 'success'
+          && needs.build-release.result == 'success'
+          && (needs.device-tests.result == 'success' || needs.device-tests.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APKs and QA report
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '{felicity-debug-apk-*,felicity-release-apk-*,qa-report}'
+          merge-multiple: true
+          path: release-files
+
+      - name: Write release notes
+        env:
+          VN: ${{ needs.plan.outputs.version_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "Dual-player migration build **$VN** from \`${SHA::7}\`."
+            echo
+            echo "> Built and tested by CI. Release-readiness gates 2-4 of the QA plan need on-device testing and are **not** cleared by this release - see the attached qa-report.md."
+            echo
+            sed -n '/^## Release-readiness gates/,/^Release rule/p' release-files/qa-report.md | sed '$d'
+          } > release-notes.md
+          ls -la release-files
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: Felicity ${{ needs.plan.outputs.version_name }} (dual-player build)
+          body_path: release-notes.md
+          generate_release_notes: true
+          prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            release-files/*.apk
+            release-files/qa-report.md

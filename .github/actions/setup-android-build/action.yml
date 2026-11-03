@@ -1,0 +1,25 @@
+name: Set up Android build
+description: JDK 21, Android NDK + CMake (version read from gradle/libs.versions.toml) and Gradle with caching.
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Install Android NDK + CMake (with retry)
+      shell: bash
+      run: |
+        NDK=$(grep -oP '^ndk\s*=\s*"\K[^"]+' gradle/libs.versions.toml)
+        SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+        yes | "$SDKM" --licenses > /dev/null || true
+        for i in 1 2 3; do
+          "$SDKM" "ndk;$NDK" "cmake;3.22.1" && exit 0
+          echo "sdkmanager failed (attempt $i), retrying in 20s..."; sleep 20
+        done
+        echo "::error::Could not install NDK $NDK / CMake"; exit 1
+
+    - name: Set up Gradle (with caching)
+      uses: gradle/actions/setup-gradle@v4
