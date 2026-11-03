@@ -248,6 +248,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     /** How many times planning hit a transient problem (no position yet, etc.) for the current track. */
     private var dspAttempts = 0
 
+    /** mediaId a "DSP path unavailable" note was already shown for. */
+    private var dspNotedFor: String? = null
+
     /** The artificial silence gap used when gapless playback is off; cancelled if the user/timer intervenes. */
     private var gapJob: Job? = null
     private val isCrossfading get() = crossfadePlayer != null
@@ -1420,9 +1423,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private fun startCrossfadeTicker() {
         if (crossfadeTickerJob?.isActive == true) return
-        if (!CrossfadePreferences.isCrossfadeEnabled()) return
+        if (!CrossfadePreferences.isActive()) return
         crossfadeTickerJob = serviceScope.launch(Dispatchers.Main) {
-            while (isActive && CrossfadePreferences.isCrossfadeEnabled() && (player.isPlaying || isCrossfading)) {
+            while (isActive && CrossfadePreferences.isActive() && (player.isPlaying || isCrossfading)) {
                 delay(300)
                 maybeStartCrossfade()
             }
@@ -1431,7 +1434,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     private fun maybeStartCrossfade() {
-        if (!CrossfadePreferences.isCrossfadeEnabled()) return
+        if (!CrossfadePreferences.isActive()) return
         if (isCrossfading) return
         if (!player.isPlaying) return
         if (!player.hasNextMediaItem()) return
@@ -1495,10 +1498,19 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private fun handleDspCrossfade(durationMs: Long): Boolean {
         val currentId = player.currentMediaItem?.mediaId ?: return false
         if (dspFailedFor == currentId) return false
+        // Say once per track why the DSP path isn't taking it, so a silent fallback is never a mystery.
+        fun unavailable(reason: String): Boolean {
+            if (dspNotedFor != currentId) {
+                dspNotedFor = currentId
+                dspNote("unavailable ($reason), using standard crossfade")
+            }
+            return false
+        }
         // With gapless off the player pauses at the end of each item and inserts a deliberate
         // silent gap: not a stream the mixer can bridge, and a fade into a gap makes no sense.
-        if (!AudioPreferences.isGaplessPlaybackEnabled()) return false
-        val stage = FelicityAudioSink.dspCrossfadeStage() ?: return false
+        if (!AudioPreferences.isGaplessPlaybackEnabled()) return unavailable("gapless playback is off")
+        val stage = FelicityAudioSink.dspCrossfadeStage()
+            ?: return unavailable("output isn't the standard route or the stream is compressed/offloaded")
         if (dspPlannedFor == currentId) return true
 
         val fadeMs = CrossfadePreferences.getCrossfadeDurationMs().coerceAtMost(durationMs / 2)
@@ -1514,7 +1526,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val startsAtZero = nextItem.clippingConfiguration.startPositionMs == 0L
         if (uri == null || !startsAtZero) {
             dspFailedFor = currentId
-            return false
+            return unavailable(if (uri == null) "next track has no file URI" else "next track starts mid-file")
         }
 
         val rate = stage.sampleRate
@@ -1527,18 +1539,20 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // long fade fall back to the classic crossfade rather than risk the service's heap.
         if (incomingFrames.toLong() * channels > MAX_DSP_INCOMING_SAMPLES) {
             dspFailedFor = currentId
-            return false
+            return unavailable("fade too long for this sample rate")
         }
         val nextId = nextItem.mediaId
         dspPlannedFor = currentId
         dspPlanNextId = nextId
+        dspNote("preparing next track (fade ${fadeMs} ms, ${rate} Hz, ${channels} ch)")
 
         dspPlanJob?.cancel()
         dspPlanJob = serviceScope.launch(Dispatchers.Main) {
             val decoded = IncomingDecoder.decodeHead(this@FelicityPlayerService, uri, rate, channels, incomingFrames)
 
-            fun giveUp() {
+            fun giveUp(reason: String) {
                 // Let the classic crossfade have this track.
+                dspNote("falling back to standard crossfade ($reason)")
                 if (player.currentMediaItem?.mediaId == currentId) dspFailedFor = currentId
             }
 
@@ -1551,14 +1565,22 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             }
             val liveStage = FelicityAudioSink.dspCrossfadeStage()
             val aheadUs = FelicityAudioSink.dspQueuedAheadUs()
-            if (decoded == null || liveStage == null || decoded.frames < fadeFrames) {
-                giveUp()
+            if (liveStage == null) {
+                giveUp("output route changed")
+                return@launch
+            }
+            if (decoded == null) {
+                giveUp("next track can't be decoded here or has a different sample rate/channels")
+                return@launch
+            }
+            if (decoded.frames < fadeFrames) {
+                giveUp("next track is shorter than the fade")
                 return@launch
             }
             if (aheadUs < 0) {
                 // No usable position right now (buffering, just started): try again on a later
                 // tick instead of giving the whole track up, but not forever.
-                if (++dspAttempts >= 3) giveUp() else dspPlannedFor = null
+                if (++dspAttempts >= 3) giveUp("no playback position available") else dspPlannedFor = null
                 return@launch
             }
 
@@ -1568,13 +1590,26 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             val framesToEnd = remainingAtHeadMs * rate / 1000L
             val usableFade = minOf(fadeFrames.toLong(), framesToEnd).toInt()
             if (usableFade < rate / 2) { // under half a second left: not worth a fade
-                giveUp()
+                giveUp("planned too late, ${usableFade * 1000L / rate} ms left")
                 return@launch
             }
+            liveStage.eventListener = { msg -> dspNote(msg) }
             val armed = liveStage.arm(decoded.samples, decoded.frames, usableFade, framesToEnd - usableFade)
-            if (!armed) giveUp()
+            if (!armed) giveUp("mixer rejected the plan")
         }
         return true
+    }
+
+    /**
+     * Diagnostics for the DSP crossfade: always a log line, and in debuggable builds also a toast
+     * so what the planner decided is visible on the phone without adb.
+     */
+    private fun dspNote(msg: String) {
+        Log.i(TAG, "DspCrossfade: $msg")
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        serviceScope.launch(Dispatchers.Main) {
+            android.widget.Toast.makeText(applicationContext, "DSP xfade: $msg", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Voids the plan when the queue, shuffle or repeat changed what comes after the current track. */
@@ -1669,36 +1704,61 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
     }
 
-    /** Hands playback back to [player] at the exact position [temp] had already reached, then releases [temp]. */
+    /**
+     * Hands playback back to [player] at the position [temp] has reached, then releases [temp].
+     *
+     * The seek onto the next track can stall for a few hundred milliseconds (ExoPlayer only
+     * pre-buffers the START of the next item), and [temp] keeps playing through it. Resuming at
+     * the position [temp] had when the seek was issued would replay that stall as a repeated
+     * snippet, which is the "drop" at the end of a fade. So:
+     *  1. seek a little ahead of [temp] to cover the typical stall,
+     *  2. once the player is playing (still silent), measure how far [temp] is ahead of it and
+     *     correct with up to two quick in-buffer seeks,
+     *  3. blend [temp] out and [player] in over ~120 ms instead of a hard switch, so whatever
+     *     small offset remains is a soft blend rather than a jump.
+     */
     private fun finishCrossfade(temp: ExoPlayer, nextIndex: Int) {
-        val handoffPositionMs = temp.currentPosition
         crossfadePlayer = null // consumed before seekTo() below, so the discontinuity listener treats this as our own handoff, not an external skip
 
-        // player's volume is already ~0 from the fade loop above — the seek below jumps to an
-        // arbitrary mid-track position ExoPlayer's own gapless read-ahead never pre-buffered
-        // (it only pre-buffers the START of the next queued item), so it can cause a brief
-        // re-buffering stall. The bug this fixes: that stall used to happen AFTER volume was
-        // already restored to 1, making it audible as "a gap right as the track changes".
-        // Keeping player silent through the seek, and keeping temp alive an extra moment as a
-        // safety-net bridge, means a stall here is inaudible even when it does happen.
+        // player's volume is already ~0 from the fade loop; it stays silent through the seek and
+        // the re-sync below, with temp as the audible bridge.
         player.volume = 0f
         // Only a seek onto a DIFFERENT item produces a media-item transition. If the natural
-        // auto-advance already landed on nextIndex (the race handled in the fade loop), this
-        // seek is just a position correction — arming the flag then would hijack the next
-        // genuine user seek.
+        // auto-advance already landed on nextIndex, this seek is just a position correction —
+        // arming the flag then would hijack the next genuine user seek.
         crossfadeHandoffPending = player.currentMediaItemIndex != nextIndex
-        player.seekTo(nextIndex, handoffPositionMs)
+        player.seekTo(nextIndex, temp.currentPosition + CROSSFADE_SEEK_LEAD_MS)
 
         serviceScope.launch(Dispatchers.Main) {
-            val deadlineMs = System.currentTimeMillis() + 1500L
-            while (isActive && System.currentTimeMillis() < deadlineMs) {
-                if (player.playbackState == Player.STATE_READY &&
-                    player.isPlaying &&
-                    player.currentMediaItemIndex == nextIndex
-                ) {
-                    break
+            suspend fun awaitPlaying(timeoutMs: Long): Boolean {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (isActive && System.currentTimeMillis() < deadline) {
+                    if (player.playbackState == Player.STATE_READY && player.isPlaying &&
+                        player.currentMediaItemIndex == nextIndex
+                    ) return true
+                    delay(10)
                 }
-                delay(20)
+                return false
+            }
+
+            if (awaitPlaying(1500L)) {
+                // temp - player > 0: the player is behind what the listener has been hearing.
+                repeat(2) {
+                    val skew = temp.currentPosition - player.currentPosition
+                    if (kotlin.math.abs(skew) <= CROSSFADE_SYNC_TOLERANCE_MS) return@repeat
+                    // The correction itself takes a moment, during which temp keeps moving.
+                    player.seekTo(nextIndex, (player.currentPosition + skew + CROSSFADE_SEEK_LEAD_MS / 2).coerceAtLeast(0L))
+                    if (!awaitPlaying(600L)) return@repeat
+                }
+            }
+
+            // Equal-power swap: temp out, player in.
+            val steps = 8
+            for (step in 1..steps) {
+                val angle = (step.toFloat() / steps) * (Math.PI.toFloat() / 2f)
+                temp.volume = kotlin.math.cos(angle).coerceIn(0f, 1f)
+                player.volume = kotlin.math.sin(angle).coerceIn(0f, 1f)
+                delay(15)
             }
             player.volume = 1f
             temp.release()
@@ -1891,17 +1951,15 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 // next time a song starts — the existing sink never learns about the preference flip.
                 switchAudioMode()
             }
-            CrossfadePreferences.CROSSFADE_ENABLED -> {
-                if (CrossfadePreferences.isCrossfadeEnabled()) {
+            CrossfadePreferences.CROSSFADE_ENABLED, CrossfadePreferences.CROSSFADE_DSP_MODE -> {
+                // Either switch can turn crossfading on, so the ticker follows their union. A plan
+                // made under the previous settings must not fire.
+                invalidateDspPlan(abortActive = true)
+                if (CrossfadePreferences.isActive()) {
                     startCrossfadeTicker()
                 } else {
                     cancelCrossfadeIfActive()
-                    invalidateDspPlan(abortActive = true)
                 }
-            }
-            CrossfadePreferences.CROSSFADE_DSP_MODE -> {
-                // Either direction: a plan made under the other mode must not fire.
-                invalidateDspPlan(abortActive = true)
             }
             PlayerPreferences.REPEAT_MODE -> {
                 val repeatMode = PlayerPreferences.getRepeatMode()
@@ -2869,6 +2927,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     companion object {
         /** How long before the fade is due the DSP crossfade starts decoding the next track. */
         private const val DSP_PREP_MS = 8000L
+
+        /** Head start given to the player's seek onto the next track to cover its re-buffer stall. */
+        private const val CROSSFADE_SEEK_LEAD_MS = 150L
+
+        /** Remaining offset between the two players below which the handoff is left alone. */
+        private const val CROSSFADE_SYNC_TOLERANCE_MS = 40L
 
         /** Upper bound on the decoded incoming head, in float samples (~24 MB). */
         private const val MAX_DSP_INCOMING_SAMPLES = 6_000_000L

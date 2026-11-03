@@ -72,7 +72,8 @@ close to the hardware as possible.
   stock Android audio path before handoff) — a deliberate tradeoff to avoid two ExoPlayer
   instances fighting over the same native DSP pipeline; normal full-effects playback resumes the
   moment the crossfade completes.
-  - **DSP crossfade (experimental, off by default):** mixes the next track in *before* the DSP
+  - **DSP crossfade (experimental, off by default):** a switch of its own (it doesn't need the
+    Crossfade switch). Mixes the next track in *before* the DSP
     chain, so EQ and effects cover the whole fade. It needs the standard output route (not USB DAC,
     AAudio or Oboe), local files, and the same sample rate and channel count on both tracks;
     otherwise it falls back to the standard crossfade above. The listener hears the next track

@@ -53,6 +53,13 @@ object CrossfadePreferences {
             .coerceIn(MIN_DURATION_MS, MAX_DURATION_MS)
     }
 
+    /**
+     * True when either crossfade switch is on. The DSP switch stands on its own: turning it on
+     * crossfades even if the main switch is off, falling back to the standard crossfade whenever
+     * the DSP path can't be used. Everything that decides "should we crossfade at all" uses this.
+     */
+    fun isActive(): Boolean = isCrossfadeEnabled() || isDspModeEnabled()
+
     // ---------------------------------------------------------------------------------------------------------- //
 
     fun setDspModeEnabled(enabled: Boolean) {

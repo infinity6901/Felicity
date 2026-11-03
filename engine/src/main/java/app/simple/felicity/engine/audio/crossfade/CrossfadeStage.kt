@@ -78,6 +78,17 @@ class CrossfadeStage {
     @Volatile
     private var stateView = State.IDLE
 
+    /**
+     * Optional diagnostics hook, called on the playback thread with a short human-readable note
+     * at each state change. The service uses it for log lines and debug-build toasts.
+     */
+    @Volatile
+    var eventListener: ((String) -> Unit)? = null
+
+    private fun emit(msg: String) {
+        eventListener?.invoke(msg)
+    }
+
     // --- stream format, set by configure() ---------------------------------------------------
     @Volatile
     var sampleRate = 0
@@ -211,8 +222,10 @@ class CrossfadeStage {
                 plan = null
                 if (abort) {
                     // Wrong track arrived: nothing to drop, bring it in from silence.
+                    emit("boundary: plan was voided, ramping the new track in")
                     startRamp(0f)
                 } else {
+                    emit("boundary: dropping ${pos * 1000L / sampleRate} ms already heard (fade reached ${(gain * 100).toInt()}%)")
                     dropRemaining = pos.toLong()
                     droppedSoFar = 0L
                     rampFromGain = gain
@@ -221,6 +234,7 @@ class CrossfadeStage {
             }
             State.ARMED -> {
                 // The boundary arrived before the fade could start: nothing was mixed.
+                emit("boundary arrived before the fade started - no crossfade this time")
                 plan = null
                 enter(State.IDLE)
             }
@@ -292,6 +306,7 @@ class CrossfadeStage {
         val passFrames = startRemaining.toInt()
         startRemaining = 0
         enter(State.ACTIVE)
+        emit("mixing started")
         transformActive(input, ptsUs, frames, passFrames, out)
     }
 
@@ -431,6 +446,7 @@ class CrossfadeStage {
             startRemaining = p.startAfterFrames
             pos = 0
             enter(State.ARMED)
+            emit("armed: fade ${p.fadeFrames * 1000L / sampleRate} ms, starts in ${p.startAfterFrames * 1000L / sampleRate} ms of audio")
         }
     }
 
