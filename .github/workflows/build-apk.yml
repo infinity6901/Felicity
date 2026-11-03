@@ -108,8 +108,20 @@ jobs:
 
             -   name: Install Android NDK + CMake
                 run: |
-                    yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-                    "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "cmake;3.22.1"
+                    SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+                    yes | "$SDKM" --licenses > /dev/null || true
+                    # The SDK download occasionally arrives corrupt ("Error on ZipFile unknown
+                    # archive"). Retry a few times, clearing the half-installed packages first.
+                    for attempt in 1 2 3; do
+                        if "$SDKM" "ndk;28.2.13676358" "cmake;3.22.1"; then
+                            exit 0
+                        fi
+                        echo "::warning::sdkmanager failed (attempt $attempt/3), retrying"
+                        rm -rf "$ANDROID_SDK_ROOT/cmake/3.22.1" "$ANDROID_SDK_ROOT/.temp" "$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+                        sleep $((attempt * 10))
+                    done
+                    echo "::error::Could not install the NDK/CMake after 3 attempts"
+                    exit 1
 
             -   name: Set up Gradle (with caching)
                 uses: gradle/actions/setup-gradle@v4
