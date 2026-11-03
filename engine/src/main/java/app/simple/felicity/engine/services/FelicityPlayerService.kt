@@ -1174,13 +1174,6 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             syncStandbyToNextQueueItem()
         }
 
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            // The current index can advance without a timeline change. Recompute the next
-            // logical item immediately so the standby player never keeps preparing the song
-            // that has just become active. This also covers automatic transitions and skips.
-            syncStandbyToNextQueueItem()
-        }
-
         override fun onRepeatModeChanged(repeatMode: Int) {
             // Repeat-one must not preload a different item; repeat-all may wrap to the start.
             syncStandbyToNextQueueItem()
