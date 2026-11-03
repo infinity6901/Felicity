@@ -135,7 +135,52 @@ jobs:
                     [ "${{ steps.plan.outputs.debug }}" = "true" ] && TASKS="$TASKS assembleFossDebug"
                     [ "${{ steps.plan.outputs.release }}" = "true" ] && TASKS="$TASKS assembleFossRelease"
                     if [ -z "$TASKS" ]; then echo "::error::Nothing selected to build."; exit 1; fi
-                    ./gradlew $TASKS --stacktrace
+                    # Keep a copy of the full Gradle output so a failed run can be diagnosed
+                    # from the uploaded artifact (and the summary) without scrolling the log.
+                    mkdir -p build-logs
+                    set -o pipefail
+                    ./gradlew $TASKS --stacktrace 2>&1 | tee build-logs/gradle.log
+
+            -   name: Summarize build failure
+                if: failure()
+                run: |
+                    mkdir -p build-logs
+                    LOG=build-logs/gradle.log
+                    if [ ! -s "$LOG" ]; then
+                        echo "Gradle produced no log (the run failed before the build step)." | tee build-logs/errors.txt
+                    else
+                        # Kotlin/Java compile errors, the failing task, and Gradle's own explanation.
+                        {
+                            grep -E '^e: |error: |: error:|> Task .* FAILED|Execution failed for task|What went wrong|Could not resolve|Duplicate class|R8: |AAPT: error' "$LOG" | sed -E 's#file:///home/runner/work/[^/]+/[^/]+/##' | awk '!seen[$0]++' | head -150
+                            echo
+                            echo '--- Gradle "What went wrong" block ---'
+                            sed -n '/\* What went wrong:/,/\* Try:/p' "$LOG" | head -40
+                        } > build-logs/errors.txt
+                    fi
+                    {
+                        echo '## Build failed'
+                        echo
+                        echo 'Full log: artifact **build-failure-logs** (`gradle.log`, `errors.txt`, Gradle reports).'
+                        echo
+                        echo '```'
+                        head -80 build-logs/errors.txt
+                        echo '```'
+                    } >> "$GITHUB_STEP_SUMMARY"
+
+            -   name: Upload build failure logs
+                if: failure()
+                uses: actions/upload-artifact@v4
+                with:
+                    name: build-failure-logs
+                    path: |
+                        build-logs/
+                        **/build/reports/
+                        **/build/test-results/
+                        **/build/outputs/mapping/
+                        **/build/outputs/logs/
+                        hs_err_pid*.log
+                    if-no-files-found: warn
+                    retention-days: 14
 
             -   name: Collect and verify APKs
                 id: apks

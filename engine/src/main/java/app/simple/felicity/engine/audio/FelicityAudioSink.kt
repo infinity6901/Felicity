@@ -1,35 +1,3 @@
-    /**
-     * How much audio the sink has accepted that has not been heard yet, in microseconds, or -1
-     * when that can't be told. The service uses it to work out how far into the track the
-     * decoder is, which decides where the crossfade has to begin.
-     *
-     * The position is only ever read on the playback thread (see [publishAhead]); this method
-     * just ages the last published value, so it is safe to call from the main thread.
-     */
-    internal fun queuedAheadUs(): Long {
-        val snapshot = aheadSnapshotUs
-        if (snapshot < 0 || activeSinkType != SinkType.DEFAULT) return -1L
-        val ageUs = (System.nanoTime() - aheadAtNs) / 1000L
-        if (ageUs > 2_000_000L) return -1L // stale: nothing was written for a while
-        val ahead = if (isPaused) snapshot else snapshot - ageUs
-        return ahead.coerceAtLeast(0L)
-    }
-
-    /** Playback thread, at most ~10x per second: samples queued-minus-played for [queuedAheadUs]. */
-    private fun publishAhead() {
-        val now = System.nanoTime()
-        if (now - aheadAtNs < 100_000_000L) return
-        val end = queuedEndUs
-        if (end == Long.MIN_VALUE) return
-        val pos = activeSink.getCurrentPositionUs(false)
-        if (pos == Long.MIN_VALUE || pos == AudioSink.CURRENT_POSITION_NOT_SET) return
-        val ahead = end - pos
-        if (ahead in 0..120_000_000L) {
-            aheadSnapshotUs = ahead
-            aheadAtNs = now
-        }
-    }
-
 package app.simple.felicity.engine.audio
 
 import android.annotation.SuppressLint
@@ -935,14 +903,32 @@ class FelicityAudioSink(
      * How much audio the sink has accepted that has not been heard yet, in microseconds, or -1
      * when that can't be told. The service uses it to work out how far into the track the
      * decoder is, which decides where the crossfade has to begin.
+     *
+     * The position is only ever read on the playback thread (see [publishAhead]); this method
+     * just ages the last published value, so it is safe to call from the main thread.
      */
     internal fun queuedAheadUs(): Long {
+        val snapshot = aheadSnapshotUs
+        if (snapshot < 0 || activeSinkType != SinkType.DEFAULT) return -1L
+        val ageUs = (System.nanoTime() - aheadAtNs) / 1000L
+        if (ageUs > 2_000_000L) return -1L // stale: nothing was written for a while
+        val ahead = if (isPaused) snapshot else snapshot - ageUs
+        return ahead.coerceAtLeast(0L)
+    }
+
+    /** Playback thread, at most ~10x per second: samples queued-minus-played for [queuedAheadUs]. */
+    private fun publishAhead() {
+        val now = System.nanoTime()
+        if (now - aheadAtNs < 100_000_000L) return
         val end = queuedEndUs
-        if (end == Long.MIN_VALUE || activeSinkType != SinkType.DEFAULT) return -1L
+        if (end == Long.MIN_VALUE) return
         val pos = activeSink.getCurrentPositionUs(false)
-        if (pos == Long.MIN_VALUE || pos == AudioSink.CURRENT_POSITION_NOT_SET) return -1L
+        if (pos == Long.MIN_VALUE || pos == AudioSink.CURRENT_POSITION_NOT_SET) return
         val ahead = end - pos
-        return if (ahead in 0..120_000_000L) ahead else -1L
+        if (ahead in 0..120_000_000L) {
+            aheadSnapshotUs = ahead
+            aheadAtNs = now
+        }
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
