@@ -72,6 +72,12 @@ close to the hardware as possible.
   stock Android audio path before handoff) — a deliberate tradeoff to avoid two ExoPlayer
   instances fighting over the same native DSP pipeline; normal full-effects playback resumes the
   moment the crossfade completes.
+  - **DSP crossfade (experimental, off by default):** mixes the next track in *before* the DSP
+    chain, so EQ and effects cover the whole fade. It needs the standard output route (not USB DAC,
+    AAudio or Oboe), local files, and the same sample rate and channel count on both tracks;
+    otherwise it falls back to the standard crossfade above. The listener hears the next track
+    during the fade, so the player UI, lyrics and play history switch at the end of the fade, not
+    at its start.
 - **High-Resolution & Multi-Channel Audio:** FLAC, ALAC, and DSD are supported for
   audiophile-grade playback, along with multichannel formats (5.1/7.1) with native downmixing to
   stereo when the output device doesn't support the source channel layout.

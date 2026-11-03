@@ -22,12 +22,18 @@ import kotlin.math.sin
  * 2. **ACTIVE** – outputs `outgoing * cos(t) + incoming * sin(t)` (equal-power), `t` going 0→π/2
  *    over `fadeFrames`. Past the fade the outgoing tail is silenced and the incoming audio plays
  *    solo, so a track that runs a little longer than predicted never produces a gap or a loud tail.
- *    Every incoming frame used is counted in [pos].
+ *    Every incoming frame used is counted in [pos]. If the incoming audio runs out before the
+ *    boundary (a track more than the slack longer than predicted) the stage outputs silence for
+ *    the rest of the tail; it never lets the faded-out tail come back at full level.
  * 3. **DROPPING** – ExoPlayer signals the real track boundary through
  *    [onDiscontinuity]. The next track's first `pos` frames are exactly what the listener already
  *    heard inside the fade, so they are swallowed. The sink re-anchors its clock to the first
  *    frame it is shown afterwards, so the player's position lands on `pos` frames into the next
  *    track and the seekbar and lyrics stay in sync.
+ *
+ * 4. **RAMPING** – if the boundary arrives before the fade reached full incoming level (a track
+ *    shorter than predicted), the next track's first few milliseconds ramp from the level the
+ *    fade had reached up to 1.0, so there is no audible gain step.
  *
  * This works because the boundary is observed, not predicted: an error in the estimate of where
  * the track ends only changes how much of the fade-out plays, never what is dropped.
@@ -39,7 +45,7 @@ import kotlin.math.sin
  */
 class CrossfadeStage {
 
-    enum class State { IDLE, ARMED, ACTIVE, DROPPING }
+    enum class State { IDLE, ARMED, ACTIVE, DROPPING, RAMPING }
 
     /** Result holder for [transform]; reused to avoid allocating per buffer. */
     class Out {
@@ -64,6 +70,10 @@ class CrossfadeStage {
 
     @Volatile
     private var cancelRequested = false
+
+    /** Set when the queue changed under a running fade: the track that arrives is not the one mixed in. */
+    @Volatile
+    private var abortActiveRequested = false
 
     @Volatile
     private var stateView = State.IDLE
@@ -99,6 +109,9 @@ class CrossfadeStage {
     private var pos = 0
     private var dropRemaining = 0L
     private var droppedSoFar = 0L
+    private var rampRemaining = 0
+    private var rampTotal = 0
+    private var rampFromGain = 1f
 
     // Retry cache: if the sink answers "not consumed" the caller re-offers the SAME buffer.
     private var cachedInput: ByteBuffer? = null
@@ -143,17 +156,23 @@ class CrossfadeStage {
         if (!supported || fadeFrames <= 0 || incomingFrames < fadeFrames) return false
         if (incoming.size < incomingFrames * channelCount) return false
         synchronized(lock) {
-            cancelRequested = false
+            // cancelRequested is deliberately NOT cleared here: a cancel() followed by arm() must
+            // still cancel the OLD plan before the new one is adopted (see adoptPendingPlan).
             pendingPlan = Plan(incoming, incomingFrames, fadeFrames, startAfterFrames.coerceAtLeast(0L))
         }
         return true
     }
 
-    /** Aborts an armed plan. An already-running fade can't be undone and is left to finish. */
-    fun cancel() {
+    /**
+     * Aborts an armed plan. A fade that is already running can't be undone; with
+     * [abortActive] the stage at least stops treating the arriving track as the one it mixed in:
+     * no frames are dropped from it and it ramps in, instead of losing its intro.
+     */
+    fun cancel(abortActive: Boolean = false) {
         synchronized(lock) {
             pendingPlan = null
             cancelRequested = true
+            if (abortActive) abortActiveRequested = true
         }
     }
 
@@ -165,8 +184,10 @@ class CrossfadeStage {
         synchronized(lock) {
             pendingPlan = null
             cancelRequested = false
+            abortActiveRequested = false
         }
         enter(State.IDLE)
+        rampRemaining = 0
         plan = null
         pos = 0
         dropRemaining = 0
@@ -180,12 +201,23 @@ class CrossfadeStage {
      */
     fun onDiscontinuity() {
         adoptPendingPlan()
+        val abort = synchronized(lock) { abortActiveRequested.also { abortActiveRequested = false } }
         when (state) {
             State.ACTIVE -> {
-                dropRemaining = pos.toLong()
-                droppedSoFar = 0L
+                val p = plan
+                // Level the fade had reached when the track ended (1.0 once the fade completed).
+                val gain = if (p == null || pos >= p.fadeFrames) 1f
+                else sin((pos.toDouble() / p.fadeFrames) * (PI / 2.0)).toFloat()
                 plan = null
-                enter(if (dropRemaining > 0) State.DROPPING else State.IDLE)
+                if (abort) {
+                    // Wrong track arrived: nothing to drop, bring it in from silence.
+                    startRamp(0f)
+                } else {
+                    dropRemaining = pos.toLong()
+                    droppedSoFar = 0L
+                    rampFromGain = gain
+                    enter(if (dropRemaining > 0) State.DROPPING else State.IDLE)
+                }
             }
             State.ARMED -> {
                 // The boundary arrived before the fade could start: nothing was mixed.
@@ -230,6 +262,7 @@ class CrossfadeStage {
             State.ARMED -> transformArmed(input, ptsUs, frames, out)
             State.ACTIVE -> transformActive(input, ptsUs, frames, 0, out)
             State.DROPPING -> transformDropping(input, ptsUs, frames, out)
+            State.RAMPING -> transformRamping(input, input.position(), ptsUs, frames, out)
             State.IDLE -> Unit
         }
     }
@@ -248,6 +281,9 @@ class CrossfadeStage {
     private fun transformArmed(input: ByteBuffer, ptsUs: Long, frames: Int, out: Out) {
         if (startRemaining >= frames) {
             startRemaining -= frames
+            // Cached like every other path: the sink may answer "not consumed" and re-offer this
+            // very buffer, and the frames must not be counted down a second time.
+            remember(input, input, ptsUs, false)
             out.buffer = input
             out.ptsUs = ptsUs
             return
@@ -267,7 +303,7 @@ class CrossfadeStage {
         val p = plan!!
         val ch = channelCount
         val buf = ensureScratch(frames * frameSize)
-        val src = input.duplicate().order(input.order())
+        val src = input.duplicate().order(ByteOrder.nativeOrder())
         val dst = buf
 
         for (f in 0 until frames) {
@@ -306,7 +342,7 @@ class CrossfadeStage {
         if (dropRemaining >= frames) {
             dropRemaining -= frames
             droppedSoFar += frames
-            if (dropRemaining == 0L) enter(State.IDLE)
+            if (dropRemaining == 0L) startRamp(rampFromGain)
             // Entire buffer swallowed: committing it consumes the input without any write.
             remember(input, null, ptsUs, true)
             out.buffer = null
@@ -316,13 +352,57 @@ class CrossfadeStage {
         val skipFrames = dropRemaining.toInt()
         dropRemaining = 0
         droppedSoFar += skipFrames
-        enter(State.IDLE)
-        val view = input.duplicate().order(input.order())
-        view.position(input.position() + skipFrames * frameSize)
+        startRamp(rampFromGain)
         val newPts = ptsUs + skipFrames * 1_000_000L / sampleRate
+        if (state == State.RAMPING) {
+            transformRamping(input, input.position() + skipFrames * frameSize, newPts, frames - skipFrames, out)
+            return
+        }
+        val view = input.duplicate().order(ByteOrder.nativeOrder())
+        view.position(input.position() + skipFrames * frameSize)
         remember(input, view, newPts, false)
         out.buffer = view
         out.ptsUs = newPts
+    }
+
+    /** Enters RAMPING from [fromGain] to 1, or IDLE when no ramp is needed. */
+    private fun startRamp(fromGain: Float) {
+        if (fromGain >= 0.999f) {
+            enter(State.IDLE)
+            return
+        }
+        rampFromGain = fromGain
+        rampTotal = (sampleRate / 50).coerceAtLeast(16) // 20 ms
+        rampRemaining = rampTotal
+        enter(State.RAMPING)
+    }
+
+    /**
+     * Copies [frames] frames of [input] starting at byte offset [startByte], applying the rising
+     * gain to those still inside the ramp. [ptsUs] is the time of the first copied frame.
+     */
+    private fun transformRamping(input: ByteBuffer, startByte: Int, ptsUs: Long, frames: Int, out: Out) {
+        val buf = ensureScratch(frames * frameSize)
+        val src = input.duplicate().order(ByteOrder.nativeOrder())
+        src.position(startByte)
+        val ch = channelCount
+        for (f in 0 until frames) {
+            val g = if (rampRemaining > 0) {
+                val k = (rampTotal - rampRemaining).toFloat() / rampTotal
+                rampFromGain + (1f - rampFromGain) * k
+            } else 1f
+            for (c in 0 until ch) {
+                val off = f * frameSize + c * bytesPerSample
+                writeSample(buf, off, readSample(src, off) * g)
+            }
+            if (rampRemaining > 0) rampRemaining--
+        }
+        if (rampRemaining == 0) enter(State.IDLE)
+        buf.limit(frames * frameSize)
+        buf.position(0)
+        remember(input, buf, ptsUs, false)
+        out.buffer = buf
+        out.ptsUs = ptsUs
     }
 
     private fun remember(input: ByteBuffer, out: ByteBuffer?, pts: Long, swallow: Boolean) {
@@ -346,6 +426,7 @@ class CrossfadeStage {
             enter(State.IDLE)
         }
         if (p != null && state == State.IDLE) {
+            synchronized(lock) { abortActiveRequested = false }
             plan = p
             startRemaining = p.startAfterFrames
             pos = 0

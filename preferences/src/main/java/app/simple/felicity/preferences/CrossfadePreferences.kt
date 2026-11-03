@@ -4,10 +4,10 @@ import androidx.core.content.edit
 import app.simple.felicity.manager.SharedPreferences
 
 /**
- * Persists the user's crossfade preferences (on/off + duration).
+ * Persists the user's crossfade preferences (on/off, duration, experimental DSP mode).
  *
  * See `FelicityPlayerService.maybeStartCrossfade`/`beginCrossfade` (engine module) for the
- * actual playback-side implementation — this object only holds the two settings.
+ * actual playback-side implementation — this object only holds the settings.
  *
  * @author Hamza417
  */
@@ -50,6 +50,7 @@ object CrossfadePreferences {
     fun getCrossfadeDurationMs(): Long {
         return SharedPreferences.getSharedPreferences()
             .getLong(CROSSFADE_DURATION_MS, DEFAULT_DURATION_MS)
+            .coerceIn(MIN_DURATION_MS, MAX_DURATION_MS)
     }
 
     // ---------------------------------------------------------------------------------------------------------- //
