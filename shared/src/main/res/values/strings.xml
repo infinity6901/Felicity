@@ -540,4 +540,37 @@
     <string name="fft_resolution_summary">Higher resolution improves frequency accuracy but consumes more CPU and may affect rendering framerate.</string>
     <string name="debug_logs" translatable="false">Debug logs</string>
     <string name="debug_logs_desc" translatable="false">Record, view, save and share this debug build\'s logcat</string>
+    <string name="mixes">Mixes</string>
+    <string name="discover">Discover</string>
+    <string name="random_picks">Random Picks</string>
+    <string name="queue_mix">Queue Mix</string>
+    <string name="new_mix">New Mix</string>
+    <string name="enter_license_key">Enter License Key</string>
+    <string name="enter_license_key_summary">Enter license key purchased from Gumroad here.</string>
+    <string name="purchase">Purchase</string>
+    <string name="purchase_desc">Purchase and activate the full version of the app.</string>
+    <string name="verify">Verify</string>
+    <string name="verifying_license">Verifying License</string>
+    <string name="trial">Trial</string>
+    <string name="trial_period_summary">%1$d days remaining in the trial period.</string>
+    <string name="trial_expired">Trial Expired</string>
+    <string name="trial_expired_message">Your free trial period has ended. Purchase the full version to continue enjoying Felicity without interruption.</string>
+    <string name="grace_period_expired_message">All grace launches have been used. Please purchase the app to continue listening.</string>
+    <string name="purchase_now">Purchase Now</string>
+    <string name="purchase_later">I\'ll Purchase Later</string>
+    <string name="grace_launches_used">%1$d of %2$d grace launches consumed.</string>
+    <string name="support_development_summary">Purchase app\'s license key from Gumroad.</string>
+    <string name="trial_period">Trial Period</string>
+    <string name="scan_state_cleaning">Removing songs that are no longer available…</string>
+    <string name="scan_state_checking">Checking your existing library…</string>
+    <string name="scan_state_discovering">Looking for music in your folders…</string>
+    <string name="scan_state_discovering_count">Looking for music… %1$d found</string>
+    <string name="scan_state_reading_indeterminate">Reading song details…</string>
+    <string name="scan_state_reading">Reading song details… %1$d of %2$d</string>
+    <string name="scan_state_saving">Saving to your library…</string>
+    <string name="scan_state_finishing">Finishing up…</string>
+    <string name="play_store_foss_purchase_info">The FOSS version of this app does not support Google Play purchases. To make a purchase, please install the version available on the Google Play Store.</string>
+    <string name="wave">Wave</string>
+    <string name="blocks">Blocks</string>
+    <string name="spectrum_colors">Spectrum Colors</string>
 </resources>
