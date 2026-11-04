@@ -2,7 +2,7 @@ package app.simple.felicity.engine
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -17,6 +17,7 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("app.simple.felicity.engine", appContext.packageName)
+        // A library module runs under its test APK, so the package carries a ".test" suffix.
+        assertTrue(appContext.packageName.startsWith("app.simple.felicity.engine"))
     }
 }
