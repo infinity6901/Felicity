@@ -539,5 +539,5 @@
     <string name="fft_resolution">FFT Resolution</string>
     <string name="fft_resolution_summary">Higher resolution improves frequency accuracy but consumes more CPU and may affect rendering framerate.</string>
     <string name="debug_logs" translatable="false">Debug logs</string>
-    <string name="debug_logs_desc" translatable="false">Record, view, save and share this debug build's logcat</string>
+    <string name="debug_logs_desc" translatable="false">Record, view, save and share this debug build\'s logcat</string>
 </resources>
