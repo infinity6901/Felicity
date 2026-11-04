@@ -1016,6 +1016,19 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * Skips to the next track if available; otherwise restarts the current item.
      * Shared helper used by the fallback logic.
      */
+    /** One-line "Type: message <- Type: message" summary of an exception and its causes. */
+    private fun describeCauseChain(t: Throwable): String {
+        val parts = ArrayList<String>()
+        var cur: Throwable? = t
+        var depth = 0
+        while (cur != null && depth < 6) {
+            parts += "${cur.javaClass.simpleName}: ${cur.message}"
+            cur = cur.cause
+            depth++
+        }
+        return parts.joinToString(" <- ")
+    }
+
     private fun skipOrRestartTrack() {
         if (player.hasNextMediaItem()) {
             player.seekToNextMediaItem()
@@ -1237,6 +1250,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 gapJob = null
             }
 
+            // After an unrecoverable error the player sits in STATE_IDLE with the error latched,
+            // and play() on its own never re-prepares it - the button then appears dead and the
+            // track stays "paused". Re-prepare on an explicit play so the user can retry.
+            if (playWhenReady &&
+                    player.playbackState == Player.STATE_IDLE &&
+                    player.playerError != null &&
+                    player.currentMediaItem != null) {
+                Log.w(TAG, "Play requested while the player is in an error state; re-preparing.")
+                player.prepare()
+            }
+
             if (!playWhenReady) {
                 // Silence the active native route (AAudio/Oboe) right now, on this thread,
                 // instead of waiting for the internal playback thread to get around to its
@@ -1381,6 +1405,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 else -> {
                     Log.e(TAG, "Playback error: ${error.message} (code: ${error.errorCode})")
                     Log.e(TAG, "Player error: ${error.errorCodeName}", error)
+                    Log.e(TAG, "Player error cause chain: ${describeCauseChain(error)}")
                     playbackErrorNotifier.notifyPlaybackError(
                             player.currentMediaItem?.mediaId,
                             error

@@ -42,7 +42,10 @@ class PlaybackErrorNotifier(private val context: Context) {
     fun notifyPlaybackError(trackTitle: String?, error: PlaybackException) {
         val resolvedTitle = if (trackTitle.isNullOrEmpty()) "Unknown Track" else trackTitle
         val errorName = mapErrorCodeToName(error.errorCode)
-        val bigText = "\"$resolvedTitle\" could not be played.\n\nReason: $errorName\nCode: ${error.errorCode}"
+        val cause = generateSequence(error.cause) { it.cause }.take(4)
+            .joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message}" }
+        val bigText = "\"$resolvedTitle\" could not be played.\n\nReason: $errorName\nCode: ${error.errorCode}" +
+                if (cause.isNotEmpty()) "\nCause: $cause" else ""
 
         Log.d(TAG, "Posting playback error notification: $errorName (${error.errorCode}) for \"$resolvedTitle\"")
 

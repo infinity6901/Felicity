@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug builds only: records this app's logcat to a file and lets the tester save / share it. -->
+    <application>
+
+        <!-- Starts the recorder as early as possible (before Application.onCreate). -->
+        <provider
+            android:name="app.simple.felicity.debug.LogRecorderProvider"
+            android:authorities="${applicationId}.logrecorder"
+            android:exported="false"
+            android:initOrder="100" />
+
+        <activity
+            android:name="app.simple.felicity.debug.DebugLogActivity"
+            android:exported="true"
+            android:label="Felicity Logs"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.DeviceDefault.DayNight">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
