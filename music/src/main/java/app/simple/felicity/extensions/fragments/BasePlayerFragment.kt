@@ -492,7 +492,7 @@ abstract class BasePlayerFragment : MediaFragment() {
     }
 
     private fun setVisualizerCapsState() {
-        visualizer.capsEnabled = VisualizerPreferences.areCapsEnabled()
+        visualizer.spectrumColorsEnabled = VisualizerPreferences.isSpectrumColorsEnabled()
     }
 
     private fun setLyricsState() {
@@ -865,7 +865,7 @@ abstract class BasePlayerFragment : MediaFragment() {
             PlayerPreferences.VISUALIZER_ENABLED -> {
                 setVisualizerState()
             }
-            VisualizerPreferences.CAPS_ENABLED -> {
+            VisualizerPreferences.SPECTRUM_COLORS_ENABLED -> {
                 setVisualizerCapsState()
             }
             PlayerPreferences.WAVEFORM_MODE -> {
