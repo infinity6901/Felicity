@@ -9,6 +9,12 @@ apply from: rootProject.file('common.gradle')
 android {
     namespace 'app.simple.felicity'
 
+    // JVM unit tests touch a few android.* helpers (e.g. android.graphics.Color via
+    // androidx ColorUtils); return defaults instead of throwing "not mocked".
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     // Equivalent of the old android:extractNativeLibs="true" manifest attribute,
     // required by youtubedl-android (see repository/youtube/YtDlpManager.kt) so its
     // bundled Python/yt-dlp/ffmpeg payload can be extracted from the APK at runtime.
