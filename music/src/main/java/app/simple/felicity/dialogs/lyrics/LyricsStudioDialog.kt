@@ -569,7 +569,6 @@ private class LyricsStudioScreen(
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
-        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = false
 
         // --- Pinned part: header + live preview -------------------------------------------
         val back = ImageView(ctx).apply {
@@ -672,6 +671,7 @@ private class LyricsStudioScreen(
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         setContentView(root)
+        runCatching { WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = false }
         refreshAll()
     }
 

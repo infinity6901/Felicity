@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<app.simple.felicity.decorations.ripple.DynamicRippleFrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/container"
+    android:layout_width="300dp"
+    android:layout_height="180dp"
+    android:orientation="vertical">
+
+    <ImageView
+        android:id="@+id/art"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_margin="@dimen/padding_15"
+        android:layout_gravity="bottom">
+
+        <app.simple.felicity.decorations.typeface.TypeFaceTextView
+            android:id="@+id/artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="@dimen/text_size_12"
+            android:maxLines="1"
+            android:ellipsize="end"
+            app:appFontStyle="regular"
+            app:textColorStyle="white" />
+
+        <app.simple.felicity.decorations.typeface.TypeFaceTextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="@dimen/text_size_22"
+            android:maxLines="1"
+            android:ellipsize="end"
+            app:appFontStyle="light"
+            app:textColorStyle="white" />
+
+    </LinearLayout>
+</app.simple.felicity.decorations.ripple.DynamicRippleFrameLayout>

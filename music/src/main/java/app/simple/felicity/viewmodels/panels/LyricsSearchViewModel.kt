@@ -15,6 +15,7 @@ import app.simple.felicity.repository.repositories.LrcRepository
 import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -37,7 +38,8 @@ class LyricsSearchViewModel @Inject constructor(
         application: Application,
         private val savedStateHandle: SavedStateHandle,
         private val lrcRepository: LrcRepository,
-        private val lyricsManager: LyricsManager
+        private val lyricsManager: LyricsManager,
+        private val multiProviderEngine: app.simple.felicity.managers.MultiProviderLyricsEngine
 ) : WrappedViewModel(application) {
 
     private val _searchResults = MutableLiveData<List<LrcLibResponse>>(emptyList())
@@ -156,19 +158,37 @@ class LyricsSearchViewModel @Inject constructor(
             _isLoading.postValue(true)
             Log.d(TAG, "Searching for lyrics: trackName='$trackName', artistName='$artistName'")
 
-            val result = lrcRepository.searchLyrics(trackName, artistName)
-
-            result.onSuccess { results ->
-                _searchResults.postValue(results)
-                if (results.isEmpty()) {
-                    warning.postValue(getString(R.string.no_lyrics_found))
+            // Query every source in parallel: LrcLib's own search plus the multi-provider engine
+            // (LRCLIB candidates, LyricsPlus mirrors, cached results). Results are merged and
+            // de-duplicated so the same lyrics from two sources show only once.
+            val merged = kotlinx.coroutines.supervisorScope {
+                val lrcLib = async { runCatching { lrcRepository.searchLyrics(trackName, artistName).getOrThrow() }.getOrDefault(emptyList()) }
+                val engine = async {
+                    runCatching {
+                        multiProviderEngine.search(trackName, artistName).map { c ->
+                            LrcLibResponse(
+                                    id = c.rawLyrics.hashCode(),
+                                    trackName = c.title.ifBlank { trackName },
+                                    artistName = c.artist.ifBlank { artistName },
+                                    albumName = c.provider,
+                                    duration = 0.0,
+                                    plainLyrics = c.plainLyrics.ifBlank { if (c.synced) null else c.rawLyrics },
+                                    syncedLyrics = if (c.synced) c.rawLyrics else null,
+                                    isInstrumental = false)
+                        }
+                    }.getOrDefault(emptyList())
                 }
-                Log.d(TAG, "Search returned ${results.size} result(s)")
-            }.onFailure { exception ->
-                Log.e(TAG, "Search failed", exception)
-                warning.postValue(exception.message ?: getString(R.string.no_lyrics_found))
-                _searchResults.postValue(emptyList())
+                (lrcLib.await() + engine.await())
+                    .filter { !it.syncedLyrics.isNullOrBlank() || !it.plainLyrics.isNullOrBlank() }
+                    .distinctBy { (it.syncedLyrics ?: it.plainLyrics).orEmpty().trim().hashCode() }
+                    .sortedByDescending { !it.syncedLyrics.isNullOrBlank() }
             }
+
+            _searchResults.postValue(merged)
+            if (merged.isEmpty()) {
+                warning.postValue(getString(R.string.no_lyrics_found))
+            }
+            Log.d(TAG, "Search returned ${merged.size} result(s) from all sources")
 
             _isLoading.postValue(false)
         }

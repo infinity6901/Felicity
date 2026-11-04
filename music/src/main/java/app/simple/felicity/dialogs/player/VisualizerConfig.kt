@@ -7,11 +7,15 @@ import android.view.ViewGroup
 import androidx.fragment.app.FragmentManager
 import app.simple.felicity.R
 import app.simple.felicity.databinding.DialogVisualizerTuningBinding
-import app.simple.felicity.decorations.toggles.FelicityButtonGroup.Companion.Button
+import app.simple.felicity.decorations.seekbars.FelicitySeekbar
+import app.simple.felicity.decorations.views.PopupMenuItem
+import app.simple.felicity.decorations.views.SharedScrollViewPopupNonContainer
 import app.simple.felicity.extensions.dialogs.MediaBottomDialogFragment
 import app.simple.felicity.extensions.fragments.MediaFragment
 import app.simple.felicity.preferences.PlayerPreferences
 import app.simple.felicity.preferences.VisualizerPreferences
+import java.util.Locale
+import kotlin.math.roundToInt
 
 class VisualizerConfig : MediaBottomDialogFragment() {
 
@@ -32,37 +36,73 @@ class VisualizerConfig : MediaBottomDialogFragment() {
             PlayerPreferences.setVisualizerEnabled(isChecked)
         }
 
+        setupLatencySeekbar()
 
-        binding.particlesToggle.isChecked = VisualizerPreferences.areParticlesEnabled()
-        binding.particlesToggle.setOnCheckedChangeListener { _, isChecked ->
-            VisualizerPreferences.setParticlesEnabled(isChecked)
-        }
-
-        binding.capsToggle.isChecked = VisualizerPreferences.areCapsEnabled()
-        binding.capsToggle.setOnCheckedChangeListener { _, isChecked ->
-            VisualizerPreferences.setCapsEnabled(isChecked)
+        binding.spectrumColorsToggle.isChecked = VisualizerPreferences.isSpectrumColorsEnabled()
+        binding.spectrumColorsToggle.setOnCheckedChangeListener { _, isChecked ->
+            VisualizerPreferences.setSpectrumColorsEnabled(isChecked)
         }
     }
 
-    fun updateVizStyleState() {
-        binding.styleToggle.iconSize = 14F
-        binding.styleToggle.setButtons(
-                listOf(
-                        Button(iconResId = R.drawable.ic_equalizer_16dp),
-                        Button(iconResId = R.drawable.ic_waves),
-                )
+    private fun setupLatencySeekbar() {
+        val seekbar = binding.latencySeekbar
+        seekbar.setRange(
+                VisualizerPreferences.LATENCY_OFFSET_MIN_MS.toFloat(),
+                VisualizerPreferences.LATENCY_OFFSET_MAX_MS.toFloat()
         )
-
-        when (VisualizerPreferences.getVisualizerType()) {
-            VisualizerPreferences.TYPE_BARS -> binding.styleToggle.setSelectedIndex(0)
-            VisualizerPreferences.TYPE_WAVE -> binding.styleToggle.setSelectedIndex(1)
+        seekbar.setDefaultProgress(0f)
+        seekbar.setProgress(VisualizerPreferences.getLatencyOffsetMs().toFloat())
+        seekbar.setRightLabelProvider { progress, _, _ ->
+            String.format(Locale.getDefault(), "%+d ms", snapLatency(progress))
         }
 
-        binding.styleToggle.setOnButtonSelectedListener { index ->
-            when (index) {
-                0 -> VisualizerPreferences.setVisualizerType(VisualizerPreferences.TYPE_BARS)
-                1 -> VisualizerPreferences.setVisualizerType(VisualizerPreferences.TYPE_WAVE)
+        seekbar.setOnSeekChangeListener(object : FelicitySeekbar.OnSeekChangeListener {
+            private var isTracking = false
+
+            override fun onProgressChanged(seekbar: FelicitySeekbar, progress: Float, fromUser: Boolean) {
+                if (fromUser && !isTracking) {
+                    VisualizerPreferences.setLatencyOffsetMs(snapLatency(progress))
+                }
             }
+
+            override fun onStartTrackingTouch(seekbar: FelicitySeekbar) {
+                isTracking = true
+            }
+
+            override fun onStopTrackingTouch(seekbar: FelicitySeekbar) {
+                isTracking = false
+                VisualizerPreferences.setLatencyOffsetMs(snapLatency(seekbar.getProgress()))
+            }
+        })
+    }
+
+    private fun snapLatency(progress: Float): Int {
+        return (progress / LATENCY_STEP_MS).roundToInt() * LATENCY_STEP_MS
+    }
+
+    fun updateVizStyleState() {
+        binding.stylePopup.setText(styleTitle(VisualizerPreferences.getVisualizerType()))
+
+        binding.stylePopup.setOnClickListener { anchor ->
+            SharedScrollViewPopupNonContainer(
+                    container = binding.root,
+                    anchorView = anchor,
+                    menuItems = listOf(
+                            PopupMenuItem(title = R.string.bars, icon = R.drawable.ic_equalizer_16dp),
+                            PopupMenuItem(title = R.string.wave, icon = R.drawable.ic_waves),
+                            PopupMenuItem(title = R.string.blocks, icon = R.drawable.ic_blocks_16dp)
+                    ),
+                    onMenuItemClick = {
+                        val type = when (it) {
+                            R.string.wave -> VisualizerPreferences.TYPE_WAVE
+                            R.string.blocks -> VisualizerPreferences.TYPE_BLOCKS
+                            else -> VisualizerPreferences.TYPE_BARS
+                        }
+
+                        VisualizerPreferences.setVisualizerType(type)
+                        binding.stylePopup.setText(styleTitle(type))
+                    }
+            ).show()
         }
 
         binding.openMilkdropVisualizer.setOnClickListener {
@@ -71,6 +111,14 @@ class VisualizerConfig : MediaBottomDialogFragment() {
                 // so we dismiss the dialog immediately after opening the settings.
                 dismiss()
             }
+        }
+    }
+
+    private fun styleTitle(type: Int): Int {
+        return when (type) {
+            VisualizerPreferences.TYPE_WAVE -> R.string.wave
+            VisualizerPreferences.TYPE_BLOCKS -> R.string.blocks
+            else -> R.string.bars
         }
     }
 
@@ -89,6 +137,7 @@ class VisualizerConfig : MediaBottomDialogFragment() {
         }
 
         private const val TAG = "VisualizerConfig"
+        private const val LATENCY_STEP_MS = 5
     }
 }
 

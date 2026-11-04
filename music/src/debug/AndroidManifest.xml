@@ -13,15 +13,10 @@
 
         <activity
             android:name="app.simple.felicity.debug.DebugLogActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="Felicity Logs"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.DeviceDefault.DayNight">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@android:style/Theme.DeviceDefault.DayNight" />
 
     </application>
 </manifest>

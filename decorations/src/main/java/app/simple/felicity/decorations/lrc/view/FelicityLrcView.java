@@ -333,7 +333,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         if (glassBackgroundEnabled) {
             Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG);
             glass.setColor(Color.argb(Math.round(255f * glassBackgroundAlpha), 210, 220, 255));
-            float inset = dp2px(getContext(), 10f);
+            float inset = dp2px(getContext(), 4f);
             float radius = dp2px(getContext(), 24f);
             canvas.drawRoundRect(inset, inset, getWidth() - inset, getHeight() - inset, radius, radius, glass);
             Paint edge = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -629,8 +629,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             // Draw ripple effect for tapped line (behind the text)
             if (i == tappedLineIndex && rippleDrawable != null) {
                 float yOffset = y - (lineHeight / 2f);
-                int paddingLeft = getPaddingLeft();
-                int paddingRight = getPaddingRight();
+                int paddingLeft = getPaddingLeft() + contentInset();
+                int paddingRight = getPaddingRight() + contentInset();
                 int availableWidth = Math.max(0, getWidth() - paddingLeft - paddingRight);
                 
                 rippleDrawable.setBounds(
@@ -897,8 +897,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     }
     
     private StaticLayout createSingleStaticLayout(CharSequence text, TextPaint paint) {
-        int paddingLeft = getPaddingLeft();
-        int paddingRight = getPaddingRight();
+        int paddingLeft = getPaddingLeft() + contentInset();
+        int paddingRight = getPaddingRight() + contentInset();
         int availableWidth = Math.max(0, getWidth() - paddingLeft - paddingRight);
         
         Layout.Alignment multiLineAlignment = switch (textAlignment) {
@@ -966,6 +966,16 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         top += layoutY;
         bottom += layoutY;
         
+        // The highlighted line is drawn magnified; make the box follow the same transform.
+        if (activeLineScale > 1f) {
+            float cx = layoutX + layout.getWidth() / 2f;
+            float cy = layoutY + layout.getHeight() / 2f;
+            actualLeft = cx + (actualLeft - cx) * activeLineScale;
+            actualRight = cx + (actualRight - cx) * activeLineScale;
+            top = cy + (top - cy) * activeLineScale;
+            bottom = cy + (bottom - cy) * activeLineScale;
+        }
+        
         float paddingX = dp2px(getContext(), 8f);
         float paddingY = dp2px(getContext(), 4f);
         
@@ -1019,8 +1029,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
      */
     @SuppressWarnings ("unused")
     private float calculateXPositionForLayout(StaticLayout layout, TextPaint paint, int lineIndex) {
-        int paddingLeft = getPaddingLeft();
-        int paddingRight = getPaddingRight();
+        int paddingLeft = getPaddingLeft() + contentInset();
+        int paddingRight = getPaddingRight() + contentInset();
         int availableWidth = Math.max(0, getWidth() - paddingLeft - paddingRight);
         
         // Multi-line layouts have their alignment baked in by StaticLayout (ALIGN_NORMAL /
@@ -1072,19 +1082,19 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     private void initBoxSprings() {
         if (boxLeftSpring == null) {
             boxLeftSpring = new SpringAnimation(this, BOX_LEFT, 0f);
-            boxLeftSpring.getSpring().setStiffness(SpringForce.STIFFNESS_LOW);
+            boxLeftSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
             boxLeftSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxRightSpring = new SpringAnimation(this, BOX_RIGHT, 0f);
-            boxRightSpring.getSpring().setStiffness(SpringForce.STIFFNESS_LOW);
+            boxRightSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
             boxRightSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxTopSpring = new SpringAnimation(this, BOX_TOP, 0f);
-            boxTopSpring.getSpring().setStiffness(SpringForce.STIFFNESS_LOW);
+            boxTopSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
             boxTopSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxBottomSpring = new SpringAnimation(this, BOX_BOTTOM, 0f);
-            boxBottomSpring.getSpring().setStiffness(SpringForce.STIFFNESS_LOW);
+            boxBottomSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
             boxBottomSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
         }
     }
@@ -1152,6 +1162,16 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         actualRight += layoutX;
         top += layoutY;
         bottom += layoutY;
+        
+        // The highlighted line is drawn magnified; make the box follow the same transform.
+        if (activeLineScale > 1f) {
+            float cx = layoutX + layout.getWidth() / 2f;
+            float cy = layoutY + layout.getHeight() / 2f;
+            actualLeft = cx + (actualLeft - cx) * activeLineScale;
+            actualRight = cx + (actualRight - cx) * activeLineScale;
+            top = cy + (top - cy) * activeLineScale;
+            bottom = cy + (bottom - cy) * activeLineScale;
+        }
         
         float paddingX = dp2px(getContext(), 8f);
         float paddingY = dp2px(getContext(), 4f);
@@ -2382,7 +2402,13 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     }
 
     public void setActiveLineScale(float scale) {
-        activeLineScale = Math.max(1f, Math.min(1.2f, scale));
+        float clamped = Math.max(1f, Math.min(1.2f, scale));
+        if (clamped != activeLineScale) {
+            activeLineScale = clamped;
+            // Force the word box to re-target with the new magnification.
+            boxTargetWordIndex = -2;
+            boxTargetLineIndex = -2;
+        }
         invalidate();
     }
 
@@ -2392,9 +2418,21 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     }
 
     public void setGlassBackground(boolean enabled, float alpha) {
+        boolean changed = glassBackgroundEnabled != enabled;
         glassBackgroundEnabled = enabled;
         glassBackgroundAlpha = Math.max(0f, Math.min(0.45f, alpha));
+        if (changed) {
+            normalLayoutCache.clear();
+            boxTargetWordIndex = -2;
+            boxTargetLineIndex = -2;
+            requestLayout();
+        }
         invalidate();
+    }
+
+    /** Extra horizontal text inset so lyrics stay inside the frosted glass panel. */
+    private int contentInset() {
+        return glassBackgroundEnabled ? Math.round(dp2px(getContext(), 22f)) : 0;
     }
 
     private class DynamicMarginSpan extends android.text.style.ReplacementSpan {

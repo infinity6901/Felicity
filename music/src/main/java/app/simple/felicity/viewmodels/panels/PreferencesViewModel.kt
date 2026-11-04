@@ -89,6 +89,16 @@ class PreferencesViewModel(application: Application) : WrappedViewModel(applicat
                     )
             )
 
+            if (app.simple.felicity.BuildConfig.DEBUG) {
+                preferences.add(
+                        Preference(
+                                title = R.string.debug_logs,
+                                description = R.string.debug_logs_desc,
+                                icon = R.drawable.ic_app_settings
+                        )
+                )
+            }
+
             preference.postValue(preferences)
         }
     }

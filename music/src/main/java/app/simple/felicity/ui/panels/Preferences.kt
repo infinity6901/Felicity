@@ -77,6 +77,13 @@ class Preferences : MediaFragment() {
                         R.string.accessibility -> {
                             openFragment(Accessibility.newInstance(), Accessibility.TAG)
                         }
+                        R.string.debug_logs -> {
+                            // The log screen only exists in debug builds, so it is started by name.
+                            runCatching {
+                                startActivity(android.content.Intent().setClassName(
+                                        requireContext().packageName, "app.simple.felicity.debug.DebugLogActivity"))
+                            }
+                        }
                         R.string.about -> {
                             openFragment(About.newInstance(), About.TAG)
                         }
