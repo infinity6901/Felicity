@@ -40,7 +40,23 @@ object TypeFace {
     }
 
     fun getTypeFace(appFont: String, style: Int, context: Context): Typeface {
-        val weight = getFontWeight(style)
+        return getTypeFaceForWeight(appFont, getFontWeight(style), context)
+    }
+
+    /**
+     * Typeface for an arbitrary variable-font weight (100..900), e.g. Semi-Bold = 600.
+     * [TypeFaceConstants.AUTO] resolves to the font the user picked for the whole app.
+     */
+    fun getTypeFaceForWeight(appFont: String, weight: Int, context: Context): Typeface {
+        return buildTypeFace(
+                if (appFont == app.simple.felicity.decorations.constants.TypeFaceConstants.AUTO) {
+                    AppearancePreferences.getAppFont()
+                } else appFont,
+                weight.coerceIn(100, 900),
+                context)
+    }
+
+    private fun buildTypeFace(appFont: String, weight: Int, context: Context): Typeface {
 
         // Create a unique cache key (e.g., "Jost-700")
         val cacheKey = "$appFont-$weight"

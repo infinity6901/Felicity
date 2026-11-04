@@ -122,6 +122,15 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     private boolean glassBackgroundEnabled = false;
     private float glassBackgroundAlpha = 0.16f;
     private float inactiveLineAlpha = 0.55f;
+    /** Scale (0.6..1) applied to every line that is not the highlighted one. */
+    private float inactiveTextScale = 1f;
+    /**
+     * Studio colour overrides. The theme/accent listeners below reset the text colours whenever
+     * the theme, accent or background mode changes; these make the user's choices survive that.
+     */
+    private boolean studioActiveColorSet = false;
+    private int studioActiveColor = Color.WHITE;
+    private float studioInactiveAlpha = -1f;
     private float edgeBlurMultiplier = 1f;
     private float activeLineScale = 1f;
     private float backgroundDimAlpha = 0f;
@@ -690,6 +699,15 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             canvas.save();
             float mainX = calculateXPositionForLayout(lrcLayout.mainLayout, normalPaint, i);
             canvas.translate(mainX, currentY);
+            if (inactiveTextScale < 0.999f) {
+                // Ease back to full size as a line becomes (or stops being) the highlight.
+                float emphasis = isCurrentHighlight ? highlightFraction : (isPreviousHighlight ? dehighlightFraction : 0f);
+                float lineScale = inactiveTextScale + (1f - inactiveTextScale) * emphasis;
+                if (lineScale < 0.999f) {
+                    canvas.scale(lineScale, lineScale,
+                            lrcLayout.mainLayout.getWidth() * alignmentFraction, lrcLayout.mainLayout.getHeight() / 2f);
+                }
+            }
             if (isCurrentHighlight && activeLineScale > 1f) {
                 canvas.scale(activeLineScale, activeLineScale,
                         lrcLayout.mainLayout.getWidth() / 2f, lrcLayout.mainLayout.getHeight() / 2f);
@@ -2298,9 +2316,63 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
 
     public void setInactiveLineAlpha(float alpha) {
         inactiveLineAlpha = Math.max(0.15f, Math.min(0.95f, alpha));
-        int adjusted = Color.argb(Math.round(255f * inactiveLineAlpha),
-                Color.red(normalTextColor), Color.green(normalTextColor), Color.blue(normalTextColor));
-        normalPaint.setColor(adjusted);
+        studioInactiveAlpha = inactiveLineAlpha;
+        applyStudioColorOverrides();
+    }
+
+    /**
+     * Pins the colour of the highlighted line (glow and progressive fill follow it). Pass
+     * {@code enabled = false} to go back to the theme/accent-driven colour.
+     */
+    public void setStudioActiveColor(boolean enabled, @ColorInt int color) {
+        studioActiveColorSet = enabled;
+        studioActiveColor = color;
+        if (enabled) {
+            applyStudioColorOverrides();
+        } else if (!isInEditMode()) {
+            updateColorsFromAccent(ThemeManager.INSTANCE.getAccent());
+        }
+    }
+
+    /** Re-applies the Studio colour choices on top of whatever the theme just set. */
+    private void applyStudioColorOverrides() {
+        if (studioActiveColorSet) {
+            currentTextColor = studioActiveColor;
+            currentPaint.setColor(studioActiveColor);
+        }
+        if (studioInactiveAlpha >= 0f) {
+            int base = normalTextColor;
+            int adjusted = Color.argb(Math.round(255f * studioInactiveAlpha),
+                    Color.red(base), Color.green(base), Color.blue(base));
+            normalTextColor = adjusted;
+            normalPaint.setColor(adjusted);
+            if (romPaint != null) {
+                romPaint.setColor(applyAlpha(adjusted, 0.7f));
+            }
+            if (adlibPaint != null) {
+                adlibPaint.setColor(applyAlpha(adjusted, 0.5f));
+            }
+        }
+        invalidate();
+    }
+
+    /** Scale of non-highlighted lines, 0.6..1. The highlighted line always keeps full size. */
+    public void setInactiveTextScale(float scale) {
+        inactiveTextScale = Math.max(0.6f, Math.min(1f, scale));
+        invalidate();
+    }
+
+    /** Typeface for every lyric layer. Lines are re-measured because glyph widths change. */
+    public void setLyricsTypeface(@NonNull android.graphics.Typeface typeface) {
+        normalPaint.setTypeface(typeface);
+        currentPaint.setTypeface(typeface);
+        if (romPaint != null) {
+            romPaint.setTypeface(typeface);
+        }
+        if (adlibPaint != null) {
+            adlibPaint.setTypeface(typeface);
+        }
+        normalLayoutCache.clear();
         invalidate();
     }
 
@@ -2575,6 +2647,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         } else {
             setNormalTextColor(theme.getTextViewTheme().getTertiaryTextColor());
         }
+        applyStudioColorOverrides();
     }
     
     public void setAlbumArtBackground(boolean isAlbumArtBackground) {
@@ -2589,6 +2662,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         } else {
             setCurrentTextColor(accent.getPrimaryAccentColor());
         }
+        
+        applyStudioColorOverrides();
         
         // Update ripple color
         if (rippleDrawable != null) {

@@ -25,6 +25,7 @@ import app.simple.felicity.decorations.views.FelicityMediaControls.Companion.Med
 import app.simple.felicity.dialogs.lyrics.AddLyrics
 import app.simple.felicity.dialogs.lyrics.AddLyrics.Companion.showAddLyrics
 import app.simple.felicity.dialogs.lyrics.LyricsStudioDialog
+import app.simple.felicity.dialogs.lyrics.LyricsStyle
 import app.simple.felicity.dialogs.lyrics.LyricsMenu
 import app.simple.felicity.dialogs.lyrics.LyricsMenu.Companion.showLyricsMenu
 import app.simple.felicity.engine.managers.MediaPlaybackManager
@@ -185,7 +186,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
         binding.studio.setOnClickListener {
             LyricsStudioDialog.show(
-                requireContext(), binding.lrc,
+                requireContext(),
                 onTranslationChanged = { lyricsViewModel.reloadLrcData() },
                 onPhraseSearch = { phrase ->
                     viewLifecycleOwner.lifecycleScope.launch {
@@ -323,16 +324,30 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         }
     }
 
-    /** Applies the current text-size preferences to the view immediately. */
+    /** Applies every persisted Lyrics Studio setting to the lyrics view and background. */
     private fun applyTextSize() {
-        val normal = LyricsPreferences.getLrcTextSize()
-        binding.lrc.setTextSizes(normal, normal * LRC_HIGHLIGHT_TIMES)
-        binding.lrc.setLineSpacing(LyricsPreferences.getStudioLineSpacing())
-        val alpha = (LyricsPreferences.getStudioInactiveAlpha() * 255f).toInt().coerceIn(30, 230)
-        binding.lrc.setNormalTextColor(android.graphics.Color.argb(alpha, 220, 220, 220))
-        if (LyricsPreferences.isStudioGlowEnabled()) {
-            binding.lrc.setCurrentTextColor(android.graphics.Color.rgb(100, 210, 255))
+        LyricsStyle.apply(binding.lrc)
+        applyStudioBackground()
+    }
+
+    /**
+     * Paints the Studio background: flat modes replace the artwork with a dark surface, artwork
+     * modes show the (already blurred) cover, and "Blurred Artwork" adds a further blur on API 31+.
+     */
+    private fun applyStudioBackground() {
+        val mode = LyricsPreferences.getStudioBackground()
+        val flat = LyricsStyle.isFlatBackground(mode)
+        binding.coverContainer.background = if (flat) LyricsStyle.backgroundDrawable(mode) else null
+        val artAlpha = if (flat) 0f else 1f
+        binding.coverFront.alpha = artAlpha
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val effect = if (mode == LyricsPreferences.BACKGROUND_BLURRED_ARTWORK) {
+                android.graphics.RenderEffect.createBlurEffect(
+                        40f, 40f, android.graphics.Shader.TileMode.CLAMP)
+            } else null
+            binding.coverFront.setRenderEffect(effect)
         }
+        setAlbumArtBackground(animate = false)
     }
 
     /**
@@ -411,7 +426,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
     @Suppress("SameParameterValue")
     private fun setAlbumArtBackground(animate: Boolean = false) {
-        val enabled = LyricsPreferences.isAlbumArtBackground()
+        val enabled = LyricsPreferences.isAlbumArtBackground() ||
+                LyricsStyle.isFlatBackground(LyricsPreferences.getStudioBackground())
 
         binding.lrc.setAlbumArtBackground(enabled)
 
@@ -469,6 +485,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             LyricsPreferences.LRC_ALIGNMENT -> setAlignment(animate = true)
             LyricsPreferences.LRC_TEXT_SIZE -> scheduleTextSizeUpdate()
             LyricsPreferences.ALBUM_ART_BACKGROUND -> setAlbumArtBackground(animate = true)
+            else -> if (key != null && key in LyricsPreferences.STUDIO_KEYS) scheduleTextSizeUpdate()
         }
     }
 
@@ -582,6 +599,9 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             .dontAnimate()
             .into(object : CustomTarget<Bitmap>() {
                 override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    LyricsStyle.artworkColor = LyricsStyle.sampleArtworkColor(resource)
+                    textSizeHandler.removeCallbacks(textSizeRunnable)
+                    textSizeHandler.post(textSizeRunnable)
                     binding.coverBack.setImageBitmap(resource)
                     binding.coverBack.alpha = 1f
 
@@ -590,7 +610,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                         .setDuration(300)
                         .withEndAction {
                             binding.coverFront.setImageBitmap(resource)
-                            binding.coverFront.alpha = 1f
+                            binding.coverFront.alpha =
+                                if (LyricsStyle.isFlatBackground(LyricsPreferences.getStudioBackground())) 0f else 1f
                             binding.coverBack.setImageDrawable(null)
                         }
                         .start()
