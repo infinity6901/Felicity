@@ -1940,7 +1940,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                             } else {
                                 // Short gap, stay visible. But only slide when close to the next word.
                                 setBoxAlphaTarget(1f);
-                                if (gapToNext <= 400) {
+                                // Never pre-slide onto another line: the text highlight only
+                                // switches lines when the line actually starts.
+                                if (gapToNext <= 400 && nextLineIdx == currentLineIndex) {
                                     updateWordBoxTarget(nextWordIdx, nextLineIdx);
                                 }
                             }
@@ -1986,9 +1988,6 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                     
                     if (gapToNext > INSTRUMENTAL_GAP_THRESHOLD && activeTime > 5000) {
                         setBoxAlphaTarget(INSTRUMENTAL_FADE_FACTOR);
-                    } else if (gapToNext <= 400) {
-                        setBoxAlphaTarget(1f);
-                        updateLineBoxTarget(nextLineIdx);
                     } else {
                         setBoxAlphaTarget(1f);
                         updateLineBoxTarget(currentLineIndex);
