@@ -11,6 +11,12 @@ ext {
 android {
     compileSdk 37
 
+    // Missing translations fall back to the default (English) string at runtime, and community
+    // translations lag behind new strings. Keep reporting them, but do not fail lint on them.
+    lint {
+        warning 'MissingTranslation'
+    }
+
     defaultConfig {
         minSdk 29
         targetSdk 37

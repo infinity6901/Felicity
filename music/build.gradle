@@ -15,6 +15,12 @@ android {
         unitTests.returnDefaultValues = true
     }
 
+    // Missing translations fall back to the default (English) string at runtime, and community
+    // translations lag behind new strings. Keep reporting them, but do not fail lint on them.
+    lint {
+        warning 'MissingTranslation'
+    }
+
     // Equivalent of the old android:extractNativeLibs="true" manifest attribute,
     // required by youtubedl-android (see repository/youtube/YtDlpManager.kt) so its
     // bundled Python/yt-dlp/ffmpeg payload can be extracted from the APK at runtime.
