@@ -17,6 +17,10 @@ public class FelicityApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        // The player service builds its DSP graph (which reads preferences) in its constructor,
+        // and the system can start it before any Activity exists (media button, notification,
+        // widget, process restart). Preferences must therefore be ready here, not in an Activity.
+        app.simple.felicity.manager.SharedPreferences.INSTANCE.init(this);
         resetAudioDatabaseForSAFMigration();
         initYoutubeDl();
         WidgetBootstrap.startUpdaters(this);

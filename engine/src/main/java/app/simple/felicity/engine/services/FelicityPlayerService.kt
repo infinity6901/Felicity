@@ -590,8 +590,21 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         player.addListener(playerListener)
         player.addAnalyticsListener(analyticsListener)
-        buildStandbyPlayer(loadControl)
+        buildStandbyPlayer()
     }
+
+    private fun createStandbyLoadControl(): androidx.media3.exoplayer.LoadControl =
+        if (AudioPreferences.isHiresOutputEnabled()) {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(5000, 15000, 2000, 3000)
+                .setPrioritizeTimeOverSizeThresholds(false)
+                .build()
+        } else {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(2500, 10000, 1000, 2000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+        }
 
     /**
      * Creates the long-lived standby player with its own renderer/audio-sink/DSP graph.
@@ -599,7 +612,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * those responsibilities remain with the active service player until the handoff migration
      * is completed. The standby is intentionally muted and idle after construction.
      */
-    private fun buildStandbyPlayer(loadControl: androidx.media3.exoplayer.LoadControl) {
+    private fun buildStandbyPlayer() {
         releaseStandbyPlayer()
         val factory = standbyRenderersFactory ?: return
         val standby = ExoPlayer.Builder(this, factory)
@@ -611,7 +624,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     .build(),
                 false
             )
-            .setLoadControl(loadControl)
+            // A LoadControl instance must never be shared between players: ExoPlayer throws
+            // "Players that share the same LoadControl must share the same playback thread"
+            // (surfacing as ERROR_CODE_FAILED_RUNTIME_CHECK) as soon as the second player
+            // starts. The standby gets its own, with the same buffer sizes as the active one.
+            .setLoadControl(createStandbyLoadControl())
             .setHandleAudioBecomingNoisy(false)
             .setMediaSourceFactory(buildStreamingMediaSourceFactory())
             .build()
@@ -1085,7 +1102,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         )
         player.addListener(playerListener)
         player.addAnalyticsListener(analyticsListener)
-        buildStandbyPlayer(loadControl)
+        buildStandbyPlayer()
     }
 
     /**
