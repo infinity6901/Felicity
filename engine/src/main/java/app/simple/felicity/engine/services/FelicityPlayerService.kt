@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -244,6 +245,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private var crossfadeFadeJob: Job? = null
     private var dualPlayerFadeJob: Job? = null
     private var crossfadeTickerJob: Job? = null
+    private var dualFadeCooldownUntilMs = 0L
 
     /** The artificial silence gap used when gapless playback is off; cancelled if the user/timer intervenes. */
     private var gapJob: Job? = null
@@ -1723,6 +1725,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
         if (incoming.playbackState != Player.STATE_READY) return
         if (dualPlayerFadeJob?.isActive == true || crossfadePlayer != null) return
+        // After a failed attempt wait before trying again, so a slow standby cannot cause an
+        // endless start/pause loop on its audio track.
+        if (SystemClock.elapsedRealtime() < dualFadeCooldownUntilMs) return
 
         val outgoing = player
         val outgoingItem = outgoing.currentMediaItem
@@ -1740,9 +1745,31 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
             incoming.playbackParameters = outgoing.playbackParameters
             incoming.skipSilenceEnabled = outgoing.skipSilenceEnabled
-            incoming.seekTo(0L)
+            // The standby was prepared at 0 ms. A seek (even to 0) drops it back to BUFFERING,
+            // so only seek if it somehow moved.
+            if (incoming.currentPosition > 100L) incoming.seekTo(0L)
             incoming.volume = 0f
             incoming.playWhenReady = true
+
+            // playWhenReady only requests playback; the standby is not actually playing until
+            // its sink has started. Starting the ramp (and its "is the incoming deck playing?"
+            // check) before that aborted every fade on step 1, and the 300 ms ticker then
+            // retried forever - an AudioTrack start/pause storm and no crossfade at all.
+            val readyDeadline = SystemClock.elapsedRealtime() + DUAL_FADE_READY_TIMEOUT_MS
+            while (isActive && !(incoming.playbackState == Player.STATE_READY && incoming.isPlaying)) {
+                if (standbyPlayer !== incoming || player !== outgoing ||
+                    outgoing.currentMediaItemIndex == expectedNextIndex) {
+                    incoming.playWhenReady = false
+                    incoming.volume = 0f
+                    return@launch
+                }
+                if (SystemClock.elapsedRealtime() > readyDeadline) {
+                    Log.w(TAG, "Dual-player fade: standby did not start in time; skipping this crossfade")
+                    abortDualFade(incoming, outgoing)
+                    return@launch
+                }
+                delay(20L)
+            }
 
             val actualRemainingMs = (outgoing.duration - outgoing.currentPosition).coerceAtLeast(1L)
             val fadeDurationMs = fadeMs.coerceAtMost(actualRemainingMs)
@@ -1769,9 +1796,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     return@launch
                 }
                 if (incoming.playbackState != Player.STATE_READY || !incoming.isPlaying) {
-                    incoming.playWhenReady = false
-                    incoming.volume = 0f
-                    outgoing.volume = 1f
+                    Log.w(TAG, "Dual-player fade: standby stalled mid-fade; aborting this crossfade")
+                    abortDualFade(incoming, outgoing)
                     return@launch
                 }
                 val gains = CrossfadeMath.equalPowerGains(step.toFloat() / steps.toFloat())
@@ -1796,6 +1822,14 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 if (dualPlayerFadeJob === job) dualPlayerFadeJob = null
             }
         }
+    }
+
+    /** Silences the standby, restores the active player and backs off before the next attempt. */
+    private fun abortDualFade(incoming: ExoPlayer, outgoing: ExoPlayer) {
+        incoming.playWhenReady = false
+        incoming.volume = 0f
+        outgoing.volume = 1f
+        dualFadeCooldownUntilMs = SystemClock.elapsedRealtime() + DUAL_FADE_RETRY_COOLDOWN_MS
     }
 
     /** Hands playback back to [player] at the exact position [temp] had already reached, then releases [temp]. */
@@ -2995,6 +3029,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
     companion object {
         private const val CROSSFADE_PRELOAD_LEAD_MS = 5_000L
+        private const val DUAL_FADE_READY_TIMEOUT_MS = 2_000L
+        private const val DUAL_FADE_RETRY_COOLDOWN_MS = 3_000L
         private const val CROSSFADE_PREPARE_TIMEOUT_MS = 8_000L
 
         private const val TAG = "FelicityPlayerService"
