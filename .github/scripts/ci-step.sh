@@ -20,10 +20,10 @@ ci_step() {
   local log="$CI_LOG_DIR/$id.log" rc status="PASS"
   echo "::group::[$id] $desc"
   echo "\$ $*"
-  set -o pipefail
+  # No pipefail: the runner shell uses `bash -e`, and a failing pipeline would abort this step
+  # before the result is recorded. The command's own exit code comes from PIPESTATUS instead.
   "$@" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
-  set +o pipefail
   if [ "$rc" -ne 0 ]; then
     status="FAIL"
   elif [ -n "${CI_FAIL_IF_LOG_MATCHES:-}" ] && grep -Eq "$CI_FAIL_IF_LOG_MATCHES" "$log"; then
