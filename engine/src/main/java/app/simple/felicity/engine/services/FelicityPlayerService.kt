@@ -750,6 +750,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
     }
 
+    /**
+     * Listener-driven re-sync. While a dual-player fade is running the standby *is* the incoming
+     * track; a queue/transition event must not re-point it at the following item, or the song
+     * being faded in is torn down mid-fade (and the promotion that follows is rejected as "not
+     * ready"). The fade job re-syncs the standby itself once it has finished or aborted.
+     */
+    private fun syncStandbyUnlessFading() {
+        if (dualPlayerFadeJob?.isActive == true) return
+        syncStandbyToNextQueueItem()
+    }
+
     private fun syncStandbyToNextQueueItem() {
         val standby = standbyPlayer ?: return
         if (!::player.isInitialized || player.mediaItemCount == 0) {
@@ -1203,18 +1214,18 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private val playerListener = object : Player.Listener {
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             // Queue edits (insert/remove/replace) are reflected in the standby playlist.
-            syncStandbyToNextQueueItem()
+            syncStandbyUnlessFading()
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
             // Repeat-one must not preload a different item; repeat-all may wrap to the start.
-            syncStandbyToNextQueueItem()
+            syncStandbyUnlessFading()
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
             // nextMediaItemIndex is shuffle-aware, so refresh the standby target whenever the
             // shuffle order changes.
-            syncStandbyToNextQueueItem()
+            syncStandbyUnlessFading()
         }
 
         override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
@@ -1437,7 +1448,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reportedReason: Int) {
             // A transition changes the logical next item even when the playlist itself is stable.
-            syncStandbyToNextQueueItem()
+            syncStandbyUnlessFading()
 
             // A crossfade handoff is a seek as far as ExoPlayer is concerned, but it is an
             // automatic track change as far as the app is concerned — see crossfadeHandoffPending.
@@ -1772,7 +1783,15 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             }
 
             val actualRemainingMs = (outgoing.duration - outgoing.currentPosition).coerceAtLeast(1L)
-            val fadeDurationMs = fadeMs.coerceAtMost(actualRemainingMs)
+            // Finish well before the outgoing track ends by itself. If the natural track change
+            // wins the race, ExoPlayer starts the same item again from 0 on the outgoing deck
+            // while the incoming deck is already playing it - an audible restart.
+            val fadeDurationMs = fadeMs.coerceAtMost(actualRemainingMs - DUAL_FADE_END_MARGIN_MS)
+            if (fadeDurationMs < DUAL_FADE_MIN_MS) {
+                Log.w(TAG, "Dual-player fade: only ${actualRemainingMs}ms left; skipping this crossfade")
+                abortDualFade(incoming, outgoing)
+                return@launch
+            }
             val steps = (fadeDurationMs / 50L).toInt().coerceIn(8, 120)
             val mediaStepMs = (fadeDurationMs / steps).coerceAtLeast(10L)
 
@@ -1816,6 +1835,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 incoming.volume = 0f
                 incoming.playWhenReady = false
                 Log.w(TAG, "Dual-player fade completed but promotion was rejected; retained outgoing player")
+                syncStandbyToNextQueueItem()
             }
         }.also { job ->
             job.invokeOnCompletion {
@@ -1830,6 +1850,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         incoming.volume = 0f
         outgoing.volume = 1f
         dualFadeCooldownUntilMs = SystemClock.elapsedRealtime() + DUAL_FADE_RETRY_COOLDOWN_MS
+        // Listener-driven syncs were skipped while the fade ran; catch the standby up now.
+        syncStandbyToNextQueueItem()
     }
 
     /** Hands playback back to [player] at the exact position [temp] had already reached, then releases [temp]. */
@@ -3030,6 +3052,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     companion object {
         private const val CROSSFADE_PRELOAD_LEAD_MS = 5_000L
         private const val DUAL_FADE_READY_TIMEOUT_MS = 2_000L
+        private const val DUAL_FADE_END_MARGIN_MS = 1_500L
+        private const val DUAL_FADE_MIN_MS = 1_000L
         private const val DUAL_FADE_RETRY_COOLDOWN_MS = 3_000L
         private const val CROSSFADE_PREPARE_TIMEOUT_MS = 8_000L
 
