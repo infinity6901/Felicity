@@ -690,13 +690,18 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         try {
             // Keep the old player silent before changing ownership. It remains alive and becomes
             // the next standby instance, preserving the permanent two-player allocation.
+            // Detach the app listener from the outgoing deck BEFORE silencing it. Its pause is
+            // delivered synchronously; with the listener still attached the app announced
+            // PLAYBACK_PAUSED, and since the incoming deck was already playing no later event
+            // corrected it - the song kept playing while the UI showed a paused player.
+            outgoing.removeListener(playerListener)
+            outgoing.removeAnalyticsListener(analyticsListener)
+
             incoming.volume = 1f
             incoming.playWhenReady = true
             outgoing.volume = 0f
             outgoing.playWhenReady = false
 
-            outgoing.removeListener(playerListener)
-            outgoing.removeAnalyticsListener(analyticsListener)
             incoming.addListener(playerListener)
             incoming.addAnalyticsListener(analyticsListener)
 
@@ -726,6 +731,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 player.currentMediaItem,
                 Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
             )
+            // The incoming deck was already playing, so ExoPlayer will not emit state events
+            // for it. Re-announce its state so the UI, widgets, notification and the periodic
+            // state saver reflect that playback is running.
+            playerListener.onPlaybackStateChanged(player.playbackState)
+            playerListener.onIsPlayingChanged(player.isPlaying)
             syncStandbyToNextQueueItem()
             Log.i(TAG, "Standby player promoted; MediaSession and DSP ownership transferred")
             return true
