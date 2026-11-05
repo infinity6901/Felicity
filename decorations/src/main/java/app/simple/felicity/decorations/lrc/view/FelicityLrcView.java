@@ -2341,8 +2341,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         glowRadiusPx = enabled ? dp2px(getContext(), Math.max(0f, radiusDp)) : 0f;
         glowIntensity = enabled ? Math.max(0f, Math.min(1f, intensity)) : 0f;
         glowColor = color;
-        // BlurMaskFilter text glow is rendered reliably through the software canvas.
-        setLayerType(glowRadiusPx > 0f && glowIntensity > 0f ? View.LAYER_TYPE_SOFTWARE : View.LAYER_TYPE_HARDWARE, null);
+        // Text blur masks are drawn by the GPU on API 28+ (the depth blur already relies on it),
+        // so the glow no longer forces the whole view onto a slow software layer.
+        setLayerType(View.LAYER_TYPE_HARDWARE, null);
         invalidate();
     }
 
@@ -2530,7 +2531,13 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             android.graphics.MaskFilter originalMask = paint.getMaskFilter();
             if (activeWord && glowRadiusPx > 0f && glowIntensity > 0f) {
                 paint.setColor(Color.argb(Math.round(220f * glowIntensity), Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor)));
-                paint.setMaskFilter(new BlurMaskFilter(Math.max(1f, glowRadiusPx), BlurMaskFilter.Blur.NORMAL));
+                float glowKey = Math.max(1f, Math.round(glowRadiusPx * 2f) / 2f);
+                BlurMaskFilter glowFilter = blurMaskFilters.get(glowKey);
+                if (glowFilter == null) {
+                    glowFilter = new BlurMaskFilter(glowKey, BlurMaskFilter.Blur.NORMAL);
+                    blurMaskFilters.put(glowKey, glowFilter);
+                }
+                paint.setMaskFilter(glowFilter);
                 canvas.drawText(text, start, end, drawX, y, paint);
                 paint.setMaskFilter(originalMask);
                 paint.setColor(originalColor);
