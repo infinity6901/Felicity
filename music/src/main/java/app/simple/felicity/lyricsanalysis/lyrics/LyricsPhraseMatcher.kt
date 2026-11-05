@@ -1,4 +1,4 @@
-package app.simple.felicity.levyra.lyrics
+package app.simple.felicity.lyricsanalysis.lyrics
 
 import java.text.Normalizer
 import kotlin.math.max

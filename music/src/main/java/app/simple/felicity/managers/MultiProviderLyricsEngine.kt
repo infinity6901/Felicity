@@ -5,7 +5,7 @@ import androidx.core.content.edit
 import app.simple.felicity.repository.models.LrcLibResponse
 import app.simple.felicity.decorations.lrc.model.WordEntry
 import app.simple.felicity.repository.repositories.LrcRepository
-import app.simple.felicity.levyra.lyrics.LyricsPhraseMatcher
+import app.simple.felicity.lyricsanalysis.lyrics.LyricsPhraseMatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton

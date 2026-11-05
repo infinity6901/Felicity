@@ -1,9 +1,9 @@
-package app.simple.felicity.levyra.lyrics
+package app.simple.felicity.lyricsanalysis.lyrics
 
 import java.text.Normalizer
 import java.util.Locale
 
-/** Lightweight lyric-domain models adapted from Levyra for Felicity's LRC pipeline. */
+/** Lightweight lyric-domain models for Felicity's LRC pipeline. */
 enum class LyricVocalRole { MAIN, BACKGROUND, DUET_LEFT, DUET_RIGHT }
 enum class LyricSectionType { INTRO, VERSE, PRE_CHORUS, CHORUS, BRIDGE, INSTRUMENTAL, OUTRO }
 data class LyricSection(val type: LyricSectionType, val ordinal: Int, val startLineIndex: Int, val endLineIndex: Int, val startMs: Long, val endMs: Long, val confidence: Int)

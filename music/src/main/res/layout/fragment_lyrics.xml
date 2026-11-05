@@ -98,61 +98,26 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
-                android:layout_marginStart="100dp"
-                android:layout_marginEnd="100dp"
+                android:layout_marginStart="@dimen/button_size"
+                android:layout_marginEnd="@dimen/button_size"
                 android:clipChildren="false"
                 android:clipToPadding="false" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="start|center_vertical"
-                android:orientation="horizontal">
 
             <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
                 android:id="@+id/settings"
                 android:layout_width="@dimen/button_size"
                 android:layout_height="@dimen/button_size"
-                android:layout_gravity="center_vertical"
+                android:layout_gravity="start|center_vertical"
                 android:src="@drawable/ic_menu"
-                app:buttonTintType="regular" />
-
-            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
-                android:id="@+id/versions"
-                android:layout_width="@dimen/button_size"
-                android:layout_height="@dimen/button_size"
-                android:layout_gravity="center_vertical"
-                android:src="@drawable/ic_menu"
-                android:contentDescription="Lyrics versions"
-                android:visibility="gone"
-                app:buttonTintType="regular" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="end|center_vertical"
-                android:orientation="horizontal">
-
-            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
-                android:id="@+id/studio"
-                android:layout_width="@dimen/button_size"
-                android:layout_height="@dimen/button_size"
-                android:layout_gravity="center_vertical"
-                android:src="@drawable/ic_lyrics"
-                android:contentDescription="Lyrics Studio"
                 app:buttonTintType="regular" />
 
             <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
                 android:id="@+id/search"
                 android:layout_width="@dimen/button_size"
                 android:layout_height="@dimen/button_size"
-                android:layout_gravity="center_vertical"
+                android:layout_gravity="end|center_vertical"
                 android:src="@drawable/ic_search"
                 app:buttonTintType="regular" />
-
-            </LinearLayout>
 
         </FrameLayout>
 
@@ -167,5 +132,33 @@
             app:wsbWaveformMode="full" />
 
     </app.simple.felicity.decorations.padding.NonThemePaddingAwareLinearLayout>
+
+    <!-- Lyrics Studio and version picker float in the top corner of the lyrics card, away from the transport controls. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="48dp"
+        android:layout_marginEnd="24dp"
+        android:orientation="vertical">
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/studio"
+            android:layout_width="@dimen/button_size"
+            android:layout_height="@dimen/button_size"
+            android:contentDescription="Lyrics Studio"
+            android:src="@drawable/ic_lyrics"
+            app:buttonTintType="regular" />
+
+        <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+            android:id="@+id/versions"
+            android:layout_width="@dimen/button_size"
+            android:layout_height="@dimen/button_size"
+            android:contentDescription="Lyrics versions"
+            android:src="@drawable/ic_menu"
+            android:visibility="gone"
+            app:buttonTintType="regular" />
+
+    </LinearLayout>
 
 </app.simple.felicity.decorations.theme.ThemeFrameLayout>

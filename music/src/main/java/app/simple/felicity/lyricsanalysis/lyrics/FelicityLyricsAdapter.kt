@@ -1,8 +1,8 @@
-package app.simple.felicity.levyra.lyrics
+package app.simple.felicity.lyricsanalysis.lyrics
 
 import app.simple.felicity.decorations.lrc.model.LrcData
 
-/** Bridges Felicity's existing LRC representation to Levyra's lyric analysis primitives. */
+/** Bridges Felicity's existing LRC representation to its lyric analysis primitives. */
 object FelicityLyricsAdapter {
     fun toLines(data: LrcData): List<LyricLine> {
         val entries = data.entries

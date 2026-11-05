@@ -1,6 +1,6 @@
-# Levyra lyrics feature port: integration pass 3
+# Lyrics feature: integration pass 3
 
-This pass builds on the earlier crossfade, section-detection and phrase-matching work. The implementation is adapted to Felicity's existing `LrcData` / `LrcEntry`, `LrcRepository`, Hilt, XML Fragment and `FelicityLrcView` architecture. It does not import Levyra's Room database or Compose screen stack.
+This pass builds on the earlier crossfade, section-detection and phrase-matching work. The implementation is adapted to Felicity's existing `LrcData` / `LrcEntry`, `LrcRepository`, Hilt, XML Fragment and `FelicityLrcView` architecture. It does not import the reference app's Room database or Compose screen stack.
 
 ## Implemented in this pass
 
@@ -47,7 +47,7 @@ This pass builds on the earlier crossfade, section-detection and phrase-matching
 ## Validation and known limitations
 - XML parsing and archive integrity are checked when packaging.
 - Android Gradle compilation could not be run in this environment: the wrapper requires Gradle 9.8.1 and network DNS access to `services.gradle.org` is unavailable.
-- Provider availability depends on third-party endpoint uptime and their response formats. The LyricsPlus parser targets the `/v2/lyrics/get` payload shape used by Levyra.
+- Provider availability depends on third-party endpoint uptime and their response formats. The LyricsPlus parser targets the `/v2/lyrics/get` payload shape used by the reference app.
 - Translation uses an unofficial Google Translate web endpoint; it can change or rate-limit requests. It is opt-in and failure-safe, leaving original lyrics visible.
 - Phrase search verifies LRCLib search candidates; it does not index the entire on-device music library.
 - This archive is a source project archive, not a Git clone and contains no Git history.

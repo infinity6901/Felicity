@@ -447,6 +447,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             binding.title.setTextColorMode(TypeFaceTextView.WHITE)
             binding.artists.setTextColorMode(TypeFaceTextView.SECONDARY_WHITE)
             binding.search.setTintMode(ThemeImageButton.WHITE)
+            binding.studio.setTintMode(ThemeImageButton.WHITE)
+            binding.versions.setTintMode(ThemeImageButton.WHITE)
             binding.settings.setTintMode(ThemeImageButton.WHITE)
             requireLightBarIcons()
         } else {
@@ -465,6 +467,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             binding.title.setTextColorMode(TypeFaceTextView.BOLD)
             binding.artists.setTextColorMode(TypeFaceTextView.SECONDARY)
             binding.search.setTintMode(ThemeImageButton.REGULAR)
+            binding.studio.setTintMode(ThemeImageButton.REGULAR)
+            binding.versions.setTintMode(ThemeImageButton.REGULAR)
             binding.settings.setTintMode(ThemeImageButton.REGULAR)
 
             /**

@@ -14,9 +14,9 @@ import app.simple.felicity.decorations.lrc.parser.WordLrcParser
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.managers.LyricsManager.Companion.SYNC_SAVE_DEBOUNCE_MS
 import app.simple.felicity.preferences.LyricsPreferences
-import app.simple.felicity.levyra.lyrics.FelicityLyricsAdapter
-import app.simple.felicity.levyra.lyrics.LyricSection
-import app.simple.felicity.levyra.lyrics.LyricsPhraseMatcher
+import app.simple.felicity.lyricsanalysis.lyrics.FelicityLyricsAdapter
+import app.simple.felicity.lyricsanalysis.lyrics.LyricSection
+import app.simple.felicity.lyricsanalysis.lyrics.LyricsPhraseMatcher
 import app.simple.felicity.repository.metadata.LyricsMetaHelper
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.online.OnlineTrack

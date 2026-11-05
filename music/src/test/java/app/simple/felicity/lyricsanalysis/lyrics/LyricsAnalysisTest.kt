@@ -1,4 +1,4 @@
-package app.simple.felicity.levyra.lyrics
+package app.simple.felicity.lyricsanalysis.lyrics
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull

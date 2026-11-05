@@ -59,7 +59,7 @@ object LyricsStyle {
     val glowOptions = listOf(Option("Off", 0), Option("Subtle", 1), Option("Vibrant", 2))
 
     val backgroundOptions = listOf(
-            Option("Levyra Original", LyricsPreferences.BACKGROUND_ORIGINAL),
+            Option("Felicity Original", LyricsPreferences.BACKGROUND_ORIGINAL),
             Option("Solid Dark", LyricsPreferences.BACKGROUND_SOLID_DARK),
             Option("AMOLED Black", LyricsPreferences.BACKGROUND_AMOLED),
             Option("Dynamic Gradient", LyricsPreferences.BACKGROUND_GRADIENT),
@@ -98,7 +98,7 @@ object LyricsStyle {
     }
 
     val presets = listOf(
-            Preset("Levyra Original", "Classic look with maximum compatibility") {
+            Preset("Felicity Original", "Classic look with maximum compatibility") {
                 configure(16f, 900, 8f, 1f, 0.55f, LyricsPreferences.COLOR_ACCENT, 0, true, 1f, 1f,
                           LyricsPreferences.BACKGROUND_ORIGINAL)
             },
