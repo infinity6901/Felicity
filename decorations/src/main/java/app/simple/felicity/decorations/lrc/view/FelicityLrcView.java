@@ -2328,7 +2328,11 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     }
     
     public void setLineSpacing(float spacing) {
-        this.lineSpacing = dp2px(getContext(), spacing);
+        float px = dp2px(getContext(), spacing);
+        if (px == this.lineSpacing) {
+            return;
+        }
+        this.lineSpacing = px;
         invalidate();
     }
     
@@ -2397,6 +2401,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
 
     /** Typeface for every lyric layer. Lines are re-measured because glyph widths change. */
     public void setLyricsTypeface(@NonNull android.graphics.Typeface typeface) {
+        if (normalPaint.getTypeface() == typeface) {
+            return; // unchanged, re-measuring every line for nothing is what made the Studio stutter
+        }
         normalPaint.setTypeface(typeface);
         currentPaint.setTypeface(typeface);
         if (romPaint != null) {

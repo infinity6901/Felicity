@@ -87,6 +87,10 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
     /** Debounce handler – coalesces rapid text-size changes from the slider. */
     private val textSizeHandler = Handler(Looper.getMainLooper())
+
+    /** While the Studio is open it previews changes itself, so the screen behind it must not restyle on every tick. */
+    private var studioOpen = false
+    private var appliedBackgroundMode = Int.MIN_VALUE
     private val textSizeRunnable = Runnable { applyTextSize() }
 
     /** ViewModel that decodes and exposes the per-second waveform amplitude data. */
@@ -188,6 +192,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         })
 
         binding.studio.setOnClickListener {
+            studioOpen = true
             LyricsStudioDialog.show(
                 requireContext(),
                 onTranslationChanged = { lyricsViewModel.reloadLrcData() },
@@ -202,7 +207,10 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                             .show()
                     }
                 }
-            )
+            ).setOnDismissListener {
+                studioOpen = false
+                if (isAdded && view != null) applyTextSize()
+            }
         }
 
         // The version picker is available for every song, local or online.
@@ -432,6 +440,8 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
      */
     private fun applyStudioBackground() {
         val mode = LyricsPreferences.getStudioBackground()
+        if (mode == appliedBackgroundMode) return
+        appliedBackgroundMode = mode
         val flat = LyricsStyle.isFlatBackground(mode)
         binding.coverContainer.background = if (flat) LyricsStyle.backgroundDrawable(mode) else null
         val artAlpha = if (flat) 0f else 1f
@@ -452,6 +462,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
      * that fires only once the user stops (or nearly stops) dragging.
      */
     private fun scheduleTextSizeUpdate() {
+        if (studioOpen) return
         textSizeHandler.removeCallbacks(textSizeRunnable)
         textSizeHandler.postDelayed(textSizeRunnable, TEXT_SIZE_DEBOUNCE_MS)
     }
@@ -590,6 +601,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
     }
 
     override fun onDestroyView() {
+        appliedBackgroundMode = Int.MIN_VALUE
         super.onDestroyView()
         textSizeHandler.removeCallbacks(textSizeRunnable)
     }

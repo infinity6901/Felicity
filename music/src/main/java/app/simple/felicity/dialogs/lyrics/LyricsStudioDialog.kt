@@ -49,8 +49,8 @@ import kotlin.math.roundToInt
  * so nothing here has state that can drift out of sync.
  */
 object LyricsStudioDialog {
-    fun show(context: Context, onTranslationChanged: () -> Unit = {}, onPhraseSearch: (String) -> Unit = {}) {
-        LyricsStudioScreen(context, onTranslationChanged, onPhraseSearch).show()
+    fun show(context: Context, onTranslationChanged: () -> Unit = {}, onPhraseSearch: (String) -> Unit = {}): Dialog {
+        return LyricsStudioScreen(context, onTranslationChanged, onPhraseSearch).also { it.show() }
     }
 }
 
@@ -118,14 +118,35 @@ private class LyricsStudioScreen(
     /** Something the user changed by hand: the active style preset no longer describes the result. */
     private fun custom(change: () -> Unit) {
         change()
-        LyricsPreferences.setStudioPreset(-1)
+        if (LyricsPreferences.getStudioPreset() != -1) LyricsPreferences.setStudioPreset(-1)
+        scheduleRefresh()
+    }
+
+    private var refreshPending = false
+    private var lastPreviewBackground = Int.MIN_VALUE
+    private val refreshRunnable = Runnable {
+        refreshPending = false
         refreshAll()
+    }
+
+    /**
+     * Slider drags fire dozens of changes a second. Refreshing every control and restyling the
+     * preview for each one made the Studio stutter, so changes are coalesced to ~30 per second.
+     */
+    private fun scheduleRefresh() {
+        if (refreshPending) return
+        refreshPending = true
+        handler.postDelayed(refreshRunnable, 33L)
     }
 
     private fun refreshAll() {
         refreshers.forEach { it() }
         LyricsStyle.apply(preview)
-        previewCard.background = LyricsStyle.backgroundDrawable(LyricsPreferences.getStudioBackground(), forPreview = true)
+        val mode = LyricsPreferences.getStudioBackground()
+        if (mode != lastPreviewBackground) {
+            lastPreviewBackground = mode
+            previewCard.background = LyricsStyle.backgroundDrawable(mode, forPreview = true)
+        }
     }
 
     private fun nearest(options: List<LyricsStyle.Option<Float>>, value: Float): Float =
