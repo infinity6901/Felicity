@@ -54,6 +54,10 @@ class LyricsViewModel @Inject constructor(
 
     fun selectLyricsVersion(index: Int) = lyricsManager.selectLyricsVersion(index)
 
+    val versionsLoading: StateFlow<Boolean> = lyricsManager.versionsLoading
+
+    fun loadVersions() = lyricsManager.loadVersions()
+
     suspend fun searchPhraseAcrossTracks(phrase: String) = lyricsManager.searchPhraseAcrossTracks(phrase)
 
     /**

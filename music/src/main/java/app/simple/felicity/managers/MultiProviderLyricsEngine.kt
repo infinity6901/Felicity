@@ -19,6 +19,8 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+private val WORD_TIME_TAG = Regex("<\\d{1,3}:\\d{2}[.:]\\d{1,3}>")
+
 /** Multi-source lyrics search with ranked candidates and durable manual selection. */
 @Singleton
 class MultiProviderLyricsEngine @Inject constructor(
@@ -43,8 +45,17 @@ class MultiProviderLyricsEngine @Inject constructor(
         val confidence: Int,
         val rawLyrics: String,
         val plainLyrics: String = "",
-        val lineExtras: List<LineExtras> = emptyList()
-    )
+        val lineExtras: List<LineExtras> = emptyList(),
+        val durationSec: Int = 0
+    ) {
+        /** True when the lyrics carry per-word timing (enhanced LRC tags or provider word data). */
+        val wordSynced: Boolean
+            get() = lineExtras.any { it.words.isNotEmpty() } || WORD_TIME_TAG.containsMatchIn(rawLyrics)
+
+        /** Number of non-empty lyric lines. */
+        val lineCount: Int
+            get() = rawLyrics.ifBlank { plainLyrics }.lineSequence().count { it.isNotBlank() }
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
@@ -62,6 +73,7 @@ class MultiProviderLyricsEngine @Inject constructor(
         val candidates = fetched.ifEmpty { cachedCandidates(title, artist) }
         if (fetched.isNotEmpty()) saveCandidates(title, artist, fetched)
         candidates.sortedWith(compareByDescending<Candidate> { selectedId(title, artist) == it.id }
+            .thenByDescending { it.wordSynced }
             .thenByDescending { it.confidence }
             .thenByDescending { it.synced })
     }
@@ -89,7 +101,8 @@ class MultiProviderLyricsEngine @Inject constructor(
             val plain = item.plainLyrics.orEmpty()
             if (raw.isBlank() && plain.isBlank()) return@mapNotNull null
             Candidate("lrclib:${item.id}", "LRCLib", item.trackName, item.artistName,
-                raw.isNotBlank(), if (raw.isNotBlank()) 92 else 68, raw, plain)
+                raw.isNotBlank(), if (raw.isNotBlank()) 92 else 68, raw, plain,
+                durationSec = item.duration.toInt())
         }
     }
 
@@ -212,7 +225,7 @@ class MultiProviderLyricsEngine @Inject constructor(
                 put("id", candidate.id); put("provider", candidate.provider)
                 put("title", candidate.title); put("artist", candidate.artist)
                 put("synced", candidate.synced); put("confidence", candidate.confidence)
-                put("raw", candidate.rawLyrics); put("plain", candidate.plainLyrics)
+                put("raw", candidate.rawLyrics); put("plain", candidate.plainLyrics); put("duration", candidate.durationSec)
                 put("extras", org.json.JSONArray().apply {
                     candidate.lineExtras.forEach { extra ->
                         put(JSONObject().apply {
@@ -253,7 +266,8 @@ class MultiProviderLyricsEngine @Inject constructor(
                 }
                 add(Candidate(item.optString("id"), item.optString("provider"),
                     item.optString("title"), item.optString("artist"), item.optBoolean("synced"),
-                    item.optInt("confidence"), item.optString("raw"), item.optString("plain"), extras))
+                    item.optInt("confidence"), item.optString("raw"), item.optString("plain"), extras,
+                    item.optInt("duration")))
             }
         }
     }

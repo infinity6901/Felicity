@@ -12,6 +12,9 @@ import android.widget.Toast
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
+import kotlinx.coroutines.flow.first
+import app.simple.felicity.managers.MultiProviderLyricsEngine
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import app.simple.felicity.R
@@ -202,21 +205,16 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             )
         }
 
+        // The version picker is available for every song, local or online.
+        binding.versions.visibility = View.VISIBLE
         binding.versions.setOnClickListener {
-            val versions = lyricsViewModel.availableVersions.value
-            if (versions.isNotEmpty()) {
-                androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                    .setTitle("Choose lyrics version")
-                    .setItems(versions.map { "${it.provider} · ${if (it.synced) "Synced" else "Plain"} · ${it.confidence}%" }.toTypedArray()) { _, which ->
-                        lyricsViewModel.selectLyricsVersion(which)
-                    }
-                    .show()
-            }
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            lyricsViewModel.availableVersions.collect { versions ->
-                binding.versions.visibility = if (versions.size > 1) View.VISIBLE else View.GONE
+            viewLifecycleOwner.lifecycleScope.launch {
+                if (lyricsViewModel.availableVersions.value.size < 2) {
+                    android.widget.Toast.makeText(requireContext(), "Searching lyric sources…", android.widget.Toast.LENGTH_SHORT).show()
+                    lyricsViewModel.loadVersions()
+                    lyricsViewModel.versionsLoading.first { !it }
+                }
+                showLyricsVersions()
             }
         }
 
@@ -322,6 +320,42 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             LyricsPreferences.CENTER -> binding.lrc.setTextAlignment(FelicityLrcView.Alignment.CENTER, animate)
             LyricsPreferences.RIGHT -> binding.lrc.setTextAlignment(FelicityLrcView.Alignment.RIGHT, animate)
         }
+    }
+
+    /** Lists the available lyric versions with enough detail to tell them apart. */
+    private fun showLyricsVersions() {
+        val versions = lyricsViewModel.availableVersions.value
+        if (versions.isEmpty()) {
+            android.widget.Toast.makeText(requireContext(), getString(R.string.no_lyrics_found), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val adapter = object : android.widget.ArrayAdapter<MultiProviderLyricsEngine.Candidate>(
+                requireContext(), android.R.layout.simple_list_item_2, android.R.id.text1, versions) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                val c = getItem(position) ?: return view
+                val kind = when {
+                    c.wordSynced -> "★ Word-by-word"
+                    c.synced -> "Line-by-line"
+                    else -> "Plain text"
+                }
+                val details = buildList {
+                    add(c.provider)
+                    add(kind)
+                    add("${c.lineCount} lines")
+                    if (c.durationSec > 0) add(String.format(java.util.Locale.US, "%d:%02d", c.durationSec / 60, c.durationSec % 60))
+                    add("${c.confidence}%")
+                }
+                view.findViewById<TextView>(android.R.id.text1).text =
+                    listOf(c.title, c.artist).filter { it.isNotBlank() }.joinToString(" — ").ifBlank { c.provider }
+                view.findViewById<TextView>(android.R.id.text2).text = details.joinToString(" · ")
+                return view
+            }
+        }
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Choose lyrics version")
+            .setAdapter(adapter) { _, which -> lyricsViewModel.selectLyricsVersion(which) }
+            .show()
     }
 
     /** Applies every persisted Lyrics Studio setting to the lyrics view and background. */

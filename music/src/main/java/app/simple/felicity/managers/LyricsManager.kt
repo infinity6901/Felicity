@@ -101,6 +101,35 @@ class LyricsManager @Inject constructor(
     /** All matching lyric versions from the available providers for the current track. */
     val availableVersions: StateFlow<List<MultiProviderLyricsEngine.Candidate>> = _availableVersions.asStateFlow()
 
+    private val _versionsLoading = MutableStateFlow(false)
+
+    /** True while [loadVersions] is searching the lyric sources. */
+    val versionsLoading: StateFlow<Boolean> = _versionsLoading.asStateFlow()
+
+    /**
+     * Searches every lyric source for the current song so the user can pick a version, even when
+     * the lyrics on screen came from a local file or the tags. Results land in [availableVersions].
+     */
+    fun loadVersions() {
+        val online = MediaPlaybackManager.getCurrentOnlineTrack()
+        val song = if (online == null) MediaPlaybackManager.getCurrentSong() else null
+        val path = online?.let { "online:${it.source}:${it.id}" } ?: song?.uri ?: return
+        val title = online?.title ?: song?.title ?: song?.name.orEmpty()
+        val artist = online?.subtitle ?: song?.artist.orEmpty()
+        if (title.isBlank()) return
+        _versionsLoading.value = true
+        scope.launch {
+            try {
+                val candidates = multiProviderLyricsEngine.search(title, artist)
+                if (isStillRelevant(path)) _availableVersions.value = candidates
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not search lyric versions", e)
+            } finally {
+                _versionsLoading.value = false
+            }
+        }
+    }
+
     private val _loadingStatus = MutableStateFlow<LyricsLoadingStatus>(LyricsLoadingStatus.Idle)
 
     /**
