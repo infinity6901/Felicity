@@ -1,0 +1,51 @@
+# Builds the size-optimised release variants and reports the APK sizes:
+#   -PsplitAbi=true  one APK per CPU architecture (arm64-v8a, x86_64) + a universal APK
+#   -PliteBuild=true leaves out the bundled Python/yt-dlp/ffmpeg runtime (YouTube downloads)
+# Run it by hand (Actions -> Size-optimised builds) or let it run when the build scripts change.
+name: Size-optimised builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [Felicity-Remake]
+    paths:
+      - 'music/build.gradle'
+      - 'repository/build.gradle'
+      - 'repository/src/lite/**'
+      - '.github/workflows/size-optimized-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: split-full
+            flags: "-PsplitAbi=true"
+          - name: split-lite
+            flags: "-PsplitAbi=true -PliteBuild=true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-android-build
+      - name: Build release APKs (${{ matrix.name }})
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :music:assembleFossRelease ${{ matrix.flags }} --stacktrace
+      - name: Report sizes
+        run: |
+          mkdir -p out
+          echo "### APK sizes (${{ matrix.name }})" >> "$GITHUB_STEP_SUMMARY"
+          for f in $(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*.apk"); do
+            cp "$f" "out/${{ matrix.name }}-$(basename "$f")"
+            echo "- $(basename "$f"): $(du -h "$f" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          done
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks-${{ matrix.name }}
+          path: out/*.apk

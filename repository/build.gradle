@@ -12,6 +12,14 @@ android {
 
     ndkVersion = libs.versions.ndk.get()
 
+    // "Lite" builds (-PliteBuild=true) drop the bundled Python/yt-dlp/ffmpeg runtime, which is the
+    // single biggest part of the APK. The YtDlpManager API stays the same; the lite version is a stub.
+    sourceSets {
+        main {
+            java.srcDir(project.hasProperty('liteBuild') ? 'src/lite/java' : 'src/full/java')
+        }
+    }
+
     buildTypes {
         release {
             consumerProguardFiles 'consumer-rules.pro'
@@ -54,6 +62,8 @@ dependencies {
     // hand-rolled InnerTube stream extractor because yt-dlp is actively maintained
     // against YouTube's frequent cipher/response changes; a hand-rolled extractor
     // breaks every few months and requires us to chase the fix ourselves.
-    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
-    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    if (!project.hasProperty('liteBuild')) {
+        implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+        implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    }
 }

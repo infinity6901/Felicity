@@ -28,7 +28,25 @@ android {
     // build-script equivalent instead.
     packagingOptions {
         jniLibs {
-            useLegacyPackaging = true
+            // Only the full build needs the unpacked yt-dlp payload.
+            useLegacyPackaging = !project.hasProperty('liteBuild')
+            if (project.hasProperty('splitAbi')) {
+                // 64-bit only; keeps the universal APK from also carrying 32-bit libraries.
+                excludes.addAll(['**/armeabi-v7a/**', '**/x86/**'])
+            }
+        }
+    }
+
+    // One APK per CPU architecture (plus a universal one) when built with -PsplitAbi=true.
+    // A phone then installs only the matching, much smaller, APK.
+    if (project.hasProperty('splitAbi')) {
+        splits {
+            abi {
+                enable true
+                reset()
+                include 'arm64-v8a', 'x86_64'
+                universalApk true
+            }
         }
     }
 
@@ -83,8 +101,10 @@ android {
                 signingConfig releaseSigning
             }
 
-            ndk {
-                abiFilters "arm64-v8a", "x86_64" // 64bit only
+            if (!project.hasProperty('splitAbi')) {
+                ndk {
+                    abiFilters "arm64-v8a", "x86_64" // 64bit only
+                }
             }
         }
         play { // Play Store build
@@ -96,8 +116,10 @@ android {
                 signingConfig releaseSigning
             }
 
-            ndk {
-                abiFilters "arm64-v8a", "x86_64" // 64bit only
+            if (!project.hasProperty('splitAbi')) {
+                ndk {
+                    abiFilters "arm64-v8a", "x86_64" // 64bit only
+                }
             }
         }
     }
