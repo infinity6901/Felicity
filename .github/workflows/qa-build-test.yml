@@ -364,10 +364,12 @@ jobs:
         run: |
           chmod +x ./gradlew .github/scripts/*.sh
           source .github/scripts/ci-step.sh
-          ci_step release-apk "Assemble foss release APK (R8 minify + shrink)" ./gradlew :music:assembleFossRelease --stacktrace
+          ci_step release-apk "Assemble foss release APKs (R8 minify + shrink, one per CPU architecture)" ./gradlew :music:assembleFossRelease -PsplitAbi=true --stacktrace
 
           mkdir -p out
-          APK=$(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*.apk" | head -n1)
+          # Phones install the arm64 APK; fall back to any APK if the split names ever change.
+          APK=$(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*arm64-v8a*.apk" | head -n1)
+          [ -n "$APK" ] || APK=$(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*.apk" | head -n1)
           if [ -z "$APK" ]; then
             ci_record release-apk FAIL "Release APK was not produced"
             ci_record release-apk-verify FAIL "Release APK was not produced"

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!--
+        App widget layouts are inflated as RemoteViews, which does not run through AppCompat, so
+        app:tint would simply be ignored there. android:tint is the correct attribute in widgets.
+    -->
+    <issue id="UseAppTint">
+        <ignore path="**/layout/widget_*.xml" />
+    </issue>
+</lint>
