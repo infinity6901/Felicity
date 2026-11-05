@@ -130,6 +130,27 @@ class LyricsManager @Inject constructor(
         }
     }
 
+    /**
+     * Searches the lyric sources with text the user typed (title, or "Artist - Title") instead of
+     * the playing song's tags. Results replace [availableVersions].
+     */
+    fun searchVersions(query: String) {
+        val online = MediaPlaybackManager.getCurrentOnlineTrack()
+        val song = if (online == null) MediaPlaybackManager.getCurrentSong() else null
+        val path = online?.let { "online:${it.source}:${it.id}" } ?: song?.uri ?: return
+        _versionsLoading.value = true
+        scope.launch {
+            try {
+                val candidates = multiProviderLyricsEngine.searchManual(query)
+                if (isStillRelevant(path)) _availableVersions.value = candidates
+            } catch (e: Exception) {
+                Log.w(TAG, "Manual lyric search failed", e)
+            } finally {
+                _versionsLoading.value = false
+            }
+        }
+    }
+
     private val _loadingStatus = MutableStateFlow<LyricsLoadingStatus>(LyricsLoadingStatus.Idle)
 
     /**
@@ -316,6 +337,7 @@ class LyricsManager @Inject constructor(
             parseThenEmit(lrcContent, songPath, fallback = LrcData()) { content ->
                 selectParser(content).parse(content)
             }
+            maybeUpgradeToWordSynced(song, songPath)
             return
         }
 
@@ -346,6 +368,7 @@ class LyricsManager @Inject constructor(
             parseThenEmit(embeddedContent, songPath, fallback = LrcData()) { content ->
                 selectParser(content).parse(content)
             }
+            maybeUpgradeToWordSynced(song, songPath)
             return
         }
 
@@ -507,6 +530,34 @@ class LyricsManager @Inject constructor(
         _loadingStatus.value = LyricsLoadingStatus.Idle
     }
 
+    /**
+     * When the lyrics loaded from disk are only line-synced, looks (once per song, and only if the
+     * user enabled auto-download and never picked a version by hand) for a word-by-word version of
+     * the same lyrics and swaps it in, saving it so it is cached from then on.
+     */
+    private suspend fun maybeUpgradeToWordSynced(song: Audio, songPath: String) {
+        if (!LyricsPreferences.isAutoDownloadLyrics()) return
+        val current = _lrcData.value ?: return
+        if (current.isEmpty || current.entries.any { it.hasWordSync() }) return
+        val title = song.title ?: song.name
+        val artist = song.artist ?: ""
+        if (multiProviderLyricsEngine.selectedId(title, artist) != null) return
+        if (multiProviderLyricsEngine.wordUpgradeChecked(title, artist)) return
+        val candidates = try {
+            multiProviderLyricsEngine.search(title, artist)
+        } catch (e: Exception) {
+            return
+        }
+        if (!isStillRelevant(songPath) || candidates.isEmpty()) return
+        multiProviderLyricsEngine.markWordUpgradeChecked(title, artist)
+        val best = candidates.firstOrNull { it.wordSynced && it.synced && it.confidence >= 85 } ?: return
+        // Guard against replacing a hand-edited file with a different lyric: line counts must be close.
+        val existing = current.entries.size.coerceAtLeast(1)
+        if (kotlin.math.abs(best.lineCount - existing) > existing / 5 + 2) return
+        _availableVersions.value = candidates
+        applyLyricsCandidate(best, song.uri, songPath, title, artist, rememberSelection = false)
+    }
+
     /** Select a different provider/version without restarting playback. */
     fun selectLyricsVersion(index: Int) {
         val candidate = _availableVersions.value.getOrNull(index) ?: return
@@ -551,14 +602,24 @@ class LyricsManager @Inject constructor(
                 }
                 parsed = enriched
             }
+            // Persist word timings too, otherwise the cached .lrc silently degrades to line-by-line.
+            val toSave = if (candidate.synced && parsed.entries.any { it.hasWordSync() }) {
+                val wordsOnly = LrcData()
+                parsed.entries.forEach { e -> wordsOnly.addEntry(LrcEntry(e.timeInMillis, e.text, null, null, e.words)) }
+                wordsOnly.toLrcString()
+            } else raw
             if (LyricsPreferences.isAutoRomanizeLyrics()) parsed = addAutomaticRomanization(parsed)
             parsed = applyStudioTranslation(parsed)
             if (!isStillRelevant(songPath)) return
             if (rememberSelection) multiProviderLyricsEngine.select(title, artist, candidate)
             if (audioPath.startsWith("content://")) {
                 withContext(Dispatchers.IO) {
-                    if (candidate.synced) lrcRepository.saveLrcToFile(raw, audioPath)
-                    else lrcRepository.saveTxtToFile(raw, audioPath)
+                    if (candidate.synced) lrcRepository.saveLrcToFile(toSave, audioPath)
+                    else lrcRepository.saveTxtToFile(toSave, audioPath)
+                    if (LyricsPreferences.isAutoEmbedLyrics()) {
+                        lrcRepository.embedLyricsInFile(audioPath, toSave)
+                            .onFailure { Log.w(TAG, "Auto-embed failed", it) }
+                    }
                 }
             }
             emitIfStillRelevant(songPath, parsed)

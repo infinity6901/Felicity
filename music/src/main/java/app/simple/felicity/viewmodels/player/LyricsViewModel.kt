@@ -58,6 +58,8 @@ class LyricsViewModel @Inject constructor(
 
     fun loadVersions() = lyricsManager.loadVersions()
 
+    fun searchVersions(query: String) = lyricsManager.searchVersions(query)
+
     suspend fun searchPhraseAcrossTracks(phrase: String) = lyricsManager.searchPhraseAcrossTracks(phrase)
 
     /**

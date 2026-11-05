@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <include
+        android:id="@+id/header"
+        layout="@layout/header_generic_search" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/versions_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="420dp"
+        android:clipToPadding="false"
+        android:overScrollMode="never"
+        android:paddingBottom="@dimen/padding_10" />
+
+</LinearLayout>

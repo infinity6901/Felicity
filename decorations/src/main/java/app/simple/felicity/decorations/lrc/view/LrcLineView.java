@@ -1,6 +1,7 @@
 package app.simple.felicity.decorations.lrc.view;
 
 import android.content.Context;
+import android.animation.ValueAnimator;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -16,6 +17,8 @@ import android.text.style.ForegroundColorSpan;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 
 import java.util.List;
 
@@ -126,6 +129,39 @@ public class LrcLineView extends View implements ThemeChangedListener {
      */
     private int backgroundAlpha = 180;
     
+    /** Line change animation: none. */
+    public static final int TRANSITION_NONE = 0;
+    /** Line change animation: cross-fade in. */
+    public static final int TRANSITION_FADE = 1;
+    /** Line change animation: rise and fade in. */
+    public static final int TRANSITION_SLIDE = 2;
+    /** Line change animation: pop in with a little overshoot. */
+    public static final int TRANSITION_POP = 3;
+    
+    /** Text colour mode: follow the theme. */
+    public static final int COLOR_THEME = 0;
+    /** Text colour mode: accent colour. */
+    public static final int COLOR_ACCENT = 1;
+    /** Text colour mode: white. */
+    public static final int COLOR_WHITE = 2;
+    
+    private int transitionMode = TRANSITION_NONE;
+    private float transitionProgress = 1f;
+    private ValueAnimator transitionAnimator;
+    
+    private boolean boxEnabled = false;
+    private int boxOpacity = 90;
+    private boolean glowEnabled = false;
+    private int colorMode = COLOR_THEME;
+    
+    private final RectF boxCurrent = new RectF();
+    private final RectF boxStart = new RectF();
+    private final RectF boxTarget = new RectF();
+    private final Paint boxPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private ValueAnimator boxAnimator;
+    private boolean boxPlaced = false;
+    private long boxKey = Long.MIN_VALUE;
+    
     public LrcLineView(@NonNull Context context) {
         this(context, null);
     }
@@ -177,6 +213,11 @@ public class LrcLineView extends View implements ThemeChangedListener {
         super.onDetachedFromWindow();
         // Clean up so we don't leak memory or receive callbacks after we're gone
         ThemeManager.INSTANCE.removeListener(this);
+        if (transitionAnimator != null) transitionAnimator.cancel();
+        if (boxAnimator != null) boxAnimator.cancel();
+        transitionProgress = 1f;
+        boxPlaced = false;
+        boxKey = Long.MIN_VALUE;
     }
     
     @Override
@@ -195,6 +236,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
         // The accent color is used for word-by-word highlights, so update it here
         accentColor = accent.getPrimaryAccentColor();
         invalidateCache();
+        boxKey = Long.MIN_VALUE;
         invalidate();
     }
     
@@ -257,6 +299,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
             if (lineChanged) {
                 invalidateCache();
                 requestLayout();
+                startTransition();
             }
             invalidate();
         }
@@ -395,10 +438,186 @@ public class LrcLineView extends View implements ThemeChangedListener {
 
         // The layout handles horizontal alignment internally (including RTL),
         // so we just need to drop down to the right vertical position.
-        canvas.save();
-        canvas.translate(0, textTop);
+        if (boxEnabled) {
+            updateBox(layout, textTop);
+            if (boxPlaced) {
+                boxPaint.setColor(accentColor);
+                boxPaint.setAlpha(Math.round(255f * boxOpacity / 100f));
+                float r = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 6f, getResources().getDisplayMetrics());
+                canvas.drawRoundRect(boxCurrent, r, r, boxPaint);
+            }
+        }
+        
+        float t = transitionProgress;
+        float alpha = 1f;
+        float dy = 0f;
+        float scale = 1f;
+        switch (transitionMode) {
+            case TRANSITION_FADE:
+                alpha = Math.min(1f, t);
+                break;
+            case TRANSITION_SLIDE:
+                alpha = Math.min(1f, t);
+                dy = (1f - t) * TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 14f, getResources().getDisplayMetrics());
+                break;
+            case TRANSITION_POP:
+                alpha = Math.min(1f, t * 2f);
+                scale = 0.85f + 0.15f * t;
+                break;
+            default:
+                break;
+        }
+        
+        textPaint.setShadowLayer(glowEnabled ? TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f,
+                getResources().getDisplayMetrics()) : 0f, 0f, 0f, accentColor);
+        
+        int saved = canvas.save();
+        if (alpha < 1f) {
+            canvas.saveLayerAlpha(0, 0, width, height, Math.round(255f * Math.max(0f, alpha)));
+        }
+        canvas.translate(0, textTop + dy);
+        if (scale != 1f) {
+            canvas.scale(scale, scale, width / 2f, layout.getHeight() / 2f);
+        }
         layout.draw(canvas);
-        canvas.restore();
+        canvas.restoreToCount(saved);
+    }
+    
+    /** Plays the line-change animation for the selected transition mode. */
+    private void startTransition() {
+        if (transitionAnimator != null) {
+            transitionAnimator.cancel();
+        }
+        if (transitionMode == TRANSITION_NONE) {
+            transitionProgress = 1f;
+            return;
+        }
+        transitionProgress = 0f;
+        transitionAnimator = ValueAnimator.ofFloat(0f, 1f);
+        transitionAnimator.setDuration(transitionMode == TRANSITION_POP ? 320 : 240);
+        transitionAnimator.setInterpolator(transitionMode == TRANSITION_POP
+                ? new OvershootInterpolator(1.6f) : new DecelerateInterpolator());
+        transitionAnimator.addUpdateListener(a -> {
+            transitionProgress = (float) a.getAnimatedValue();
+            invalidate();
+        });
+        transitionAnimator.start();
+    }
+    
+    /**
+     * Keeps the highlight box on the word being sung (or the whole line when it has no word timing),
+     * gliding it to each new target.
+     */
+    private void updateBox(@NonNull StaticLayout layout, float textTop) {
+        if (currentLineIndex < 0 || lrcData == null || getWidth() <= 0) {
+            boxPlaced = false;
+            boxKey = Long.MIN_VALUE;
+            return;
+        }
+        LrcEntry entry = lrcData.getEntries().get(currentLineIndex);
+        int wordIdx = entry.hasWordSync() ? Math.max(0, currentWordIndex) : -1;
+        long key = ((long) currentLineIndex << 20) ^ ((long) (wordIdx + 1) << 8) ^ getWidth();
+        if (key == boxKey) {
+            return;
+        }
+        boxKey = key;
+        
+        int startOff = 0;
+        int endOff = layout.getText().length();
+        if (wordIdx >= 0) {
+            List <WordEntry> words = entry.getWords();
+            startOff = 0;
+            for (int i = 0; i < wordIdx && i < words.size(); i++) {
+                startOff += words.get(i).getText().length();
+            }
+            endOff = Math.min(layout.getText().length(), startOff + words.get(Math.min(wordIdx, words.size() - 1)).getText().length());
+        }
+        startOff = Math.max(0, Math.min(startOff, Math.max(0, layout.getText().length() - 1)));
+        endOff = Math.max(startOff + 1, Math.min(endOff, layout.getText().length()));
+        
+        int lineNo = layout.getLineForOffset(startOff);
+        float x1 = layout.getPrimaryHorizontal(startOff);
+        int lastOff = Math.min(endOff, layout.getLineEnd(lineNo));
+        float x2 = lastOff >= layout.getLineEnd(lineNo)
+                ? layout.getLineRight(lineNo) : layout.getPrimaryHorizontal(lastOff);
+        if (wordIdx < 0) {
+            // whole line: span its widest visual line
+            x1 = Float.MAX_VALUE;
+            x2 = 0f;
+            for (int i = 0; i < layout.getLineCount(); i++) {
+                x1 = Math.min(x1, layout.getLineLeft(i));
+                x2 = Math.max(x2, layout.getLineRight(i));
+            }
+        }
+        float left = Math.min(x1, x2);
+        float right = Math.max(x1, x2);
+        float padX = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 5f, getResources().getDisplayMetrics());
+        float padY = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 2f, getResources().getDisplayMetrics());
+        float top = wordIdx < 0 ? 0f : layout.getLineTop(lineNo);
+        float bottom = wordIdx < 0 ? layout.getHeight() : layout.getLineBottom(lineNo);
+        boxTarget.set(left - padX, textTop + top - padY, right + padX, textTop + bottom + padY);
+        
+        if (boxAnimator != null) {
+            boxAnimator.cancel();
+        }
+        if (!boxPlaced) {
+            boxCurrent.set(boxTarget);
+            boxPlaced = true;
+            return;
+        }
+        boxStart.set(boxCurrent);
+        boxAnimator = ValueAnimator.ofFloat(0f, 1f);
+        boxAnimator.setDuration(180);
+        boxAnimator.setInterpolator(new DecelerateInterpolator());
+        boxAnimator.addUpdateListener(a -> {
+            float f = (float) a.getAnimatedValue();
+            boxCurrent.set(
+                    boxStart.left + (boxTarget.left - boxStart.left) * f,
+                    boxStart.top + (boxTarget.top - boxStart.top) * f,
+                    boxStart.right + (boxTarget.right - boxStart.right) * f,
+                    boxStart.bottom + (boxTarget.bottom - boxStart.bottom) * f);
+            invalidate();
+        });
+        boxAnimator.start();
+    }
+    
+    /** Chooses the line change animation, one of the {@code TRANSITION_*} constants. */
+    public void setTransitionMode(int mode) {
+        this.transitionMode = Math.max(TRANSITION_NONE, Math.min(TRANSITION_POP, mode));
+        transitionProgress = 1f;
+        invalidate();
+    }
+    
+    /** Shows or hides the highlight box that follows the sung word. */
+    public void setBoxEnabled(boolean enabled) {
+        this.boxEnabled = enabled;
+        boxKey = Long.MIN_VALUE;
+        boxPlaced = false;
+        invalidate();
+    }
+    
+    /** Highlight box opacity in percent (0..100). */
+    public void setBoxOpacityPercent(int percent) {
+        this.boxOpacity = Math.max(0, Math.min(100, percent));
+        invalidate();
+    }
+    
+    /** Adds a soft accent glow behind the text. */
+    public void setGlowEnabled(boolean enabled) {
+        this.glowEnabled = enabled;
+        invalidate();
+    }
+    
+    /** Chooses how the active text is coloured, one of the {@code COLOR_*} constants. */
+    public void setColorMode(int mode) {
+        this.colorMode = Math.max(COLOR_THEME, Math.min(COLOR_WHITE, mode));
+        invalidateCache();
+        invalidate();
+    }
+    
+    /** Opacity of the rounded backdrop in percent (0..100). */
+    public void setBackdropOpacityPercent(int percent) {
+        setBackgroundAlpha(Math.round(255f * Math.max(0, Math.min(100, percent)) / 100f));
     }
     
     /**
@@ -475,13 +694,13 @@ public class LrcLineView extends View implements ThemeChangedListener {
         
         if (!entry.hasWordSync()) {
             // Plain line mode — use the theme's primary text color, nothing fancy
-            textPaint.setColor(highlightColor);
+            textPaint.setColor(lineColor());
             return entry.getText();
         }
         
         List <WordEntry> words = entry.getWords();
         if (words.isEmpty()) {
-            textPaint.setColor(highlightColor);
+            textPaint.setColor(lineColor());
             return entry.getText();
         }
         
@@ -494,7 +713,8 @@ public class LrcLineView extends View implements ThemeChangedListener {
             builder.append(wordText);
             int end = builder.length();
             
-            @ColorInt int color = (i <= currentWordIndex) ? accentColor : normalColor;
+            @ColorInt int color = (i <= currentWordIndex)
+                    ? (colorMode == COLOR_WHITE ? Color.WHITE : accentColor) : normalColor;
             builder.setSpan(new ForegroundColorSpan(color), start, end,
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
@@ -506,6 +726,15 @@ public class LrcLineView extends View implements ThemeChangedListener {
     /**
      * Marks the cached layout as stale so the next draw rebuilds it from scratch.
      */
+    @ColorInt
+    private int lineColor() {
+        return switch (colorMode) {
+            case COLOR_ACCENT -> accentColor;
+            case COLOR_WHITE -> Color.WHITE;
+            default -> highlightColor;
+        };
+    }
+    
     private void invalidateCache() {
         cachedLayout = null;
         cachedLineIndex = Integer.MIN_VALUE;
@@ -517,6 +746,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
         super.onSizeChanged(w, h, oldw, oldh);
         // If the width changed, the text might reflow, so we need a fresh layout
         invalidateCache();
+        boxKey = Long.MIN_VALUE;
     }
     
     /**

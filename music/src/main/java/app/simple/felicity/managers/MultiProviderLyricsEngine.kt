@@ -78,6 +78,37 @@ class MultiProviderLyricsEngine @Inject constructor(
             .thenByDescending { it.synced })
     }
 
+    /**
+     * Free-text search typed by the user. Tries the text as a title, and when it looks like
+     * "Artist - Title" also both orderings of that split, then merges the unique results.
+     */
+    suspend fun searchManual(query: String): List<Candidate> = supervisorScope {
+        val q = query.trim()
+        if (q.isBlank()) return@supervisorScope emptyList()
+        val attempts = buildList {
+            add(q to "")
+            val parts = q.split(" - ", limit = 2).map { it.trim() }
+            if (parts.size == 2 && parts.all { it.isNotBlank() }) {
+                add(parts[1] to parts[0])
+                add(parts[0] to parts[1])
+            }
+        }
+        attempts.map { (title, artist) -> async { runCatching { search(title, artist) }.getOrDefault(emptyList()) } }
+            .flatMap { it.await() }
+            .distinctBy { it.provider + ":" + it.rawLyrics.ifBlank { it.plainLyrics }.hashCode() }
+            .sortedWith(compareByDescending<Candidate> { it.wordSynced }
+                .thenByDescending { it.confidence }
+                .thenByDescending { it.synced })
+    }
+
+    /** True once the word-by-word upgrade check has run for this song. */
+    fun wordUpgradeChecked(title: String, artist: String): Boolean =
+        prefs().getBoolean("word_checked:" + selectionKey(title, artist), false)
+
+    fun markWordUpgradeChecked(title: String, artist: String) {
+        prefs().edit { putBoolean("word_checked:" + selectionKey(title, artist), true) }
+    }
+
     /** Search LRCLib candidates using a lyric phrase, then verify against returned lyric text. */
     suspend fun searchPhraseAcrossTracks(phrase: String): List<PhraseHit> = withContext(Dispatchers.IO) {
         if (!LyricsPhraseMatcher.isSearchable(phrase)) return@withContext emptyList()

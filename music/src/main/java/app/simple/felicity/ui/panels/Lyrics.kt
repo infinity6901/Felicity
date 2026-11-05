@@ -322,40 +322,102 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         }
     }
 
-    /** Lists the available lyric versions with enough detail to tell them apart. */
+    /**
+     * Version picker: an editable search box (title, or "Artist - Title") above the list of
+     * candidates, each showing source, sync type, size and length so they can be told apart.
+     */
     private fun showLyricsVersions() {
-        val versions = lyricsViewModel.availableVersions.value
-        if (versions.isEmpty()) {
-            android.widget.Toast.makeText(requireContext(), getString(R.string.no_lyrics_found), android.widget.Toast.LENGTH_SHORT).show()
-            return
+        val ctx = requireContext()
+        val dialogBinding = app.simple.felicity.databinding.DialogLyricsVersionsBinding.inflate(LayoutInflater.from(ctx))
+        val song = MediaPlaybackManager.getCurrentSong()
+        val online = MediaPlaybackManager.getCurrentOnlineTrack()
+        val initialQuery = online?.title ?: song?.title ?: song?.name.orEmpty()
+
+        val adapter = VersionsAdapter { index ->
+            lyricsViewModel.selectLyricsVersion(index)
         }
-        val adapter = object : android.widget.ArrayAdapter<MultiProviderLyricsEngine.Candidate>(
-                requireContext(), android.R.layout.simple_list_item_2, android.R.id.text1, versions) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent)
-                val c = getItem(position) ?: return view
-                val kind = when {
-                    c.wordSynced -> "★ Word-by-word"
-                    c.synced -> "Line-by-line"
-                    else -> "Plain text"
+        dialogBinding.versionsRecycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+        dialogBinding.versionsRecycler.adapter = adapter
+        dialogBinding.header.editText.setText(initialQuery)
+        dialogBinding.header.editText.hint = getString(R.string.lyrics_versions_search_hint)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setView(dialogBinding.root)
+            .create()
+
+        fun runSearch() {
+            val q = dialogBinding.header.editText.text?.toString().orEmpty().trim()
+            if (q.isNotEmpty()) lyricsViewModel.searchVersions(q)
+            val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            imm?.hideSoftInputFromWindow(dialogBinding.header.editText.windowToken, 0)
+        }
+        dialogBinding.header.search.setOnClickListener { runSearch() }
+        dialogBinding.header.editText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) { runSearch(); true } else false
+        }
+
+        val jobs = listOf(
+                viewLifecycleOwner.lifecycleScope.launch {
+                    lyricsViewModel.availableVersions.collect { list ->
+                        adapter.submit(list)
+                        dialogBinding.header.count.text = getString(R.string.lyrics_versions_count, list.size)
+                    }
+                },
+                viewLifecycleOwner.lifecycleScope.launch {
+                    lyricsViewModel.versionsLoading.collect { loading ->
+                        dialogBinding.header.progress.visibility = if (loading) View.VISIBLE else View.GONE
+                    }
                 }
-                val details = buildList {
-                    add(c.provider)
-                    add(kind)
-                    add("${c.lineCount} lines")
-                    if (c.durationSec > 0) add(String.format(java.util.Locale.US, "%d:%02d", c.durationSec / 60, c.durationSec % 60))
-                    add("${c.confidence}%")
+        )
+        adapter.onPicked = { dialog.dismiss() }
+        dialog.setOnDismissListener { jobs.forEach { it.cancel() } }
+        dialog.show()
+    }
+
+    private inner class VersionsAdapter(
+            private val onClick: (Int) -> Unit
+    ) : androidx.recyclerview.widget.RecyclerView.Adapter<VersionsAdapter.Holder>() {
+        private var items: List<MultiProviderLyricsEngine.Candidate> = emptyList()
+        var onPicked: () -> Unit = {}
+
+        fun submit(list: List<MultiProviderLyricsEngine.Candidate>) {
+            items = list
+            notifyDataSetChanged()
+        }
+
+        inner class Holder(val b: app.simple.felicity.databinding.AdapterLyricsVersionBinding) :
+                androidx.recyclerview.widget.RecyclerView.ViewHolder(b.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(
+                app.simple.felicity.databinding.AdapterLyricsVersionBinding.inflate(
+                        LayoutInflater.from(parent.context), parent, false))
+
+        override fun getItemCount() = items.size
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val c = items[position]
+            holder.b.trackName.text = c.title.ifBlank { c.provider }
+            holder.b.artistName.text = c.artist
+            holder.b.artistName.visibility = if (c.artist.isBlank()) View.GONE else View.VISIBLE
+            holder.b.kindBadge.text = getString(when {
+                c.wordSynced -> R.string.lyrics_word_by_word
+                c.synced -> R.string.lyrics_line_by_line
+                else -> R.string.lyrics_plain_text
+            })
+            holder.b.details.text = buildList {
+                add(c.provider)
+                add("${c.lineCount} lines")
+                if (c.durationSec > 0) add(String.format(java.util.Locale.US, "%d:%02d", c.durationSec / 60, c.durationSec % 60))
+                add("${c.confidence}%")
+            }.joinToString(" · ")
+            holder.b.container.setOnClickListener {
+                val index = holder.bindingAdapterPosition
+                if (index != androidx.recyclerview.widget.RecyclerView.NO_POSITION) {
+                    onClick(index)
+                    onPicked()
                 }
-                view.findViewById<TextView>(android.R.id.text1).text =
-                    listOf(c.title, c.artist).filter { it.isNotBlank() }.joinToString(" — ").ifBlank { c.provider }
-                view.findViewById<TextView>(android.R.id.text2).text = details.joinToString(" · ")
-                return view
             }
         }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("Choose lyrics version")
-            .setAdapter(adapter) { _, which -> lyricsViewModel.selectLyricsVersion(which) }
-            .show()
     }
 
     /** Applies every persisted Lyrics Studio setting to the lyrics view and background. */

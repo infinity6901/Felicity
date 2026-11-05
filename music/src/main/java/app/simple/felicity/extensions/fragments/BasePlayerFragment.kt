@@ -174,6 +174,13 @@ abstract class BasePlayerFragment : MediaFragment() {
         setVisualizerState()
         setVisualizerCapsState()
         setLyricsState()
+        app.simple.felicity.dialogs.lyrics.PlayerLyricsStyle.apply(lrc)
+        lrc.setOnLongClickListener {
+            app.simple.felicity.dialogs.lyrics.PlayerLyricsStyle.show(requireContext()) {
+                app.simple.felicity.dialogs.lyrics.PlayerLyricsStyle.apply(lrc)
+            }
+            true
+        }
         updateMediaControlOverlap()
 
         // Mirror swipe-down-to-close behavior on the album art pager so that a downward

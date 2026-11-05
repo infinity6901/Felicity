@@ -9,6 +9,7 @@ object LyricsPreferences {
     const val LRC_TEXT_SIZE = "lyrics_lrc_text_size"
     const val AUTO_DOWNLOAD_LYRICS = "lyrics_auto_download"
     const val ALBUM_ART_BACKGROUND = "lyrics_album_art_background"
+    const val AUTO_EMBED_LYRICS = "lyrics_auto_embed"
     const val AUTO_ROMANIZE_LYRICS = "lyrics_auto_romanize"
     const val STUDIO_TRANSLATION = "lyrics_studio_translation"
     const val STUDIO_GLOW = "lyrics_studio_glow"
@@ -91,6 +92,17 @@ object LyricsPreferences {
     fun isAutoDownloadLyrics(): Boolean {
         return SharedPreferences.getSharedPreferences()
             .getBoolean(AUTO_DOWNLOAD_LYRICS, false)
+    }
+
+    fun setAutoEmbedLyrics(enabled: Boolean) {
+        SharedPreferences.getSharedPreferences().edit {
+            putBoolean(AUTO_EMBED_LYRICS, enabled)
+        }
+    }
+
+    fun isAutoEmbedLyrics(): Boolean {
+        return SharedPreferences.getSharedPreferences()
+            .getBoolean(AUTO_EMBED_LYRICS, false)
     }
 
     fun setAutoRomanizeLyrics(enabled: Boolean) {

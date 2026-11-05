@@ -440,6 +440,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         super.onSizeChanged(w, h, oldWidth, oldHeight);
         if (w != oldWidth || h != oldHeight) {
             normalLayoutCache.clear();
+            // Layouts (and the box measured from them) depend on the width, so re-target.
+            boxTargetWordIndex = -2;
+            boxTargetLineIndex = -2;
         }
     }
     
@@ -891,7 +894,10 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         }
         
         LrcLineLayout layout = new LrcLineLayout(mainLayout, romLayout, adlibLayout, totalHeight);
-        normalLayoutCache.put(lineIndex, layout);
+        if (getWidth() > 0) {
+            // Never cache a layout measured at zero width, it would stay broken after the view is sized.
+            normalLayoutCache.put(lineIndex, layout);
+        }
         
         return layout;
     }
@@ -934,6 +940,11 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             return;
         }
         
+        // While detached/hidden the view can be 0 wide; a layout measured then wraps one letter
+        // per line and produces a tall sliver of a box, so wait for a real width.
+        if (getWidth() <= 0) {
+            return;
+        }
         if (this.boxTargetWordIndex == -1 && this.boxTargetLineIndex == lineIndex) {
             return;
         }
@@ -1121,6 +1132,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             return;
         }
         
+        if (getWidth() <= 0) {
+            return;
+        }
         if (this.boxTargetWordIndex == wordIndex && this.boxTargetLineIndex == lineIndex) {
             return;
         }
@@ -2711,6 +2725,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        normalLayoutCache.clear();
+        boxTargetWordIndex = -2;
+        boxTargetLineIndex = -2;
         if (!isInEditMode()) {
             ThemeManager.INSTANCE.addListener(this);
         }

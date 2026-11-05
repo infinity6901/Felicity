@@ -45,6 +45,15 @@ class LyricsMenu : MediaBottomDialogFragment() {
             LyricsPreferences.setAutoDownloadLyrics(isChecked)
         }
 
+        binding.playerLyricsStyle.setOnClickListener {
+            PlayerLyricsStyle.show(requireContext()) { }
+        }
+
+        binding.autoEmbedToggle.isChecked = LyricsPreferences.isAutoEmbedLyrics()
+        binding.autoEmbedToggle.setOnCheckedChangeListener { _, isChecked ->
+            LyricsPreferences.setAutoEmbedLyrics(isChecked)
+        }
+
         binding.autoRomanizeToggle.isChecked = LyricsPreferences.isAutoRomanizeLyrics()
         binding.autoRomanizeToggle.setOnCheckedChangeListener { _, isChecked ->
             LyricsPreferences.setAutoRomanizeLyrics(isChecked)
