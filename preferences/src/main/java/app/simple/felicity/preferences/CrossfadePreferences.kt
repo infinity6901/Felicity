@@ -14,6 +14,7 @@ import app.simple.felicity.manager.SharedPreferences
 object CrossfadePreferences {
 
     const val CROSSFADE_ENABLED = "crossfade_enabled"
+    const val CROSSFADE_ADAPTIVE = "crossfade_adaptive"
     private const val CROSSFADE_DURATION_MS = "crossfade_duration_ms"
 
     /** Minimum crossfade length selectable via the settings slider. */
@@ -49,5 +50,18 @@ object CrossfadePreferences {
     fun getCrossfadeDurationMs(): Long {
         return SharedPreferences.getSharedPreferences()
             .getLong(CROSSFADE_DURATION_MS, DEFAULT_DURATION_MS)
+    }
+
+    // ---------------------------------------------------------------------------------------------------------- //
+
+    fun setAdaptiveEnabled(enabled: Boolean) {
+        SharedPreferences.getSharedPreferences().edit {
+            putBoolean(CROSSFADE_ADAPTIVE, enabled)
+        }
+    }
+
+    /** When on, the duration is tuned per song pair; the slider value acts as the maximum. */
+    fun isAdaptiveEnabled(): Boolean {
+        return SharedPreferences.getSharedPreferences().getBoolean(CROSSFADE_ADAPTIVE, false)
     }
 }

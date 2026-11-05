@@ -1144,6 +1144,19 @@ abstract class PreferenceFragment : MediaFragment() {
                 }
         )
 
+        val crossfadeAdaptive = Preference(
+                title = R.string.crossfade_adaptive,
+                summary = R.string.crossfade_adaptive_summary,
+                icon = R.drawable.ic_crossfade,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, callback ->
+                    CrossfadePreferences.setAdaptiveEnabled((view as FelicitySwitch).isChecked)
+                },
+                valueProvider = Supplier {
+                    CrossfadePreferences.isAdaptiveEnabled()
+                }
+        )
+
         preferences.add(decoderHeader)
         preferences.add(currentDecoder)
         preferences.add(fallbackToSWToggle)
@@ -1162,6 +1175,7 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(crossfadeHeader)
         preferences.add(crossfadeToggle)
         preferences.add(crossfadeDuration)
+        preferences.add(crossfadeAdaptive)
         preferences.add(replayGainHeader)
         preferences.add(autoReplayGainToggle)
         preferences.add(replayGainMode)

@@ -27,4 +27,25 @@ class CrossfadeMathTest {
         assertEquals(1000L, CrossfadeMath.wallClockStepMs(1000L, Float.NaN))
         assertTrue(CrossfadeMath.wallClockStepMs(1L, 1f) >= 10L)
     }
+
+    @Test fun progressFollowsElapsedMediaTimeAndClamps() {
+        assertEquals(0f, CrossfadeMath.fadeProgress(-50L, 4000L), 0.0001f)
+        assertEquals(0.5f, CrossfadeMath.fadeProgress(2000L, 4000L), 0.0001f)
+        assertEquals(1f, CrossfadeMath.fadeProgress(9000L, 4000L), 0.0001f)
+        assertEquals(1f, CrossfadeMath.fadeProgress(10L, 0L), 0.0001f)
+    }
+
+    @Test fun adaptiveFadeNeverExceedsTheChosenMaximum() {
+        assertEquals(6000L, CrossfadeMath.adaptiveFadeMs(6000L, 240_000L, 200_000L, sameAlbum = false))
+        assertEquals(3000L, CrossfadeMath.adaptiveFadeMs(6000L, 80_000L, 200_000L, sameAlbum = false))
+        assertEquals(1500L, CrossfadeMath.adaptiveFadeMs(6000L, 20_000L, 200_000L, sameAlbum = false))
+        assertTrue(CrossfadeMath.adaptiveFadeMs(1000L, 300_000L, 300_000L, sameAlbum = true) >= 1000L)
+        assertTrue(CrossfadeMath.adaptiveFadeMs(12000L, 300_000L, 300_000L, sameAlbum = true) <= 12000L)
+    }
+
+    @Test fun sameAlbumNeighboursGetAShorterBlend() {
+        val other = CrossfadeMath.adaptiveFadeMs(8000L, 240_000L, 240_000L, sameAlbum = false)
+        val same = CrossfadeMath.adaptiveFadeMs(8000L, 240_000L, 240_000L, sameAlbum = true)
+        assertTrue(same < other)
+    }
 }

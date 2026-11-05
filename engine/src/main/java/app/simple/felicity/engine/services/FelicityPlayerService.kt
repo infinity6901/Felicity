@@ -1720,7 +1720,24 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val duration = player.duration
         if (duration <= 0 || duration == C.TIME_UNSET) return
 
-        val fadeMs = CrossfadePreferences.getCrossfadeDurationMs()
+        var fadeMs = CrossfadePreferences.getCrossfadeDurationMs()
+        if (CrossfadePreferences.isAdaptiveEnabled()) {
+            // Tailor the overlap to this particular pair of songs once the standby knows its length.
+            val standby = standbyPlayer
+            val nextItem = standby?.currentMediaItem
+            if (standby != null && nextItem != null &&
+                standby.playbackState == Player.STATE_READY &&
+                standby.currentMediaItemIndex == player.nextMediaItemIndex
+            ) {
+                val outAlbum = player.currentMediaItem?.mediaMetadata?.albumTitle?.toString()
+                val inAlbum = nextItem.mediaMetadata.albumTitle?.toString()
+                fadeMs = CrossfadeMath.adaptiveFadeMs(
+                        baseMs = fadeMs,
+                        outgoingDurationMs = duration,
+                        incomingDurationMs = standby.duration,
+                        sameAlbum = !outAlbum.isNullOrBlank() && outAlbum == inAlbum)
+            }
+        }
         val remaining = duration - player.currentPosition
         // Give the incoming decoder/network source a short head start. Starting the
         // volume ramp while it is still buffering creates an audible hole in the mix.
@@ -1802,10 +1819,10 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 abortDualFade(incoming, outgoing)
                 return@launch
             }
-            val steps = (fadeDurationMs / 50L).toInt().coerceIn(8, 120)
-            val mediaStepMs = (fadeDurationMs / steps).coerceAtLeast(10L)
-
-            for (step in 1..steps) {
+            // Progress follows the outgoing track's own media clock instead of counting timer
+            // ticks, so the curve stays exact through pauses, speed changes and delayed ticks.
+            val fadeStartPositionMs = outgoing.currentPosition
+            while (true) {
                 if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
                 // A manual pause pauses both decks. Resume only when the active deck resumes.
                 if (!outgoing.isPlaying) {
@@ -1829,10 +1846,13 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     abortDualFade(incoming, outgoing)
                     return@launch
                 }
-                val gains = CrossfadeMath.equalPowerGains(step.toFloat() / steps.toFloat())
+                val progress = CrossfadeMath.fadeProgress(
+                        outgoing.currentPosition - fadeStartPositionMs, fadeDurationMs)
+                val gains = CrossfadeMath.equalPowerGains(progress)
                 outgoing.volume = gains.outgoing
                 incoming.volume = gains.incoming
-                delay(CrossfadeMath.wallClockStepMs(mediaStepMs, outgoing.playbackParameters.speed))
+                if (progress >= 1f) break
+                delay(CrossfadeMath.wallClockStepMs(FADE_TICK_MEDIA_MS, outgoing.playbackParameters.speed))
             }
 
             if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
@@ -3064,6 +3084,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         private const val DUAL_FADE_READY_TIMEOUT_MS = 2_000L
         private const val DUAL_FADE_END_MARGIN_MS = 1_500L
         private const val DUAL_FADE_MIN_MS = 1_000L
+        private const val FADE_TICK_MEDIA_MS = 25L
         private const val DUAL_FADE_RETRY_COOLDOWN_MS = 3_000L
         private const val CROSSFADE_PREPARE_TIMEOUT_MS = 8_000L
 
