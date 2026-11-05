@@ -16,7 +16,10 @@ android {
     // single biggest part of the APK. The YtDlpManager API stays the same; the lite version is a stub.
     sourceSets {
         main {
-            java.srcDir(project.hasProperty('liteBuild') ? 'src/lite/java' : 'src/full/java')
+            def variantDir = project.hasProperty('liteBuild') ? 'src/lite/java' : 'src/full/java'
+            java.srcDir(variantDir)
+            // Kotlin files in that directory are compiled by the built-in Kotlin support.
+            kotlin.srcDir(variantDir)
         }
     }
 
