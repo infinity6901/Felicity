@@ -52,7 +52,8 @@ class SimpleHomeViewModel(application: Application) : WrappedViewModel(applicati
             if (UserInterfacePreferences.isPanelVisible(UserInterfacePreferences.PANEL_VISIBLE_PLAYLISTS))
                 libraryItems.add(Panel(R.string.playlists, R.drawable.ic_list))
             libraryItems.add(Panel(R.string.online, R.drawable.ic_radio))
-            libraryItems.add(Panel(R.string.youtube_panel, R.drawable.ic_radio))
+            if (app.simple.felicity.repository.youtube.YoutubeSupport.AVAILABLE)
+                libraryItems.add(Panel(R.string.youtube_panel, R.drawable.ic_radio))
 
             // Library group always has at least songs/albums/artists, so it's always present.
             defaultPanels.add(Group(R.string.library))

@@ -168,6 +168,12 @@ class Online : PanelFragment() {
         headerBinding.sourceInternetArchive.setOnClickListener { selectSource(OnlineSource.INTERNET_ARCHIVE) }
         headerBinding.sourceYoutube.setOnClickListener { selectSource(OnlineSource.YOUTUBE) }
 
+        if (!app.simple.felicity.repository.youtube.YoutubeSupport.AVAILABLE) {
+            // Lite builds have no yt-dlp, so YouTube cannot be played reliably. Hide it entirely.
+            headerBinding.sourceYoutube.gone()
+            headerBinding.youtubeSignIn.gone()
+        }
+
         headerBinding.youtubeSignIn.setOnClickListener {
             if (onlineViewModel.isYoutubeSignedIn) {
                 onlineViewModel.signOutOfYoutube()
