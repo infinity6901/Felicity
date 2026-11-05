@@ -7,6 +7,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import app.simple.felicity.preferences.AudioPreferences
+import app.simple.felicity.preferences.VisualizerPreferences
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
@@ -303,7 +304,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
      */
     fun setOutputLatency(latencyMs: Int) {
         outputLatencyMs = latencyMs.coerceAtLeast(0)
-        outputLatencySamples = computeDelaySamples(outputLatencyMs, currentSampleRate)
+        outputLatencySamples = computeDelaySamples(effectiveLatencyMs(), currentSampleRate)
     }
 
     /**
@@ -315,6 +316,15 @@ class VisualizerProcessor : BaseAudioProcessor() {
      * @param sampleRate Sample rate in Hz.
      * @return Sample count in [0, kDelayBufSize - FFT_SIZE - 1].
      */
+    /** Hardware latency plus the user's visualizer latency offset (negative values shorten the delay). */
+    private fun effectiveLatencyMs(): Int =
+        (outputLatencyMs + VisualizerPreferences.getLatencyOffsetMs()).coerceAtLeast(0)
+
+    /** Re-applies the delay after the user moves the visualizer latency slider. */
+    fun refreshLatencyOffset() {
+        outputLatencySamples = computeDelaySamples(effectiveLatencyMs(), currentSampleRate)
+    }
+
     private fun computeDelaySamples(ms: Int, sampleRate: Int): Int {
         if (ms <= 0) return 0
         val samples = (ms.toLong() * sampleRate / 1000L).toInt()
@@ -336,7 +346,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
              * whenever the sample rate changes. The millisecond value stays the same;
              * only the sample count differs between, e.g., 44100 Hz and 48000 Hz sessions.
              */
-            outputLatencySamples = computeDelaySamples(outputLatencyMs, inputAudioFormat.sampleRate)
+            outputLatencySamples = computeDelaySamples(effectiveLatencyMs(), inputAudioFormat.sampleRate)
 
             if (nativeHandle == 0L) {
                 nativeHandle = nativeCreate(fftSize)

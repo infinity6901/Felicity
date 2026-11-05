@@ -10,6 +10,7 @@ import app.simple.felicity.databinding.DialogVisualizerTuningBinding
 import app.simple.felicity.decorations.seekbars.FelicitySeekbar
 import app.simple.felicity.decorations.views.PopupMenuItem
 import app.simple.felicity.decorations.views.SharedScrollViewPopupNonContainer
+import app.simple.felicity.engine.managers.VisualizerManager
 import app.simple.felicity.extensions.dialogs.MediaBottomDialogFragment
 import app.simple.felicity.extensions.fragments.MediaFragment
 import app.simple.felicity.preferences.PlayerPreferences
@@ -62,6 +63,7 @@ class VisualizerConfig : MediaBottomDialogFragment() {
             override fun onProgressChanged(seekbar: FelicitySeekbar, progress: Float, fromUser: Boolean) {
                 if (fromUser && !isTracking) {
                     VisualizerPreferences.setLatencyOffsetMs(snapLatency(progress))
+                    VisualizerManager.processor?.refreshLatencyOffset()
                 }
             }
 
@@ -72,6 +74,7 @@ class VisualizerConfig : MediaBottomDialogFragment() {
             override fun onStopTrackingTouch(seekbar: FelicitySeekbar) {
                 isTracking = false
                 VisualizerPreferences.setLatencyOffsetMs(snapLatency(seekbar.getProgress()))
+                VisualizerManager.processor?.refreshLatencyOffset()
             }
         })
     }
