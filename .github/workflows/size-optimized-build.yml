@@ -1,6 +1,10 @@
-# Builds the size-optimised release variants and reports the APK sizes:
+# Builds the size-optimised release variants, checks them, and reports the APK sizes:
 #   -PsplitAbi=true  one APK per CPU architecture (arm64-v8a, x86_64) + a universal APK
 #   -PliteBuild=true leaves out the bundled Python/yt-dlp/ffmpeg runtime (YouTube downloads)
+#
+# Every APK is signed (with the repository key when the signing secrets exist, otherwise with a
+# throwaway test key so it can still be installed), verified with apksigner/aapt2, and the
+# x86_64 APK is installed and launched on an emulator.
 # Run it by hand (Actions -> Size-optimised builds) or let it run when the build scripts change.
 name: Size-optimised builds
 
@@ -13,6 +17,8 @@ on:
       - 'repository/build.gradle'
       - 'repository/src/lite/**'
       - '.github/workflows/size-optimized-build.yml'
+      - '.github/scripts/verify-apk.sh'
+      - '.github/scripts/smoke-test.sh'
 
 permissions:
   contents: read
@@ -32,20 +38,100 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-android-build
+
+      - name: Check signing secrets
+        id: signing
+        env:
+          SIGN_KEY: ${{ secrets.SIGN_KEY }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          if [ -n "$SIGN_KEY" ] && [ -n "$ALIAS" ] && [ -n "$KEY_PASSWORD" ] && [ -n "$KEY_STORE_PASSWORD" ]; then
+            mkdir -p "$HOME/work/_temp/keystore"
+            echo "$SIGN_KEY" | base64 -d > "$HOME/work/_temp/keystore/key.jks"
+            test -s "$HOME/work/_temp/keystore/key.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No signing secrets: the APKs are signed with a throwaway test key."
+          fi
+
       - name: Build release APKs (${{ matrix.name }})
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
         run: |
-          chmod +x ./gradlew
+          chmod +x ./gradlew .github/scripts/*.sh
           ./gradlew :music:assembleFossRelease ${{ matrix.flags }} --stacktrace
-      - name: Report sizes
+
+      - name: Collect and sign APKs
         run: |
+          set -eu
           mkdir -p out
-          echo "### APK sizes (${{ matrix.name }})" >> "$GITHUB_STEP_SUMMARY"
+          BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -n1)
+          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
+            keytool -genkeypair -keystore "$RUNNER_TEMP/test.jks" -storepass testtest -keypass testtest \
+              -alias test -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Felicity test build"
+          fi
           for f in $(find music/build/outputs/apk -path "*foss*" -path "*/release/*" -name "*.apk"); do
-            cp "$f" "out/${{ matrix.name }}-$(basename "$f")"
-            echo "- $(basename "$f"): $(du -h "$f" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+            dest="out/${{ matrix.name }}-$(basename "$f" | sed 's/-unsigned//')"
+            if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+              cp "$f" "$dest"
+            else
+              "$BT/apksigner" sign --ks "$RUNNER_TEMP/test.jks" --ks-pass pass:testtest --key-pass pass:testtest \
+                --out "$dest" "$f"
+            fi
           done
           ls -la out
+
+      - name: Verify APKs (package name, signature)
+        run: |
+          set -eu
+          for f in out/*.apk; do bash .github/scripts/verify-apk.sh "$f"; done
+
+      - name: Report sizes
+        run: |
+          echo "### APK sizes (${{ matrix.name }})" >> "$GITHUB_STEP_SUMMARY"
+          for f in out/*.apk; do echo "- $(basename "$f"): $(du -h "$f" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"; done
+
       - uses: actions/upload-artifact@v4
         with:
           name: apks-${{ matrix.name }}
           path: out/*.apk
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [split-full, split-lite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apks-${{ matrix.name }}
+          path: apks
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and launch the x86_64 APK on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash .github/scripts/smoke-test.sh apks/${{ matrix.name }}-music-foss-x86_64-release.apk smoke-out
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.name }}-logs
+          path: smoke-out
+          if-no-files-found: ignore
