@@ -46,6 +46,13 @@ regression pass on notification/widget taps and multi-window is worth doing.
 
 ## 3. More Widgets
 
+> **Update:** the widget line-up was reworked. Removed as basic or duplicate: the 2×4 blurred tile
+> (`FelicityWidgetProvider`), Compact 4×1, Minimal 2×1 and the Material You 2×2 tile (the Glass card
+> covers it). Added Glass Bar 4×1, Glass Up Next 4×3 and Vinyl 2×2. All glass widgets now use
+> `GlassRenderer` (blur, white wash, grain, sheen, rim; the card's strip blurs the art under it).
+> Widgets already placed from the removed types will show "can't load widget" until removed.
+
+
 **New**
 - `widget/CompactWidgetProvider.kt` + `res/layout/widget_compact.xml` +
   `res/xml/widget_compact_info.xml` (4×1 now-playing bar)

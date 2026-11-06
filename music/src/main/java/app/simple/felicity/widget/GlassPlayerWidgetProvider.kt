@@ -7,13 +7,20 @@ import app.simple.felicity.R
 
 /**
  * Frosted-glass 4×2 player card: a thumbnail, title / artist and previous · play/pause · next
- * buttons in translucent glass over a blurred, darkened copy of the album art.
+ * buttons on a real frosted pane (blur, wash, grain, sheen, rim) built from the album art by
+ * [GlassRenderer]. The play icon takes a shade of the artwork's colour.
  *
  * @author Hamza417
  */
 class GlassPlayerWidgetProvider : BaseWidgetProvider() {
 
     override fun getLayoutId(): Int = R.layout.widget_glass_player
+
+    override val frostedBackground: Boolean = true
+
+    override fun applyAccent(views: RemoteViews, accent: Int) {
+        views.setInt(R.id.widget_play_pause, "setColorFilter", GlassRenderer.iconShade(accent))
+    }
 
     override fun applyStaticViews(scope: WidgetViewScope) {
         val views = scope.views

@@ -13,16 +13,15 @@
         android:contentDescription="@string/album_art"
         android:scaleType="centerCrop" />
 
-    <!-- Floating frosted strip along the bottom edge. -->
+    <!-- Text sits on the frosted strip that GlassRenderer paints into the art bitmap (8dp inset, 56dp tall). -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
         android:layout_gravity="bottom"
         android:layout_margin="8dp"
-        android:background="@drawable/widget_glass_panel"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:padding="10dp">
+        android:paddingHorizontal="12dp">
 
         <LinearLayout
             android:layout_width="0dp"

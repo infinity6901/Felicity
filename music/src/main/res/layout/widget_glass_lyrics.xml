@@ -13,13 +13,7 @@
         android:importantForAccessibility="no"
         android:scaleType="centerCrop" />
 
-    <!-- Plain <View> is not allowed in RemoteViews (the launcher shows "An error occurred when
-         loading widget"), so the overlay is an ImageView that only draws its background. -->
-    <ImageView
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@drawable/widget_glass_panel"
-        android:importantForAccessibility="no" />
+    <!-- The frost (blur, wash, grain, sheen, rim) is baked into the background bitmap by GlassRenderer. -->
 
     <LinearLayout
         android:layout_width="match_parent"

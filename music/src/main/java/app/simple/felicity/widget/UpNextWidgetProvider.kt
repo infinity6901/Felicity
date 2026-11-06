@@ -17,14 +17,14 @@ import app.simple.felicity.R
  *
  * @author Hamza417
  */
-class UpNextWidgetProvider : BaseWidgetProvider() {
+open class UpNextWidgetProvider : BaseWidgetProvider() {
 
     override fun getLayoutId(): Int = R.layout.widget_up_next
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_QUEUE_UPDATE) {
             val manager = AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(ComponentName(context, UpNextWidgetProvider::class.java))
+            val ids = manager.getAppWidgetIds(ComponentName(context, this::class.java))
             if (ids.isNotEmpty()) manager.partiallyUpdateAppWidget(ids, render(context))
             return
         }
@@ -38,7 +38,16 @@ class UpNextWidgetProvider : BaseWidgetProvider() {
 
     override suspend fun pushUpdate(context: Context, manager: AppWidgetManager, widgetId: Int) {
         WidgetBootstrap.startUpdaters(context)
-        manager.updateAppWidget(widgetId, render(context))
+        val views = render(context)
+        manager.updateAppWidget(widgetId, views)
+
+        if (frostedBackground) {
+            val background = loadBackgroundArt(context, manager, widgetId, WidgetStatePrefs.getSongId(context))
+            if (background != null) {
+                views.setImageViewBitmap(R.id.widget_background_view, background)
+                manager.updateAppWidget(widgetId, views)
+            }
+        }
     }
 
     private fun render(context: Context): RemoteViews {
@@ -108,5 +117,11 @@ class UpNextWidgetProvider : BaseWidgetProvider() {
     companion object {
         /** Sent by [QueueWidgetUpdater] when the upcoming list changed. */
         const val ACTION_QUEUE_UPDATE = "app.simple.felicity.ACTION_QUEUE_WIDGET_UPDATE"
+
+        /** Every provider that shows the queue; the updater and bootstrap use this to know who to feed. */
+        val PROVIDERS: List<Class<out UpNextWidgetProvider>> = listOf(
+                UpNextWidgetProvider::class.java,
+                GlassUpNextWidgetProvider::class.java
+        )
     }
 }

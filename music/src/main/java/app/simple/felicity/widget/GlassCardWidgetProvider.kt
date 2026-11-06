@@ -5,10 +5,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.widget.RemoteViews
 import app.simple.felicity.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Glass 2×2 art card: the album art fills the tile (rounded) and a floating frosted-glass strip
- * along the bottom carries the title, artist and a play/pause button. Tapping the art opens the app.
+ * along the bottom carries the title, artist and a play/pause button. The strip is real frosted
+ * glass: it blurs the artwork behind it. Tapping the art opens the app.
  *
  * @author Hamza417
  */
@@ -36,6 +39,22 @@ class GlassCardWidgetProvider : BaseWidgetProvider() {
         } else {
             views.setImageViewResource(R.id.widget_album_art, R.mipmap.ic_launcher)
         }
+    }
+
+    override fun applyAccent(views: RemoteViews, accent: Int) {
+        views.setInt(R.id.widget_play_pause, "setColorFilter", GlassRenderer.iconShade(accent))
+    }
+
+    /**
+     * The whole tile is one bitmap: the artwork with a frosted strip along the bottom whose glass is
+     * the blurred part of the artwork underneath it.
+     */
+    override suspend fun loadAlbumArt(context: Context, songId: Long): Bitmap? = withContext(Dispatchers.IO) {
+        val density = context.resources.displayMetrics.density
+        val (w, h) = if (lastWidgetSize.first > 8) lastWidgetSize else (160 * density).toInt() to (160 * density).toInt()
+        val art = loadRawArt(context, songId, minOf(maxOf(w, h), 720))
+        accentColor = GlassRenderer.accentOf(art)
+        GlassRenderer.artWithGlassStrip(art, w, h, 28 * density, 8 * density, 56 * density)
     }
 
     override suspend fun loadBackgroundArt(

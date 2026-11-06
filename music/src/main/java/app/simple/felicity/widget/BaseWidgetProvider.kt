@@ -49,7 +49,7 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
 
     /**
      * Returns the layout resource ID for this widget style.
-     * For example: `R.layout.widget_blurred` or `R.layout.widget_compact`.
+     * For example: `R.layout.widget_glass_player` or `R.layout.widget_md_pill`.
      */
     abstract fun getLayoutId(): Int
 
@@ -77,6 +77,24 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
      * or use a fallback color; totally up to the subclass.
      */
     abstract fun applyBackgroundArt(views: RemoteViews, bitmap: Bitmap?)
+
+    /**
+     * When true the background is a real frosted-glass pane painted by [GlassRenderer] instead of
+     * the plain blurred, darkened cover.
+     */
+    protected open val frostedBackground: Boolean = false
+
+    /** Corner radius of the glass pane, in dp. Match the layout's clip drawable. */
+    protected open val glassCornerDp: Float = 28f
+
+    /** Colour pulled from the current artwork once it has loaded, or 0 before that. */
+    protected var accentColor: Int = 0
+
+    /** Pixel size of this widget instance as the launcher laid it out; set at the start of [pushUpdate]. */
+    protected var lastWidgetSize: Pair<Int, Int> = 0 to 0
+
+    /** Called once the artwork accent is known; tint play buttons and the like here. */
+    protected open fun applyAccent(views: RemoteViews, accent: Int) = Unit
 
     // -------------------------------------------------------------------------
     // Broadcast wiring — same for every widget style
@@ -155,6 +173,7 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
         val songId = WidgetStatePrefs.getSongId(context)
 
         val views = RemoteViews(context.packageName, getLayoutId())
+        lastWidgetSize = widgetSizePx(context, manager, widgetId)
 
         // Give the subclass everything it needs to set up text, icons, and button intents.
         val viewScope = WidgetViewScope(
@@ -178,6 +197,7 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
 
         val artBitmap = loadAlbumArt(context, songId)
         applyAlbumArt(views, artBitmap)
+        if (accentColor != 0) applyAccent(views, accentColor)
         manager.updateAppWidget(widgetId, views)
     }
 
@@ -229,6 +249,9 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
             widgetId: Int,
             songId: Long
     ): Bitmap? = withContext(Dispatchers.IO) {
+        if (frostedBackground) {
+            return@withContext runCatching { loadFrostedPane(context, manager, widgetId, songId) }.getOrNull()
+        }
         if (songId == -1L) return@withContext null
         runCatching {
             val audio = AudioDatabase.getInstance(context.applicationContext)
@@ -236,15 +259,7 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
                 ?.getAudioById(songId)
                 ?: return@withContext null
 
-            val density = context.resources.displayMetrics.density
-            val options = manager.getAppWidgetOptions(widgetId)
-
-            // Min-width × max-height matches what the launcher actually allocates
-            // for this widget in portrait orientation.
-            val widthPx = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 294) * density)
-                .toInt().coerceAtLeast(8)
-            val heightPx = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 50) * density)
-                .toInt().coerceAtLeast(8)
+            val (widthPx, heightPx) = widgetSizePx(context, manager, widgetId)
 
             context.getArtCoverForWidget(
                     audio,
@@ -259,6 +274,45 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
             )
         }.getOrNull()
     }
+
+    /**
+     * Min-width × max-height is what the launcher actually allocates for this widget in portrait;
+     * returned in pixels.
+     */
+    protected fun widgetSizePx(context: Context, manager: AppWidgetManager, widgetId: Int): Pair<Int, Int> {
+        val density = context.resources.displayMetrics.density
+        val options = manager.getAppWidgetOptions(widgetId)
+        val w = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 294) * density).toInt().coerceAtLeast(8)
+        val h = (options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 110) * density).toInt().coerceAtLeast(8)
+        return w to h
+    }
+
+    /** The plain cover for [songId] (no blur, no darkening), or null if it can't be loaded. */
+    protected suspend fun loadRawArt(context: Context, songId: Long, sizePx: Int): Bitmap? =
+        withContext(Dispatchers.IO) {
+            if (songId == -1L) return@withContext null
+            runCatching {
+                val audio = AudioDatabase.getInstance(context.applicationContext)
+                    .audioDao()
+                    ?.getAudioById(songId)
+                    ?: return@withContext null
+                context.getArtCoverForWidget(
+                        audio, height = sizePx, width = sizePx,
+                        greyscale = AlbumArtPreferences.isGreyscaleEnabled(), crop = true)
+            }.getOrNull()
+        }
+
+    /** Frosted-glass pane for [songId]; also records the artwork [accentColor]. Always returns a bitmap. */
+    protected suspend fun loadFrostedPane(
+            context: Context, manager: AppWidgetManager, widgetId: Int, songId: Long
+    ): Bitmap = withContext(Dispatchers.IO) {
+        val (w, h) = widgetSizePx(context, manager, widgetId)
+        val art = loadRawArt(context, songId, 256)
+        accentColor = GlassRenderer.accentOf(art)
+        GlassRenderer.frostedPane(art, w, h, glassCornerDp * context.resources.displayMetrics.density)
+    }
+
+    protected fun dp(context: Context, value: Float): Float = value * context.resources.displayMetrics.density
 
     // -------------------------------------------------------------------------
     // Utilities subclasses (and this class) can use freely

@@ -2303,7 +2303,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * Sends a broadcast to the home screen widget so it can redraw itself with the
      * latest song info and play/pause icon — no polling required.
      *
-     * The broadcast is targeted directly at [FelicityWidgetProvider] so it never
+     * The broadcast is targeted directly at each registered widget provider so it never
      * leaks to other apps. The song metadata is attached as Intent extras; the
      * widget saves them to [WidgetStatePrefs] on receipt so the next cold draw
      * (days later) still shows the correct song title.
@@ -3117,17 +3117,16 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
          * only change needed in this file to keep it updating live.
          */
         private val WIDGET_PROVIDER_CLASS_NAMES = listOf(
-                "app.simple.felicity.widget.FelicityWidgetProvider",
-                "app.simple.felicity.widget.CompactWidgetProvider",
-                "app.simple.felicity.widget.MinimalWidgetProvider",
                 "app.simple.felicity.widget.LyricsWidgetProvider",
                 "app.simple.felicity.widget.MaterialYouPlayerWidgetProvider",
-                "app.simple.felicity.widget.MaterialYouTileWidgetProvider",
+                "app.simple.felicity.widget.MaterialYouPillWidgetProvider",
+                "app.simple.felicity.widget.UpNextWidgetProvider",
                 "app.simple.felicity.widget.GlassPlayerWidgetProvider",
                 "app.simple.felicity.widget.GlassLyricsWidgetProvider",
                 "app.simple.felicity.widget.GlassCardWidgetProvider",
-                "app.simple.felicity.widget.MaterialYouPillWidgetProvider",
-                "app.simple.felicity.widget.UpNextWidgetProvider"
+                "app.simple.felicity.widget.GlassBarWidgetProvider",
+                "app.simple.felicity.widget.GlassUpNextWidgetProvider",
+                "app.simple.felicity.widget.VinylWidgetProvider"
         )
 
         /** Custom session command sent when the user taps the repeat button in the notification. */

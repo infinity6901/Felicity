@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="6dp">
+
+    <!-- The record (grooves, sheen, artwork label) is drawn into this bitmap by GlassRenderer. -->
+    <ImageView
+        android:id="@+id/widget_album_art"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/album_art"
+        android:scaleType="fitCenter" />
+
+    <ImageButton
+        android:id="@+id/widget_play_pause"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="bottom|end"
+        android:background="@drawable/widget_glass_button_primary"
+        android:contentDescription="@string/widget_play_pause"
+        android:padding="10dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_play"
+        android:tint="#1C1B1F" />
+
+</FrameLayout>

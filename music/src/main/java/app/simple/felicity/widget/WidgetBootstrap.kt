@@ -35,7 +35,7 @@ object WidgetBootstrap {
             fun hasWidget(cls: Class<*>) = manager.getAppWidgetIds(ComponentName(app, cls)).isNotEmpty()
 
             val needLyrics = LyricsWidgetUpdater.PROVIDERS.any { hasWidget(it) }
-            val needQueue = hasWidget(UpNextWidgetProvider::class.java)
+            val needQueue = UpNextWidgetProvider.PROVIDERS.any { hasWidget(it) }
             if (!needLyrics && !needQueue) return
 
             val entry = EntryPointAccessors.fromApplication(app, Updaters::class.java)

@@ -2,7 +2,6 @@
 <resources>
     <string name="widget_lyrics_description">Shows the current lyric line, in sync with the song. Follows your system colors.</string>
     <string name="widget_md_player_description">Album art with previous, play/pause and next controls. Follows your system colors.</string>
-    <string name="widget_md_tile_description">A square album art tile with a play/pause button. Follows your system colors.</string>
     <string name="widget_play_pause">Play or pause</string>
     <string name="widget_previous">Previous</string>
     <string name="widget_next">Next</string>
@@ -17,4 +16,7 @@
     <string name="widget_up_next">Up next</string>
     <string name="widget_queue_empty">Nothing else in the queue</string>
     <string name="widget_queue_more">+%1$d more</string>
+    <string name="widget_glass_bar_description">A slim frosted-glass now-playing bar with art, title and previous, play/pause, next.</string>
+    <string name="widget_glass_up_next_description">Frosted-glass queue: the song playing now and the next three, with play/pause and next.</string>
+    <string name="widget_vinyl_description">A record-style disc with the album art as its label. A glowing rim shows when it is playing.</string>
 </resources>

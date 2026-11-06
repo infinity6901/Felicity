@@ -1,21 +1,21 @@
 package app.simple.felicity.widget
 
-import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.widget.RemoteViews
 import app.simple.felicity.R
 
 /**
- * Material You 2×2 art tile: the album art fills the whole tile (rounded), with the title,
- * artist and a dynamic-color play/pause button over a soft dark scrim at the bottom.
- * Tapping the art opens the app.
+ * Frosted-glass 4×1 now-playing bar: small art, title / artist and previous · play/pause · next.
+ * Replaces the old plain compact and minimal widgets.
  *
  * @author Hamza417
  */
-class MaterialYouTileWidgetProvider : BaseWidgetProvider() {
+class GlassBarWidgetProvider : BaseWidgetProvider() {
 
-    override fun getLayoutId(): Int = R.layout.widget_md_tile
+    override fun getLayoutId(): Int = R.layout.widget_glass_bar
+
+    override val frostedBackground: Boolean = true
 
     override fun applyStaticViews(scope: WidgetViewScope) {
         val views = scope.views
@@ -28,7 +28,13 @@ class MaterialYouTileWidgetProvider : BaseWidgetProvider() {
                 if (scope.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
         views.setOnClickPendingIntent(R.id.widget_play_pause, scope.pendingIntentBuilder(context, WidgetActionReceiver.ACTION_PLAY_PAUSE))
+        views.setOnClickPendingIntent(R.id.widget_prev, scope.pendingIntentBuilder(context, WidgetActionReceiver.ACTION_PREV))
+        views.setOnClickPendingIntent(R.id.widget_next, scope.pendingIntentBuilder(context, WidgetActionReceiver.ACTION_NEXT))
         views.setOnClickPendingIntent(R.id.widget_album_art, scope.pendingIntentBuilder(context, WidgetActionReceiver.ACTION_OPEN_APP))
+    }
+
+    override fun applyAccent(views: RemoteViews, accent: Int) {
+        views.setInt(R.id.widget_play_pause, "setColorFilter", GlassRenderer.iconShade(accent))
     }
 
     override fun applyAlbumArt(views: RemoteViews, bitmap: Bitmap?) {
@@ -39,16 +45,12 @@ class MaterialYouTileWidgetProvider : BaseWidgetProvider() {
         }
     }
 
-    override suspend fun loadBackgroundArt(
-            context: Context,
-            manager: AppWidgetManager,
-            widgetId: Int,
-            songId: Long
-    ): Bitmap? = null
+    override fun applyBackgroundArt(views: RemoteViews, bitmap: Bitmap?) {
+        if (bitmap != null) {
+            views.setImageViewBitmap(R.id.widget_background_view, bitmap)
+        }
+    }
 
-    override fun applyBackgroundArt(views: RemoteViews, bitmap: Bitmap?) = Unit
-
-    /** The art fills the whole tile, so request a large, un-blurred square. */
     override fun getAlbumArtSize(context: Context): Int =
-        (320 * context.resources.displayMetrics.density).toInt().coerceAtMost(720)
+        (96 * context.resources.displayMetrics.density).toInt()
 }

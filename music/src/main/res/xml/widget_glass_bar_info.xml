@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:initialLayout="@layout/widget_compact"
+    android:description="@string/widget_glass_bar_description"
+    android:initialLayout="@layout/widget_glass_bar"
     android:minWidth="250dp"
     android:minHeight="40dp"
+    android:previewLayout="@layout/widget_glass_bar"
     android:resizeMode="horizontal"
     android:targetCellWidth="4"
     android:targetCellHeight="1"

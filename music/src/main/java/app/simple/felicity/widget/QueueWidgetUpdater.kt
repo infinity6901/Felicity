@@ -60,8 +60,10 @@ class QueueWidgetUpdater @Inject constructor(
 
     private fun update() {
         val manager = AppWidgetManager.getInstance(context)
-        val component = ComponentName(context, UpNextWidgetProvider::class.java)
-        if (manager.getAppWidgetIds(component).isEmpty()) {
+        val components = UpNextWidgetProvider.PROVIDERS
+            .map { ComponentName(context, it) }
+            .filter { manager.getAppWidgetIds(it).isNotEmpty() }
+        if (components.isEmpty()) {
             job?.cancel()
             job = null
             lastKey = null
@@ -74,7 +76,9 @@ class QueueWidgetUpdater @Inject constructor(
         lastKey = key
 
         WidgetQueuePrefs.save(context, upcoming)
-        context.sendBroadcast(Intent(UpNextWidgetProvider.ACTION_QUEUE_UPDATE).setComponent(component))
+        components.forEach { component ->
+            context.sendBroadcast(Intent(UpNextWidgetProvider.ACTION_QUEUE_UPDATE).setComponent(component))
+        }
     }
 
     private fun computeUpcoming(): WidgetQueuePrefs.Upcoming {
