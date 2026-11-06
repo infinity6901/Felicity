@@ -153,6 +153,10 @@ public class LrcLineView extends View implements ThemeChangedListener {
     private int boxOpacity = 90;
     private boolean glowEnabled = false;
     private int colorMode = COLOR_THEME;
+    /** Free colour picks; 0 means "not set" and the automatic colour is used. */
+    private int customTextColor = 0;
+    private int customGlowColor = 0;
+    private int customBoxColor = 0;
     
     private final RectF boxCurrent = new RectF();
     private final RectF boxStart = new RectF();
@@ -441,7 +445,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
         if (boxEnabled) {
             updateBox(layout, textTop);
             if (boxPlaced) {
-                boxPaint.setColor(accentColor);
+                boxPaint.setColor(customBoxColor != 0 ? customBoxColor : accentColor);
                 boxPaint.setAlpha(Math.round(255f * boxOpacity / 100f));
                 float r = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 6f, getResources().getDisplayMetrics());
                 canvas.drawRoundRect(boxCurrent, r, r, boxPaint);
@@ -469,7 +473,8 @@ public class LrcLineView extends View implements ThemeChangedListener {
         }
         
         textPaint.setShadowLayer(glowEnabled ? TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f,
-                getResources().getDisplayMetrics()) : 0f, 0f, 0f, accentColor);
+                getResources().getDisplayMetrics()) : 0f, 0f, 0f,
+                customGlowColor != 0 ? customGlowColor : (customTextColor != 0 ? customTextColor : accentColor));
         
         int saved = canvas.save();
         if (alpha < 1f) {
@@ -615,6 +620,15 @@ public class LrcLineView extends View implements ThemeChangedListener {
         invalidate();
     }
     
+    /** Sets free colours for text, glow and highlight box; pass 0 to fall back to the automatic colour. */
+    public void setCustomColors(@ColorInt int text, @ColorInt int glow, @ColorInt int box) {
+        this.customTextColor = text == 0 ? 0 : (text | 0xFF000000);
+        this.customGlowColor = glow == 0 ? 0 : (glow | 0xFF000000);
+        this.customBoxColor = box == 0 ? 0 : (box | 0xFF000000);
+        invalidateCache();
+        invalidate();
+    }
+    
     /** Opacity of the rounded backdrop in percent (0..100). */
     public void setBackdropOpacityPercent(int percent) {
         setBackgroundAlpha(Math.round(255f * Math.max(0, Math.min(100, percent)) / 100f));
@@ -714,12 +728,12 @@ public class LrcLineView extends View implements ThemeChangedListener {
             int end = builder.length();
             
             @ColorInt int color = (i <= currentWordIndex)
-                    ? (colorMode == COLOR_WHITE ? Color.WHITE : accentColor) : normalColor;
+                    ? (customTextColor != 0 ? customTextColor : (colorMode == COLOR_WHITE ? Color.WHITE : accentColor)) : normalColor;
             builder.setSpan(new ForegroundColorSpan(color), start, end,
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
         
-        textPaint.setColor(accentColor);
+        textPaint.setColor(customTextColor != 0 ? customTextColor : accentColor);
         return builder;
     }
     
@@ -728,6 +742,9 @@ public class LrcLineView extends View implements ThemeChangedListener {
      */
     @ColorInt
     private int lineColor() {
+        if (customTextColor != 0) {
+            return customTextColor;
+        }
         return switch (colorMode) {
             case COLOR_ACCENT -> accentColor;
             case COLOR_WHITE -> Color.WHITE;

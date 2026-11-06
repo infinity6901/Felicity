@@ -1596,7 +1596,17 @@ object MediaPlaybackManager {
      * gapless play, etc.) so that "Always Skip" only applies to the auto-queue, never
      * to deliberate user interaction.
      */
-    fun notifyCurrentPosition(position: Int) {
+    fun notifyCurrentPosition(rawPosition: Int, mediaId: String? = null) {
+        // A queue reorder updates [songs] immediately while ExoPlayer's index catches up
+        // asynchronously, so a callback can carry an index that no longer points at the item
+        // it was generated for. Trust the media id over the raw index: if they disagree, the
+        // index is stale and the song's real position in the current list is used instead.
+        var position = rawPosition
+        val id = mediaId?.toLongOrNull()
+        if (id != null && !isQueueBeingReplaced && songs.getOrNull(rawPosition)?.id != id) {
+            val remapped = songs.indexOfFirst { it.id == id }
+            if (remapped >= 0) position = remapped
+        }
         if (isQueueBeingReplaced) {
             if (pendingSeekPositions.contains(position)) {
                 // ExoPlayer just confirmed the first item of the new queue.

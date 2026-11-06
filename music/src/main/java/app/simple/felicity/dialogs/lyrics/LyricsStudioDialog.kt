@@ -717,7 +717,7 @@ private class LyricsStudioScreen(
 }
 
 /** Minimal wrapping row layout: children flow left to right and wrap onto new lines. */
-private class FlowLayout(context: Context, private val gap: Int) : ViewGroup(context) {
+internal class FlowLayout(context: Context, private val gap: Int) : ViewGroup(context) {
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val maxWidth = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight

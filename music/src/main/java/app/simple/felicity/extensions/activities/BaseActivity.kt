@@ -612,6 +612,10 @@ open class BaseActivity : AppCompatActivity(), SharedPreferences.OnSharedPrefere
         window.navigationBarColor = Color.TRANSPARENT
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.navigationBarDividerColor = Color.TRANSPARENT
+        // Edge-to-edge: stop the system from drawing its own translucent scrim behind the bars,
+        // which showed up as dark bands over the lyrics card and under the seekbar.
+        window.isStatusBarContrastEnforced = false
+        window.isNavigationBarContrastEnforced = false
     }
 
     private fun enableNotchArea() {

@@ -1559,7 +1559,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 pendingPlayRecordMediaId = null
             }
 
-            MediaPlaybackManager.notifyCurrentPosition(player.currentMediaItemIndex)
+            MediaPlaybackManager.notifyCurrentPosition(player.currentMediaItemIndex, player.currentMediaItem?.mediaId)
 
             // After notifyCurrentPosition runs, the queue-replacement guard may have just been
             // lifted (it clears itself once ExoPlayer confirms the intended seek position).

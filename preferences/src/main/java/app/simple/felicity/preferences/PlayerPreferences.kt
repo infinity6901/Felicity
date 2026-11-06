@@ -19,6 +19,9 @@ object PlayerPreferences {
     const val CAPTION_TEXT_SIZE = "caption_text_size"
     const val CAPTION_COLOR_MODE = "caption_color_mode"
     const val CAPTION_PILL_OPACITY = "caption_pill_opacity"
+    const val CAPTION_TEXT_COLOR = "caption_text_color"
+    const val CAPTION_GLOW_COLOR = "caption_glow_color"
+    const val CAPTION_BOX_COLOR = "caption_box_color"
 
     const val REPEAT_MODE = "repeat_mode"
 
@@ -112,4 +115,12 @@ object PlayerPreferences {
     /** Opacity of the rounded backdrop behind the line, 0..100 (70 matches the old look). */
     fun getCaptionPillOpacity(): Int = SharedPreferences.getSharedPreferences().getInt(CAPTION_PILL_OPACITY, 70)
     fun setCaptionPillOpacity(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_PILL_OPACITY, v) }
+
+    /** Free colour picks for the player caption (0 = automatic). */
+    fun getCaptionTextColor(): Int = SharedPreferences.getSharedPreferences().getInt(CAPTION_TEXT_COLOR, 0)
+    fun setCaptionTextColor(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_TEXT_COLOR, v) }
+    fun getCaptionGlowColor(): Int = SharedPreferences.getSharedPreferences().getInt(CAPTION_GLOW_COLOR, 0)
+    fun setCaptionGlowColor(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_GLOW_COLOR, v) }
+    fun getCaptionBoxColor(): Int = SharedPreferences.getSharedPreferences().getInt(CAPTION_BOX_COLOR, 0)
+    fun setCaptionBoxColor(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_BOX_COLOR, v) }
 }
