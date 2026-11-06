@@ -43,6 +43,48 @@ object VisualizerManager {
      */
     @Volatile
     var processor: VisualizerProcessor? = null
+        set(value) {
+            val old = field
+            field = value
+            if (old !== value) {
+                // A new processor appears after a crossfade handoff or a service restart. The
+                // view-side wiring is remembered here and re-applied, otherwise the visualizer
+                // keeps listening to a processor that no longer receives audio and freezes.
+                old?.clearDirectOutput()
+                val wiring = directWiring
+                if (wiring != null) {
+                    val view = wiring.view.get()
+                    if (view != null) value?.setDirectOutput(wiring.bufA, wiring.bufB, wiring.isAFront, view)
+                }
+            }
+        }
+
+    private class DirectWiring(
+            val bufA: FloatArray,
+            val bufB: FloatArray,
+            val isAFront: java.util.concurrent.atomic.AtomicBoolean,
+            val view: java.lang.ref.WeakReference<android.view.View>
+    )
+
+    @Volatile
+    private var directWiring: DirectWiring? = null
+
+    /** Connects a visualizer view's twin buffers to whichever processor is (or becomes) active. */
+    fun connectDirectOutput(
+            bufA: FloatArray,
+            bufB: FloatArray,
+            isAFront: java.util.concurrent.atomic.AtomicBoolean,
+            view: android.view.View
+    ) {
+        directWiring = DirectWiring(bufA, bufB, isAFront, java.lang.ref.WeakReference(view))
+        processor?.setDirectOutput(bufA, bufB, isAFront, view)
+    }
+
+    /** Disconnects the visualizer view from the active processor and forgets the wiring. */
+    fun disconnectDirectOutput() {
+        directWiring = null
+        processor?.clearDirectOutput()
+    }
 
     /**
      * Backing mutable flow. Replay = 1 ensures a cold subscriber always gets

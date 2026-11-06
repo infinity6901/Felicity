@@ -173,32 +173,6 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="@string/auto_embed_lyrics"
-                android:layout_gravity="center_vertical"
-                android:layout_marginEnd="@dimen/padding_15"
-                android:textSize="@dimen/text_size_14"
-                app:appFontStyle="bold"
-                app:textColorStyle="primary" />
-
-            <app.simple.felicity.decorations.toggles.FelicitySwitch
-                android:id="@+id/auto_embed_toggle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_vertical" />
-
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:clipChildren="false"
-            android:padding="@dimen/padding_15"
-            android:orientation="horizontal">
-
-            <app.simple.felicity.decorations.typeface.TypeFaceTextView
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
                 android:text="@string/auto_romanize_lyrics"
                 android:layout_gravity="center_vertical"
                 android:layout_marginEnd="@dimen/padding_15"
@@ -299,7 +273,7 @@
         <app.simple.felicity.decorations.ripple.DynamicRippleTextView
             android:id="@+id/embed_in_file"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:padding="@dimen/padding_15"
             android:visibility="gone"
             android:text="@string/embed_lyrics_in_file"

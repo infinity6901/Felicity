@@ -234,7 +234,10 @@ private class LyricsStudioScreen(
     }
 
     private fun switchRow(title: String, subtitle: String?, checked: () -> Boolean, onChange: (Boolean) -> Unit): View {
-        val toggle = Switch(ctx)
+        val toggle = Switch(ctx).apply {
+            scaleX = 1.2f
+            scaleY = 1.2f
+        }
         var updating = false
         toggle.setOnCheckedChangeListener { _, value -> if (!updating) onChange(value) }
         refreshers += {
@@ -242,7 +245,7 @@ private class LyricsStudioScreen(
             toggle.isChecked = checked()
             toggle.thumbTintList = android.content.res.ColorStateList.valueOf(if (toggle.isChecked) accent else Color.LTGRAY)
             toggle.trackTintList = android.content.res.ColorStateList.valueOf(
-                    ColorUtils.setAlphaComponent(if (toggle.isChecked) accent else Color.GRAY, 110))
+                    ColorUtils.setAlphaComponent(if (toggle.isChecked) accent else Color.GRAY, 150))
             updating = false
         }
         return LinearLayout(ctx).apply {
@@ -250,8 +253,8 @@ private class LyricsStudioScreen(
             gravity = Gravity.CENTER_VERTICAL
             addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(text(title, 15f, colorText, bold = true))
-                if (subtitle != null) addView(text(subtitle, 12.5f, colorTextSecondary).apply { setPadding(0, dp(2), 0, 0) })
+                addView(text(title, 16.5f, colorText, bold = true))
+                if (subtitle != null) addView(text(subtitle, 14f, colorTextSecondary).apply { setPadding(0, dp(3), 0, 0) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(toggle)
         }
@@ -297,10 +300,10 @@ private class LyricsStudioScreen(
 
     private fun outlinedButton(title: String, onClick: () -> Unit) = TextView(ctx).apply {
         text = title
-        textSize = 15f
+        textSize = 16f
         gravity = Gravity.CENTER
         typeface = TypeFace.getBoldTypeFace(ctx)
-        setPadding(dp(16), dp(14), dp(16), dp(14))
+        setPadding(dp(18), dp(17), dp(18), dp(17))
         setOnClickListener { onClick() }
         refreshers += {
             setTextColor(accent)
@@ -509,7 +512,7 @@ private class LyricsStudioScreen(
                           onTranslationChanged()
                       }),
             text("Word-by-word karaoke timing is used automatically when the selected lyrics source provides word timestamps.",
-                 12.5f, colorTextSecondary),
+                 14f, colorTextSecondary).apply { setLineSpacing(0f, 1.15f) },
             outlinedButton("Search songs by lyric phrase") {
                 val input = EditText(ctx).apply { hint = "Type a lyric line or phrase" }
                 AlertDialog.Builder(ctx).setTitle("Find a song from its lyrics")
@@ -636,8 +639,15 @@ private class LyricsStudioScreen(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(4), dp(16), dp(8))
-            addView(text("Live Preview", 12.5f, colorTextSecondary), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(songPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // The label keeps its natural width; the song pill takes what is left and ellipsizes.
+            // (A weighted label used to be squeezed to nothing by a long title and wrapped letter
+            // by letter, which is what stretched this row into a huge empty band.)
+            addView(text("Live Preview", 13f, colorTextSecondary).apply { maxLines = 1 },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(FrameLayout(ctx).apply {
+                addView(songPill, FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
         })
 
         preview = FelicityLrcView(ctx).apply {
@@ -727,7 +737,12 @@ internal class FlowLayout(context: Context, private val gap: Int) : ViewGroup(co
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child.visibility == GONE) continue
-            child.measure(MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.AT_MOST), MeasureSpec.UNSPECIFIED)
+            val lp = child.layoutParams
+            val widthSpec = if (lp != null && lp.width > 0) MeasureSpec.makeMeasureSpec(lp.width, MeasureSpec.EXACTLY)
+            else MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.AT_MOST)
+            val heightSpec = if (lp != null && lp.height > 0) MeasureSpec.makeMeasureSpec(lp.height, MeasureSpec.EXACTLY)
+            else MeasureSpec.UNSPECIFIED
+            child.measure(widthSpec, heightSpec)
             if (x > 0 && x + child.measuredWidth > maxWidth) {
                 x = 0
                 y += rowHeight + gap

@@ -49,9 +49,16 @@ class LyricsMenu : MediaBottomDialogFragment() {
             PlayerLyricsStyle.show(requireContext()) { }
         }
 
-        binding.autoEmbedToggle.isChecked = LyricsPreferences.isAutoEmbedLyrics()
-        binding.autoEmbedToggle.setOnCheckedChangeListener { _, isChecked ->
-            LyricsPreferences.setAutoEmbedLyrics(isChecked)
+        // Embedding is a deliberate action (with a confirmation), never automatic. It is offered
+        // for any local song, whether the lyrics on screen came from a file, the tags or the web.
+        if (MediaPlaybackManager.getCurrentOnlineTrack() == null && audio != null) {
+            binding.embedInFile.visible()
+            binding.embedInFile.setOnClickListener {
+                menuListener?.onEmbedInFile()
+                dismiss()
+            }
+        } else {
+            binding.embedInFile.gone()
         }
 
         binding.autoRomanizeToggle.isChecked = LyricsPreferences.isAutoRomanizeLyrics()
@@ -85,7 +92,6 @@ class LyricsMenu : MediaBottomDialogFragment() {
                     binding.edit.visible()
                     binding.delete.visible()
                     binding.syncAdjustLayout.visible()
-                    binding.embedInFile.visible()
 
                     binding.addLyrics.gone()
 
@@ -96,11 +102,6 @@ class LyricsMenu : MediaBottomDialogFragment() {
 
                     binding.edit.setOnClickListener {
                         menuListener?.onLrcEdit()
-                        dismiss()
-                    }
-
-                    binding.embedInFile.setOnClickListener {
-                        menuListener?.onEmbedInFile()
                         dismiss()
                     }
 
@@ -115,7 +116,6 @@ class LyricsMenu : MediaBottomDialogFragment() {
                     binding.edit.gone()
                     binding.delete.gone()
                     binding.syncAdjustLayout.gone()
-                    binding.embedInFile.gone()
                     binding.addLyrics.visible()
 
                     binding.addLyrics.setOnClickListener {

@@ -701,6 +701,21 @@ object MediaPlaybackManager {
     }
 
     /**
+     * Call once when a drag-reorder gesture ends. While dragging, [moveQueueItemSilently] keeps the
+     * position flow quiet so observers don't flicker; this single final emission re-syncs every
+     * observer (cover pager, mini player, queue highlight) to where the playing song actually ended
+     * up, so nothing keeps showing the item that used to sit at the old index.
+     */
+    fun finishQueueReorder() {
+        val position = currentSongPosition
+        if (position !in songs.indices) return
+        scope.launch {
+            _songListFlow.emit(this@MediaPlaybackManager.songs)
+            _songPositionFlow.emit(position)
+        }
+    }
+
+    /**
      * Removes the item at [index] from the ExoPlayer queue without interrupting playback.
      * Also updates the internal song list. Safe to call for swipe-to-remove gestures.
      * When the currently playing song is removed, ExoPlayer auto-advances to the next item;

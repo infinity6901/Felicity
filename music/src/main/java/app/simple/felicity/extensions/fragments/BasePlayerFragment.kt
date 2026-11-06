@@ -485,14 +485,14 @@ abstract class BasePlayerFragment : MediaFragment() {
             // audio thread can write FFT magnitudes without any intermediate coroutine hop.
             // setDirectOutput is a no-op when the processor is not yet available (service not
             // started), but in practice the service starts before this fragment is shown.
-            VisualizerManager.processor?.setDirectOutput(
+            VisualizerManager.connectDirectOutput(
                     visualizer.bufferA,
                     visualizer.bufferB,
                     visualizer.isBufferAFront,
                     visualizer
             )
         } else {
-            VisualizerManager.processor?.clearDirectOutput()
+            VisualizerManager.disconnectDirectOutput()
         }
 
         visualizer.visibility = if (PlayerPreferences.isVisualizerEnabled()) View.VISIBLE else View.GONE
@@ -751,7 +751,7 @@ abstract class BasePlayerFragment : MediaFragment() {
     override fun onDestroyView() {
         // Release the direct twin-buffer connection so the audio thread no longer holds
         // a WeakReference to the now-destroyed visualizer view.
-        VisualizerManager.processor?.clearDirectOutput()
+        VisualizerManager.disconnectDirectOutput()
         SleepTimerManager.unregisterListener(sleepTimerButtonListener)
         super.onDestroyView()
         imagePageAdapter = null

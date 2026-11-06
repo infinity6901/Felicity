@@ -535,7 +535,19 @@ public class LrcLineView extends View implements ThemeChangedListener {
             for (int i = 0; i < wordIdx && i < words.size(); i++) {
                 startOff += words.get(i).getText().length();
             }
-            endOff = Math.min(layout.getText().length(), startOff + words.get(Math.min(wordIdx, words.size() - 1)).getText().length());
+            String wordText = words.get(Math.min(wordIdx, words.size() - 1)).getText();
+            int leading = 0;
+            while (leading < wordText.length() && Character.isWhitespace(wordText.charAt(leading))) {
+                leading++;
+            }
+            int trimmed = wordText.trim().length();
+            if (trimmed > 0) {
+                // Hug the letters only; the spaces a word carries belong to its neighbours.
+                startOff += leading;
+                endOff = Math.min(layout.getText().length(), startOff + trimmed);
+            } else {
+                endOff = Math.min(layout.getText().length(), startOff + wordText.length());
+            }
         }
         startOff = Math.max(0, Math.min(startOff, Math.max(0, layout.getText().length() - 1)));
         endOff = Math.max(startOff + 1, Math.min(endOff, layout.getText().length()));
@@ -556,7 +568,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
         }
         float left = Math.min(x1, x2);
         float right = Math.max(x1, x2);
-        float padX = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 5f, getResources().getDisplayMetrics());
+        float padX = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 3f, getResources().getDisplayMetrics());
         float padY = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 2f, getResources().getDisplayMetrics());
         float top = wordIdx < 0 ? 0f : layout.getLineTop(lineNo);
         float bottom = wordIdx < 0 ? layout.getHeight() : layout.getLineBottom(lineNo);

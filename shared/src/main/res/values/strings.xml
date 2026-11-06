@@ -278,7 +278,6 @@
     <string name="options">Options</string>
     <string name="delete_lyrics">Delete Lyrics</string>
     <string name="player_lyrics_style">Player Lyrics Style</string>
-    <string name="auto_embed_lyrics">Embed Downloaded Lyrics Into Song File</string>
     <string name="lyrics_versions_title">Lyrics versions</string>
     <string name="lyrics_versions_search_hint">Song title or Artist - Title</string>
     <string name="lyrics_versions_count">%1$d results</string>

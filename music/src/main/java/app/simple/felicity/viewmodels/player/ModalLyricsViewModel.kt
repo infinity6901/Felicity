@@ -147,6 +147,10 @@ class ModalLyricsViewModel @AssistedInject constructor(
         loadingJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (onlineTrack != null) {
+                    if (!app.simple.felicity.preferences.LyricsPreferences.isAutoDownloadLyrics()) {
+                        lrcData.postValue(LrcData())
+                        return@launch
+                    }
                     fetchAndSaveLrc(
                         trackName = onlineTrack.title,
                         artistName = onlineTrack.subtitle,
@@ -186,12 +190,26 @@ class ModalLyricsViewModel @AssistedInject constructor(
                                 lrcData.postValue(LrcData())
                             }
                         } else {
-                            Log.d(TAG, "No TXT sidecar found for ${currentSong.title}, attempting to fetch automatically.")
-                            fetchAndSaveLrc(
-                                    trackName = currentSong.title ?: currentSong.name,
-                                    artistName = currentSong.artist ?: "",
-                                    audioPath = currentSong.uri
-                            )
+                            val embedded = app.simple.felicity.repository.metadata.LyricsMetaHelper
+                                .extractEmbeddedLyrics(getApplication(), currentSong.uri)
+                            if (!embedded.isNullOrBlank()) {
+                                Log.d(TAG, "Embedded lyrics found for ${currentSong.title}.")
+                                try {
+                                    lrcData.postValue(selectParser(embedded).parse(embedded))
+                                } catch (e: LyricsParseException) {
+                                    e.printStackTrace()
+                                    lrcData.postValue(LrcData())
+                                }
+                            } else if (app.simple.felicity.preferences.LyricsPreferences.isAutoDownloadLyrics()) {
+                                Log.d(TAG, "No local lyrics for ${currentSong.title}, fetching automatically.")
+                                fetchAndSaveLrc(
+                                        trackName = currentSong.title ?: currentSong.name,
+                                        artistName = currentSong.artist ?: "",
+                                        audioPath = currentSong.uri
+                                )
+                            } else {
+                                lrcData.postValue(LrcData())
+                            }
                         }
                     }
                 }.onFailure { exception ->

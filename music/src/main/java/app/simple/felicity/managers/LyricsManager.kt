@@ -204,8 +204,12 @@ class LyricsManager @Inject constructor(
         }
         // Watch the playback queue — whenever a new song starts, reload lyrics automatically.
         scope.launch {
+            var lastSongId = Long.MIN_VALUE
             MediaPlaybackManager.songPositionFlow.collect {
-                if (MediaPlaybackManager.getCurrentOnlineTrack() == null) {
+                // A queue reorder re-emits the position for the same song; don't reload for that.
+                val id = MediaPlaybackManager.getCurrentSong()?.id ?: Long.MIN_VALUE
+                if (MediaPlaybackManager.getCurrentOnlineTrack() == null && id != lastSongId) {
+                    lastSongId = id
                     loadLrcData()
                 }
             }
@@ -302,6 +306,9 @@ class LyricsManager @Inject constructor(
 
         emitIfStillRelevant(path, LrcData())
 
+        // Online tracks have no local lyrics, so the only automatic source is the internet.
+        if (!LyricsPreferences.isAutoDownloadLyrics()) return
+
         fetchAndSaveLrc(
                 trackName = title,
                 artistName = artist,
@@ -325,54 +332,17 @@ class LyricsManager @Inject constructor(
      * so that a late-arriving result for an old song never stomps on the current one.
      */
     private suspend fun doLoad(song: Audio, songPath: String) {
-        // Step 1: Try the .lrc sidecar (fastest — local disk).
-        val lrcContent = withContext(Dispatchers.IO) {
-            lrcRepository.loadLrcFromFile(song.uri).getOrNull()
-        }
-
+        // Order of trust:
+        //   1. the .lrc / .txt next to the song — this is the cache, and it also holds anything the
+        //      user picked by hand, edited or sync-adjusted, so it must win;
+        //   2. lyrics embedded in the file's tags — read once, then cached as a sidecar so later
+        //      loads (and edits) are instant and consistent;
+        //   3. the internet, only when auto-download is switched on.
+        if (loadSidecar(song, songPath)) return
+        if (!isStillRelevant(songPath)) return
+        if (loadEmbedded(song, songPath)) return
         if (!isStillRelevant(songPath)) return
 
-        if (lrcContent != null) {
-            Log.d(TAG, "LRC sidecar found for '${song.title}'.")
-            parseThenEmit(lrcContent, songPath, fallback = LrcData()) { content ->
-                selectParser(content).parse(content)
-            }
-            maybeUpgradeToWordSynced(song, songPath)
-            return
-        }
-
-        // Step 2: Try the .txt sidecar (plain-text lyrics, also local).
-        val txtContent = withContext(Dispatchers.IO) {
-            lrcRepository.loadTxtFromFile(song.uri).getOrNull()
-        }
-
-        if (!isStillRelevant(songPath)) return
-
-        if (!txtContent.isNullOrBlank()) {
-            Log.d(TAG, "TXT sidecar found for '${song.title}'.")
-            parseThenEmit(txtContent, songPath, fallback = LrcData()) { content ->
-                TxtParser().parse(content)
-            }
-            return
-        }
-
-        // Step 2.5: Try embedded tag lyrics in file tags (USLT, ©lyr, Vorbis LYRICS via TagLib).
-        val embeddedContent = withContext(Dispatchers.IO) {
-            LyricsMetaHelper.extractEmbeddedLyrics(context, song.uri)
-        }
-
-        if (!isStillRelevant(songPath)) return
-
-        if (!embeddedContent.isNullOrBlank()) {
-            Log.d(TAG, "Embedded tag lyrics found for '${song.title}'.")
-            parseThenEmit(embeddedContent, songPath, fallback = LrcData()) { content ->
-                selectParser(content).parse(content)
-            }
-            maybeUpgradeToWordSynced(song, songPath)
-            return
-        }
-
-        // Step 3: Nothing local — try the internet if the user opted in.
         if (LyricsPreferences.isAutoDownloadLyrics()) {
             Log.d(TAG, "No local lyrics for '${song.title}', fetching online.")
 
@@ -389,6 +359,68 @@ class LyricsManager @Inject constructor(
             Log.d(TAG, "No local lyrics and auto-download is off for '${song.title}'.")
             emitIfStillRelevant(songPath, LrcData())
         }
+    }
+
+    /** Songs whose lyrics the user deleted this session; their tag lyrics are not re-read. */
+    private val embeddedIgnored = mutableSetOf<String>()
+
+    /** Loads the .lrc, then the .txt sidecar. Returns true when one of them supplied lyrics. */
+    private suspend fun loadSidecar(song: Audio, songPath: String): Boolean {
+        val lrcContent = withContext(Dispatchers.IO) {
+            lrcRepository.loadLrcFromFile(song.uri).getOrNull()
+        }
+        if (!isStillRelevant(songPath)) return true
+
+        if (lrcContent != null) {
+            Log.d(TAG, "LRC sidecar found for '${song.title}'.")
+            parseThenEmit(lrcContent, songPath, fallback = LrcData()) { content ->
+                selectParser(content).parse(content)
+            }
+            maybeUpgradeToWordSynced(song, songPath)
+            return true
+        }
+
+        val txtContent = withContext(Dispatchers.IO) {
+            lrcRepository.loadTxtFromFile(song.uri).getOrNull()
+        }
+        if (!isStillRelevant(songPath)) return true
+
+        if (!txtContent.isNullOrBlank()) {
+            Log.d(TAG, "TXT sidecar found for '${song.title}'.")
+            parseThenEmit(txtContent, songPath, fallback = LrcData()) { content ->
+                TxtParser().parse(content)
+            }
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Reads lyrics embedded in the file tags (USLT, lyr atom, Vorbis LYRICS via TagLib), shows them
+     * and caches them as a sidecar. Returns true when the tags held lyrics.
+     */
+    private suspend fun loadEmbedded(song: Audio, songPath: String): Boolean {
+        if (song.uri in embeddedIgnored) return false
+        val embeddedContent = withContext(Dispatchers.IO) {
+            LyricsMetaHelper.extractEmbeddedLyrics(context, song.uri)
+        }
+        if (!isStillRelevant(songPath)) return true
+        if (embeddedContent.isNullOrBlank()) return false
+
+        Log.d(TAG, "Embedded tag lyrics found for '${song.title}'.")
+        parseThenEmit(embeddedContent, songPath, fallback = LrcData()) { content ->
+            selectParser(content).parse(content)
+        }
+        // Cache so the tags are not re-read, and so edits / sync fixes have a file to live in.
+        if (song.uri.startsWith("content://")) {
+            val synced = WordLrcParser().canParse(embeddedContent) || LrcParser().canParse(embeddedContent)
+            withContext(Dispatchers.IO) {
+                if (synced) lrcRepository.saveLrcToFile(embeddedContent, song.uri)
+                else lrcRepository.saveTxtToFile(embeddedContent, song.uri)
+            }
+        }
+        maybeUpgradeToWordSynced(song, songPath)
+        return true
     }
 
     /**
@@ -442,8 +474,10 @@ class LyricsManager @Inject constructor(
     /** Adds generated romanization only where the lyric source did not provide one. */
     private fun addAutomaticRomanization(data: LrcData): LrcData {
         val enriched = LrcData()
+        // Kana anywhere in the song means its kanji are Japanese, not Chinese.
+        val japanese = LyricsRomanizer.isJapanese(data.entries.asSequence().map { it.text })
         data.entries.forEach { entry ->
-            val romanization = entry.romanization ?: LyricsRomanizer.romanize(entry.text)
+            val romanization = entry.romanization ?: LyricsRomanizer.romanize(entry.text, japanese)
             enriched.addEntry(
                 LrcEntry(
                     entry.timeInMillis,
@@ -616,10 +650,6 @@ class LyricsManager @Inject constructor(
                 withContext(Dispatchers.IO) {
                     if (candidate.synced) lrcRepository.saveLrcToFile(toSave, audioPath)
                     else lrcRepository.saveTxtToFile(toSave, audioPath)
-                    if (LyricsPreferences.isAutoEmbedLyrics()) {
-                        lrcRepository.embedLyricsInFile(audioPath, toSave)
-                            .onFailure { Log.w(TAG, "Auto-embed failed", it) }
-                    }
                 }
             }
             emitIfStillRelevant(songPath, parsed)
@@ -709,6 +739,7 @@ class LyricsManager @Inject constructor(
      * Posts the outcome to [embedResult] for the UI to observe.
      */
     fun embedLyricsIntoFile() {
+        MediaPlaybackManager.getCurrentSong()?.let { embeddedIgnored.remove(it.uri) }
         if (MediaPlaybackManager.getCurrentOnlineTrack() != null) {
             _embedResult.value = EmbedLyricsResult.Error("Cannot embed lyrics into an online track.")
             return
@@ -727,9 +758,24 @@ class LyricsManager @Inject constructor(
         }
 
         scope.launch {
-            val lyricsText = withContext(Dispatchers.Default) { currentLrc.toLrcString() }
+            // Embed exactly the lyrics in use: text and timing (word timings included), without the
+            // on-screen romanization or translation lines.
+            val lyricsText = withContext(Dispatchers.Default) {
+                val clean = LrcData()
+                currentLrc.metadata.forEach { (key, value) -> clean.addMetadata(key, value) }
+                currentLrc.entries.forEach { e ->
+                    clean.addEntry(LrcEntry(e.timeInMillis, e.text, null, null, e.words))
+                }
+                clean.toLrcString()
+            }
             val result = lrcRepository.embedLyricsInFile(currentSong.uri, lyricsText)
             result.onSuccess {
+                // Keep the sidecar identical to the tags so the two can never disagree.
+                withContext(Dispatchers.IO) {
+                    if (currentLrc.entries.any { it.timeInMillis > 0L || it.hasWordSync() }) {
+                        lrcRepository.saveLrcToFile(lyricsText, currentSong.uri)
+                    }
+                }
                 Log.d(TAG, "Embedded lyrics into file for '${currentSong.title}'.")
                 _embedResult.value = EmbedLyricsResult.Success
             }.onFailure { e ->
@@ -766,6 +812,8 @@ class LyricsManager @Inject constructor(
 
         scope.launch {
             withContext(Dispatchers.IO) { lrcRepository.deleteLrcFile(currentSong.uri) }
+            // Without this the lyrics still stored in the file tags would come straight back on the next load.
+            embeddedIgnored.add(currentSong.uri)
 
             _lrcData.value = LrcData()
             pendingSyncDeltaMs = 0L

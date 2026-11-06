@@ -1093,19 +1093,19 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     private void initBoxSprings() {
         if (boxLeftSpring == null) {
             boxLeftSpring = new SpringAnimation(this, BOX_LEFT, 0f);
-            boxLeftSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
+            boxLeftSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM * 2f);
             boxLeftSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxRightSpring = new SpringAnimation(this, BOX_RIGHT, 0f);
-            boxRightSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
+            boxRightSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM * 2f);
             boxRightSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxTopSpring = new SpringAnimation(this, BOX_TOP, 0f);
-            boxTopSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
+            boxTopSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM * 2f);
             boxTopSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
             
             boxBottomSpring = new SpringAnimation(this, BOX_BOTTOM, 0f);
-            boxBottomSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM);
+            boxBottomSpring.getSpring().setStiffness(SpringForce.STIFFNESS_MEDIUM * 2f);
             boxBottomSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
         }
     }
@@ -1154,15 +1154,37 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         for (int i = 0; i < wordIndex; i++) {
             charStart += entry.getWords().get(i).getText().length();
         }
-        int charEnd = charStart + word.getText().trim().length();
-        if (charEnd <= charStart) {
-            charEnd = charStart + word.getText().length(); // fallback for empty or space-only words
+        // Words carry their own spaces ("hello " / " hello"); the box must hug the letters only,
+        // otherwise it starts a space early and spills over the neighbouring word.
+        String wordText = word.getText();
+        int leading = 0;
+        while (leading < wordText.length() && Character.isWhitespace(wordText.charAt(leading))) {
+            leading++;
         }
-        
-        float left = layout.getPrimaryHorizontal(charStart);
-        float right = layout.getPrimaryHorizontal(charEnd);
+        int trimmedLength = wordText.trim().length();
+        if (trimmedLength > 0) {
+            charStart += leading;
+        }
+        int charEnd = charStart + (trimmedLength > 0 ? trimmedLength : wordText.length());
+        charEnd = Math.min(charEnd, layout.getText().length());
+        charStart = Math.min(charStart, charEnd);
         
         int lineStart = layout.getLineForOffset(charStart);
+        int lineEnd = layout.getLineForOffset(Math.max(charStart, charEnd - 1));
+        
+        float left = layout.getPrimaryHorizontal(charStart);
+        float right;
+        if (lineEnd != lineStart) {
+            // The word wraps onto another visual line; mark the part on its first line only
+            // instead of stretching the box back across the whole paragraph.
+            right = layout.getLineRight(lineStart);
+        } else if (charEnd >= layout.getLineEnd(lineEnd) && layout.getLineEnd(lineEnd) < layout.getText().length()) {
+            // The word is the last on its line: the caret at charEnd belongs to the NEXT line (x = 0).
+            right = layout.getLineMax(lineEnd) + layout.getLineLeft(lineEnd);
+        } else {
+            right = layout.getPrimaryHorizontal(charEnd);
+        }
+        
         float top = layout.getLineTop(lineStart);
         float bottom = layout.getLineBottom(lineStart);
         
@@ -1187,8 +1209,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             bottom = cy + (bottom - cy) * activeLineScale;
         }
         
-        float paddingX = dp2px(getContext(), 8f);
-        float paddingY = dp2px(getContext(), 4f);
+        float paddingX = dp2px(getContext(), 3f);
+        float paddingY = dp2px(getContext(), 1f);
         
         targetBoxBounds.set(actualLeft - paddingX, top - paddingY, actualRight + paddingX, bottom + paddingY);
         

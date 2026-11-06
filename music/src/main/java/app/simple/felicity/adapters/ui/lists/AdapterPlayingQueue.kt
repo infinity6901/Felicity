@@ -296,6 +296,10 @@ class AdapterPlayingQueue(initial: List<Audio>) : FastScrollAdapter<AdapterPlayi
             // MediaPlaybackManager's list and ExoPlayer queue are already fully synced by the
             // incremental moveQueueItemSilently calls in onMove — no extra callback needed.
 
+            if (dragFromPosition != -1) {
+                MediaPlaybackManager.finishQueueReorder()
+            }
+
             dragFromPosition = -1
             dragToPosition = -1
             isDragging = false

@@ -168,7 +168,10 @@ private class PlayerLyricsStyleScreen(
     }
 
     private fun switchRow(title: String, subtitle: String, checked: () -> Boolean, onToggle: (Boolean) -> Unit): View {
-        val toggle = Switch(ctx)
+        val toggle = Switch(ctx).apply {
+            scaleX = 1.2f
+            scaleY = 1.2f
+        }
         var updating = false
         toggle.setOnCheckedChangeListener { _, v -> if (!updating) onToggle(v) }
         refreshers += {
@@ -184,8 +187,8 @@ private class PlayerLyricsStyleScreen(
             gravity = Gravity.CENTER_VERTICAL
             addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(text(title, 15f, colorText, bold = true))
-                addView(text(subtitle, 12.5f, colorTextSecondary).apply { setPadding(0, dp(2), 0, 0) })
+                addView(text(title, 16.5f, colorText, bold = true))
+                addView(text(subtitle, 14f, colorTextSecondary).apply { setPadding(0, dp(2), 0, 0) })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(toggle)
         }
@@ -238,21 +241,21 @@ private class PlayerLyricsStyleScreen(
         val swatches = mutableListOf<Pair<View, Int>>()
 
         fun swatch(color: Int, label: String?) = FrameLayout(ctx).apply {
-            if (label != null) addView(text(label, 11f, colorText, bold = true).apply { gravity = Gravity.CENTER },
+            if (label != null) addView(text(label, 13f, colorText, bold = true).apply { gravity = Gravity.CENTER },
                                        FrameLayout.LayoutParams(-1, -1))
             setOnClickListener { edit { set(color) } }
-            layoutParams = ViewGroup.LayoutParams(dp(38), dp(38))
+            layoutParams = ViewGroup.LayoutParams(dp(48), dp(48))
         }
 
-        val flow = FlowLayout(ctx, dp(10))
+        val flow = FlowLayout(ctx, dp(12))
         val auto = swatch(0, "Auto").also { flow.addView(it); swatches += it to 0 }
         palette.forEach { c -> flow.addView(swatch(c, null).also { swatches += it to (c or 0xFF000000.toInt()) }) }
         val custom = FrameLayout(ctx).apply {
-            addView(text("+", 18f, colorText, bold = true).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
+            addView(text("+", 24f, colorText, bold = true).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
             setOnClickListener {
                 pickColor(title, get().takeIf { it != 0 } ?: Color.WHITE) { picked -> edit { set(picked) } }
             }
-            layoutParams = ViewGroup.LayoutParams(dp(38), dp(38))
+            layoutParams = ViewGroup.LayoutParams(dp(48), dp(48))
         }
         flow.addView(custom)
 
@@ -261,10 +264,10 @@ private class PlayerLyricsStyleScreen(
             val isPalette = now == 0 || palette.any { (it or 0xFF000000.toInt()) == now }
             swatches.forEach { (view, color) ->
                 val selected = color == now
-                view.background = if (color == 0) rounded(colorChip, 19, if (selected) accent else colorStroke, if (selected) 3 else 1)
-                else rounded(color, 19, if (selected) accent else colorStroke, if (selected) 3 else 1)
+                view.background = if (color == 0) rounded(colorChip, 24, if (selected) accent else colorStroke, if (selected) 3 else 1)
+                else rounded(color, 24, if (selected) accent else colorStroke, if (selected) 3 else 1)
             }
-            custom.background = if (!isPalette) rounded(now, 19, accent, 3) else rounded(colorChip, 19, colorStroke, 1)
+            custom.background = if (!isPalette) rounded(now, 24, accent, 3) else rounded(colorChip, 24, colorStroke, 1)
         }
         return block(title, flow)
     }
