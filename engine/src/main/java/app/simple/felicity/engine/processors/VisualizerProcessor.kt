@@ -219,9 +219,9 @@ class VisualizerProcessor : BaseAudioProcessor() {
             val oldHandle = nativeHandle
             nativeHandle = 0L
 
-            fftSize = newSize
-            sampleBuffer = FloatArray(fftSize)
+            sampleBuffer = FloatArray(newSize)
             bufferIndex = 0
+            fftSize = newSize
 
             computeBandEdges(currentSampleRate)
 
@@ -421,13 +421,15 @@ class VisualizerProcessor : BaseAudioProcessor() {
             }
 
             // Downmix stereo to mono for accurate frequency analysis.
-            sampleBuffer[bufferIndex] = delayedMono
+            val buf = sampleBuffer
+            if (bufferIndex >= buf.size) bufferIndex = 0
+            buf[bufferIndex] = delayedMono
             bufferIndex++
 
-            if (bufferIndex >= fftSize) {
+            if (bufferIndex >= buf.size) {
                 // Deliver raw mono PCM to any registered tap (e.g., the milkdrop renderer)
                 // before the FFT pass consumes it.
-                pcmWindowCallback?.onPcmWindow(sampleBuffer, fftSize)
+                pcmWindowCallback?.onPcmWindow(buf, buf.size)
                 processAndEmit()
                 bufferIndex = 0
             }
@@ -482,11 +484,16 @@ class VisualizerProcessor : BaseAudioProcessor() {
                 delayedMono = mono
             }
 
-            sampleBuffer[bufferIndex] = delayedMono
+            // Work against one snapshot of the buffer. The FFT size can change (and the buffer be
+            // replaced) between two samples, and the cursor is shared with queueInput, so it is
+            // always re-checked against the buffer actually being written, never against fftSize.
+            val buf = sampleBuffer
+            if (bufferIndex >= buf.size) bufferIndex = 0
+            buf[bufferIndex] = delayedMono
             bufferIndex++
 
-            if (bufferIndex >= fftSize) {
-                pcmWindowCallback?.onPcmWindow(sampleBuffer, fftSize)
+            if (bufferIndex >= buf.size) {
+                pcmWindowCallback?.onPcmWindow(buf, buf.size)
                 processAndEmit()
                 bufferIndex = 0
             }
