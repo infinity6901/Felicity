@@ -22,4 +22,5 @@
     <string name="jamendo_client_id_summary">Jamendo requires a free client ID for API access. Register one at devportal.jamendo.com, then paste it here.</string>
     <string name="jamendo_client_id_hint">Paste your client ID</string>
     <string name="auto_romanize_lyrics">Auto romanize lyrics</string>
+    <string name="romanization_dictionaries">Romanization dictionaries (kanji readings and more) ›</string>
 </resources>

@@ -188,6 +188,17 @@
 
         </LinearLayout>
 
+        <app.simple.felicity.decorations.typeface.TypeFaceTextView
+            android:id="@+id/romanization_dictionaries"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="@dimen/padding_15"
+            android:paddingBottom="@dimen/padding_15"
+            android:text="@string/romanization_dictionaries"
+            android:textSize="@dimen/text_size_14"
+            app:appFontStyle="medium"
+            app:textColorStyle="secondary" />
+
         <app.simple.felicity.decorations.theme.ThemeDivider
             android:layout_width="match_parent"
             android:layout_marginVertical="@dimen/padding_10"

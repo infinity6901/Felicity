@@ -67,6 +67,12 @@ class LyricsMenu : MediaBottomDialogFragment() {
             menuListener?.onRomanizationPreferenceChanged()
         }
 
+        binding.romanizationDictionaries.setOnClickListener {
+            RomanizationDictionariesDialog.show(requireContext(), viewLifecycleOwner) {
+                menuListener?.onRomanizationPreferenceChanged()
+            }
+        }
+
         binding.textSizeSeekbar.setProgress(LyricsPreferences.getLrcTextSize())
         binding.textSizeSeekbar.setOnSeekChangeListener(object : FelicitySeekbar.OnSeekChangeListener {
             override fun onProgressChanged(seekbar: FelicitySeekbar, progress: Float, fromUser: Boolean) {

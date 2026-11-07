@@ -1,5 +1,6 @@
 package app.simple.felicity.managers
 
+import android.content.Context
 import android.icu.text.Transliterator
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
@@ -71,6 +72,117 @@ internal object LyricsRomanizer {
                 else -> generic(word)
             }
         }.getOrDefault(word)
+    }
+
+    /**
+     * Romanizes a whole song. When a downloaded dictionary exists for the song's language it
+     * is used for kanji / Chinese text; everything else, and every line it cannot handle,
+     * goes through the built-in rules in [romanize].
+     */
+    fun prepare(context: Context, texts: List<String>): Prepared {
+        val all = texts.joinToString("\n")
+        val japanese = isJapanese(texts.asSequence())
+        val language = when {
+            japanese -> "ja"
+            all.codePoints().anyMatch { isHan(it) } -> "zh"
+            else -> null
+        }
+        val dictionary = language
+            ?.takeIf { RomanizationDictionaries.isInstalled(context, it) }
+            ?.let { RomanizationDictionary.load(RomanizationDictionaries.file(context, it), all) }
+        return Prepared(dictionary, japanese)
+    }
+
+    class Prepared internal constructor(
+            private val dictionary: RomanizationDictionary?,
+            private val japanese: Boolean
+    ) {
+        fun romanize(text: String): String? {
+            val dict = dictionary
+            if (dict != null && text.codePoints().anyMatch { LyricsRomanizer.isKana(it) || LyricsRomanizer.isHan(it) }) {
+                runCatching { LyricsRomanizer.viaDictionary(dict, text, japanese) }.getOrNull()?.let { return it }
+            }
+            return LyricsRomanizer.romanize(text, japanese)
+        }
+    }
+
+    private const val OPENERS = "「『（([“‘<《〈"
+
+    private fun viaDictionary(dict: RomanizationDictionary, text: String, japanese: Boolean): String? {
+        val source = text.trim()
+        if (source.isEmpty()) return null
+        val out = StringBuilder()
+        var noSpaceNext = true
+        var unknownKana = StringBuilder()
+
+        fun append(piece: String, attach: Boolean) {
+            if (piece.isEmpty()) return
+            if (!attach && !noSpaceNext && out.isNotEmpty() && !out.endsWith(" ")) out.append(' ')
+            out.append(piece)
+            noSpaceNext = false
+        }
+
+        fun flushKana() {
+            if (unknownKana.isEmpty()) return
+            append(generic(unknownKana.toString()), attach = true)
+            unknownKana = StringBuilder()
+        }
+
+        for (token in dict.segment(source)) {
+            val entry = token.entry
+            if (entry != null) {
+                flushKana()
+                if (japanese) {
+                    val kana = if (entry.cls == 'P' || entry.cls == 'p') entry.pron.ifEmpty { entry.reading } else entry.reading
+                    val romaji = if (token.text == "を") "o" else katakanaToRomaji(kana)
+                    append(romaji, attach = entry.cls == 'a' || entry.cls == 'p')
+                } else {
+                    append(entry.reading, attach = false)
+                }
+                continue
+            }
+            val c = token.text
+            val cp = c[0].code
+            when {
+                isKana(cp) -> unknownKana.append(c)
+                isHan(cp) -> {
+                    flushKana()
+                    // Without a reading, Japanese kanji stay as they are; Chinese falls back to ICU.
+                    append(if (japanese) c else generic(c), attach = false)
+                }
+                c[0].isWhitespace() -> {
+                    flushKana()
+                    if (out.isNotEmpty() && !out.endsWith(" ")) out.append(' ')
+                }
+                OPENERS.contains(c[0]) -> {
+                    flushKana()
+                    if (out.isNotEmpty() && !out.endsWith(" ")) out.append(' ')
+                    out.append(c)
+                    noSpaceNext = true
+                }
+                c[0].isLetterOrDigit() -> {
+                    flushKana()
+                    val joinsPrevious = out.isNotEmpty() && out.last().let { it.isLetterOrDigit() && it.code < 0x250 } && c[0].code < 0x250
+                    append(c, attach = joinsPrevious)
+                }
+                else -> {
+                    flushKana()
+                    append(c, attach = true)
+                }
+            }
+        }
+        flushKana()
+
+        val result = out.toString().replace(Regex("\\s+"), " ").trim()
+        return result.takeIf { it.isNotEmpty() && !it.equals(source, ignoreCase = true) }
+    }
+
+    /** Katakana to Hepburn-style romaji; long vowels are written out (oo, ii) instead of with macrons. */
+    private fun katakanaToRomaji(kana: String): String {
+        val t = transliterator("Katakana-Latin") ?: return generic(kana)
+        val latin = t.transliterate(kana).lowercase()
+            .replace("ā", "aa").replace("ī", "ii").replace("ū", "uu").replace("ē", "ee").replace("ō", "oo")
+        return stripMarks(latin)
     }
 
     /** Standard ICU transliteration with diacritics stripped. */

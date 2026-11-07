@@ -474,10 +474,11 @@ class LyricsManager @Inject constructor(
     /** Adds generated romanization only where the lyric source did not provide one. */
     private fun addAutomaticRomanization(data: LrcData): LrcData {
         val enriched = LrcData()
-        // Kana anywhere in the song means its kanji are Japanese, not Chinese.
-        val japanese = LyricsRomanizer.isJapanese(data.entries.asSequence().map { it.text })
+        // One pass over the whole song: decides Japanese vs Chinese from all lines and, when a
+        // dictionary for that language has been downloaded, loads just the words this song uses.
+        val romanizer = LyricsRomanizer.prepare(context, data.entries.map { it.text })
         data.entries.forEach { entry ->
-            val romanization = entry.romanization ?: LyricsRomanizer.romanize(entry.text, japanese)
+            val romanization = entry.romanization ?: romanizer.romanize(entry.text)
             enriched.addEntry(
                 LrcEntry(
                     entry.timeInMillis,
