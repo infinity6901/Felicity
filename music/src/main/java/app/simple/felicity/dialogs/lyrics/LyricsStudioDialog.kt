@@ -379,6 +379,23 @@ private class LyricsStudioScreen(
         }
     }
 
+    /** Which versions of each lyric line are on screen; any combination works and all effects follow. */
+    private fun versionsSection(): View = card(
+            switchRow("Original lyrics", "The lyrics as written",
+                      { LyricsPreferences.isShowOriginal() },
+                      { v -> custom { LyricsPreferences.setShowOriginal(v) } }),
+            switchRow("Romanized lyrics", "Latin-letter reading (Auto romanize in the lyrics menu creates it when the lyrics have none)",
+                      { LyricsPreferences.isShowRomanized() },
+                      { v -> custom { LyricsPreferences.setShowRomanized(v) } }),
+            switchRow("Translated lyrics", "Fetches and shows a translation when available",
+                      { LyricsPreferences.isStudioTranslationEnabled() },
+                      { v ->
+                          LyricsPreferences.setStudioTranslationEnabled(v)
+                          refreshAll()
+                          onTranslationChanged()
+                      })
+    )
+
     private fun typographySection(): View = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
         addView(card(
@@ -389,10 +406,12 @@ private class LyricsStudioScreen(
                 }
         ))
         addView(card(
-                block("Text Size", chips(
-                        LyricsStyle.sizeOptions, false,
-                        { it == nearest(LyricsStyle.sizeOptions, LyricsPreferences.getLrcTextSize()) },
-                        { v -> custom { LyricsPreferences.setLrcTextSize(v) } })),
+                // Precise size in half-sp steps (the old four presets were too coarse, and a long
+                // line at "Large" no longer fits the panel).
+                slider("Text Size", 20, 64, { Math.round(LyricsPreferences.getLrcTextSize() * 2f) },
+                       { String.format(java.util.Locale.US, "%.1f sp", it / 2f) }) { v ->
+                    custom { LyricsPreferences.setLrcTextSize(v / 2f) }
+                },
                 block("Font Weight", chips(
                         LyricsStyle.weightOptions, false,
                         { it == LyricsStyle.weightOptions.minByOrNull { o -> abs(o.value - LyricsPreferences.getStudioFontWeight()) }!!.value },
@@ -504,13 +523,6 @@ private class LyricsStudioScreen(
     )
 
     private fun toolsSection(): View = card(
-            switchRow("Translate lyrics", "Show translated lyrics when available",
-                      { LyricsPreferences.isStudioTranslationEnabled() },
-                      { v ->
-                          LyricsPreferences.setStudioTranslationEnabled(v)
-                          refreshAll()
-                          onTranslationChanged()
-                      }),
             text("Word-by-word karaoke timing is used automatically when the selected lyrics source provides word timestamps.",
                  14f, colorTextSecondary).apply { setLineSpacing(0f, 1.15f) },
             outlinedButton("Search songs by lyric phrase") {
@@ -676,6 +688,8 @@ private class LyricsStudioScreen(
             setPadding(dp(16), dp(0), dp(16), dp(32))
             addView(sectionHeader(R.drawable.ic_lyrics, "Styles"))
             addView(stylesSection())
+            addView(sectionHeader(R.drawable.ic_lyrics, "Lyric versions"))
+            addView(versionsSection())
             addView(sectionHeader(R.drawable.ic_text_fields, "Typography"))
             addView(typographySection())
             addView(sectionHeader(R.drawable.ic_palette, "Colors"))

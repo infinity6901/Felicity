@@ -309,7 +309,9 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
         val (w, h) = widgetSizePx(context, manager, widgetId)
         val art = loadRawArt(context, songId, 256)
         accentColor = GlassRenderer.accentOf(art)
-        GlassRenderer.frostedPane(art, w, h, glassCornerDp * context.resources.displayMetrics.density)
+        GlassRenderer.frostedPane(
+                art, w, h, glassCornerDp * context.resources.displayMetrics.density,
+                GlassRenderer.Style(opacity = WidgetGlass.opacityFor(this@BaseWidgetProvider::class.java)))
     }
 
     protected fun dp(context: Context, value: Float): Float = value * context.resources.displayMetrics.density

@@ -54,7 +54,9 @@ class GlassCardWidgetProvider : BaseWidgetProvider() {
         val (w, h) = if (lastWidgetSize.first > 8) lastWidgetSize else (160 * density).toInt() to (160 * density).toInt()
         val art = loadRawArt(context, songId, minOf(maxOf(w, h), 720))
         accentColor = GlassRenderer.accentOf(art)
-        GlassRenderer.artWithGlassStrip(art, w, h, 28 * density, 8 * density, 56 * density)
+        GlassRenderer.artWithGlassStrip(
+                art, w, h, 28 * density, 8 * density, 56 * density,
+                GlassRenderer.Style(opacity = WidgetGlass.opacityFor(this@GlassCardWidgetProvider::class.java)))
     }
 
     override suspend fun loadBackgroundArt(

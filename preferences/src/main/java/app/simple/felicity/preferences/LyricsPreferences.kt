@@ -30,6 +30,8 @@ object LyricsPreferences {
     const val STUDIO_ACTIVE_SCALE = "lyrics_studio_active_scale"
     const val STUDIO_BACKGROUND_DIM = "lyrics_studio_background_dim"
     const val STUDIO_BACKGROUND = "lyrics_studio_background"
+    const val SHOW_ORIGINAL = "lyrics_show_original"
+    const val SHOW_ROMANIZED = "lyrics_show_romanized"
 
     const val LEFT = 0
     const val CENTER = 1
@@ -56,7 +58,7 @@ object LyricsPreferences {
             STUDIO_PROGRESSIVE_FILL, STUDIO_GLASS_BACKGROUND, STUDIO_GLASS_ALPHA, STUDIO_PRESET,
             STUDIO_FONT, STUDIO_FONT_WEIGHT, STUDIO_INACTIVE_SCALE, STUDIO_ACTIVE_COLOR_MODE,
             STUDIO_CUSTOM_COLOR, STUDIO_EDGE_BLUR, STUDIO_ACTIVE_SCALE, STUDIO_BACKGROUND_DIM,
-            STUDIO_BACKGROUND
+            STUDIO_BACKGROUND, SHOW_ORIGINAL, SHOW_ROMANIZED
     )
 
 
@@ -103,6 +105,11 @@ object LyricsPreferences {
         return SharedPreferences.getSharedPreferences()
             .getBoolean(AUTO_ROMANIZE_LYRICS, false)
     }
+
+    fun isShowOriginal() = SharedPreferences.getSharedPreferences().getBoolean(SHOW_ORIGINAL, true)
+    fun setShowOriginal(value: Boolean) { SharedPreferences.getSharedPreferences().edit { putBoolean(SHOW_ORIGINAL, value) } }
+    fun isShowRomanized() = SharedPreferences.getSharedPreferences().getBoolean(SHOW_ROMANIZED, true)
+    fun setShowRomanized(value: Boolean) { SharedPreferences.getSharedPreferences().edit { putBoolean(SHOW_ROMANIZED, value) } }
 
     fun isStudioTranslationEnabled() = SharedPreferences.getSharedPreferences().getBoolean(STUDIO_TRANSLATION, false)
     fun setStudioTranslationEnabled(enabled: Boolean) { SharedPreferences.getSharedPreferences().edit { putBoolean(STUDIO_TRANSLATION, enabled) } }

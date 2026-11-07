@@ -9,10 +9,19 @@
     android:padding="@dimen/padding_15"
     android:layout_height="wrap_content">
 
-    <app.simple.felicity.decorations.corners.DynamicCornerLinearLayout
+    <!-- The menu has grown past one screen; the card scrolls so every option stays reachable. -->
+    <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:overScrollMode="ifContentScrolls"
+        android:scrollbars="none">
+
+    <app.simple.felicity.decorations.corners.DynamicCornerLinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:padding="@dimen/padding_15"
         android:orientation="vertical">
 
@@ -293,5 +302,7 @@
             app:textColorStyle="primary" />
 
     </app.simple.felicity.decorations.corners.DynamicCornerLinearLayout>
+
+    </ScrollView>
 
 </FrameLayout>

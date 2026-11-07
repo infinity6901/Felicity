@@ -42,7 +42,9 @@ object GlassRenderer {
             /** Darkening (0..1) towards the bottom so white text stays readable. */
             val shade: Float = 0.30f,
             /** Strength (0..1) of the top highlight and diagonal sheen. */
-            val sheen: Float = 0.28f
+            val sheen: Float = 0.28f,
+            /** Opacity (0..1) of the whole pane; below 1 whatever is behind the widget shows through. */
+            val opacity: Float = 1f
     )
 
     private const val WORK_SIZE = 96f
@@ -70,7 +72,9 @@ object GlassRenderer {
         val shape = RectF(0f, 0f, w.toFloat(), h.toFloat())
         val radius = cornerPx * (w.toFloat() / widthPx)
         canvas.clipPath(Path().apply { addRoundRect(shape, radius, radius, Path.Direction.CW) })
+        val layer = canvas.saveLayerAlpha(shape, (255 * style.opacity.coerceIn(0f, 1f)).toInt())
         drawGlass(canvas, art, shape, style, radius, drawRim = true)
+        canvas.restoreToCount(layer)
         return out
     }
 
@@ -99,11 +103,11 @@ object GlassRenderer {
         val inset = stripInsetPx * k
         val strip = RectF(inset, h - inset - stripHeightPx * k, w - inset, h - inset)
         val stripRadius = (cornerPx - stripInsetPx).coerceAtLeast(12f) * k
-        canvas.save()
+        val layer = canvas.saveLayerAlpha(tile, (255 * style.opacity.coerceIn(0f, 1f)).toInt())
         canvas.clipPath(Path().apply { addRoundRect(strip, stripRadius, stripRadius, Path.Direction.CW) })
         // The pane blurs the part of the picture behind it, then gets its own frost on top.
         drawGlass(canvas, art, tile, style.copy(shade = style.shade * 0.5f), stripRadius, drawRim = false)
-        canvas.restore()
+        canvas.restoreToCount(layer)
         drawRim(canvas, strip, stripRadius, k)
         return out
     }

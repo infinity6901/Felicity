@@ -28,6 +28,7 @@ import app.simple.felicity.enums.PreferenceType
 import app.simple.felicity.models.Preference
 import app.simple.felicity.models.SeekbarState
 import app.simple.felicity.preferences.AccessibilityPreferences
+import app.simple.felicity.widget.WidgetGlass
 import app.simple.felicity.preferences.AlbumArtPreferences
 import app.simple.felicity.preferences.AppearancePreferences
 import app.simple.felicity.preferences.AudioPreferences
@@ -315,6 +316,58 @@ abstract class PreferenceFragment : MediaFragment() {
                 }
         )
 
+
+        val glassHeader = Preference(type = PreferenceType.SUB_HEADER, title = R.string.glass_widgets)
+
+        val glassShared = Preference(
+                title = R.string.glass_opacity_shared,
+                summary = R.string.glass_opacity_shared_summary,
+                icon = R.drawable.ic_invert,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, callback ->
+                    WidgetGlass.setShared((view as FelicitySwitch).isChecked)
+                    WidgetGlass.refreshWidgets(requireContext())
+                },
+                valueProvider = Supplier { WidgetGlass.isShared() }
+        )
+
+        fun glassSlider(title: Int, summary: Int, read: () -> Float, write: (Float) -> Unit) = Preference(
+                title = title,
+                summary = summary,
+                icon = R.drawable.ic_invert,
+                type = PreferenceType.SLIDER,
+                onPreferenceAction = { view, callback ->
+                    write((view as FelicitySeekbar).getProgress())
+                    WidgetGlass.refreshWidgets(requireContext())
+                },
+                valueProvider = Supplier {
+                    SeekbarState(
+                            position = read(),
+                            max = WidgetGlass.MAX_PERCENT,
+                            min = WidgetGlass.MIN_PERCENT,
+                            default = WidgetGlass.DEFAULT_PERCENT,
+                            leftLabel = false,
+                            rightLabel = true,
+                            rightLabelProvider = { progress, _, _ ->
+                                String.format(Locale.getDefault(), "%.0f %%", progress)
+                            },
+                    )
+                }
+        )
+
+        val glassAll = glassSlider(R.string.glass_opacity_all, R.string.glass_opacity_all_summary,
+                                   { WidgetGlass.getAllPercent() }, { WidgetGlass.setAllPercent(it) })
+        val glassIndividual = listOf(
+                WidgetGlass.Kind.BAR to R.string.glass_opacity_bar,
+                WidgetGlass.Kind.CARD to R.string.glass_opacity_card,
+                WidgetGlass.Kind.PLAYER to R.string.glass_opacity_player,
+                WidgetGlass.Kind.LYRICS to R.string.glass_opacity_lyrics,
+                WidgetGlass.Kind.UP_NEXT to R.string.glass_opacity_up_next,
+        ).map { (kind, title) ->
+            glassSlider(title, R.string.glass_opacity_individual_summary,
+                        { WidgetGlass.getPercent(kind) }, { WidgetGlass.setPercent(kind, it) })
+        }
+
         preferences.add(colors)
         preferences.add(themes)
         preferences.add(accentColor)
@@ -333,6 +386,10 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(albumArtCorners)
         preferences.add(albumArtCrop)
         preferences.add(albumArtGreyscale)
+        preferences.add(glassHeader)
+        preferences.add(glassShared)
+        preferences.add(glassAll)
+        glassIndividual.forEach { preferences.add(it) }
 
         return preferences
     }

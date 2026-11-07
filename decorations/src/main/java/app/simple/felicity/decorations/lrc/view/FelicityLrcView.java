@@ -133,6 +133,11 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     private float studioInactiveAlpha = -1f;
     private float edgeBlurMultiplier = 1f;
     private float activeLineScale = 1f;
+    
+    /** Which versions of a line are shown: the original text, its romanization, its translation. */
+    private boolean showOriginal = true;
+    private boolean showRomanization = true;
+    private boolean showTranslation = true;
     private float backgroundDimAlpha = 0f;
     // Cache for wrapped text layouts — one pass, one cache, no drama.
     private final HashMap <Integer, LrcLineLayout> normalLayoutCache = new HashMap <>();
@@ -711,9 +716,13 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                             lrcLayout.mainLayout.getWidth() * alignmentFraction, lrcLayout.mainLayout.getHeight() / 2f);
                 }
             }
-            if (isCurrentHighlight && activeLineScale > 1f) {
-                canvas.scale(activeLineScale, activeLineScale,
+            float activeScaleNow = isCurrentHighlight ? effectiveActiveScale(lrcLayout.mainLayout) : 1f;
+            if (activeScaleNow > 1f) {
+                canvas.scale(activeScaleNow, activeScaleNow,
                         lrcLayout.mainLayout.getWidth() / 2f, lrcLayout.mainLayout.getHeight() / 2f);
+            }
+            if (isCurrentHighlight && !usesWordSync(entry)) {
+                drawGlowPass(canvas, lrcLayout.mainLayout, normalPaint);
             }
             lrcLayout.mainLayout.draw(canvas);
             canvas.restore();
@@ -724,6 +733,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 currentY += dp2px(getContext(), 8f);
                 canvas.save();
                 canvas.translate(calculateXPositionForLayout(lrcLayout.romLayout, romPaint, i), currentY);
+                if (isCurrentHighlight) {
+                    drawGlowPass(canvas, lrcLayout.romLayout, romPaint);
+                }
                 lrcLayout.romLayout.draw(canvas);
                 canvas.restore();
                 currentY += lrcLayout.romLayout.getHeight();
@@ -733,6 +745,9 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 currentY += dp2px(getContext(), 6f);
                 canvas.save();
                 canvas.translate(calculateXPositionForLayout(lrcLayout.adlibLayout, adlibPaint, i), currentY);
+                if (isCurrentHighlight) {
+                    drawGlowPass(canvas, lrcLayout.adlibLayout, adlibPaint);
+                }
                 lrcLayout.adlibLayout.draw(canvas);
                 canvas.restore();
             }
@@ -869,27 +884,41 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             return cachedLayout;
         }
         
+        String original = entry.getText().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "");
+        String romanization = hasText(entry.getRomanization())
+                ? entry.getRomanization().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "") : null;
+        String translation = hasText(entry.getAdlib())
+                ? entry.getAdlib().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "") : null;
+        
+        // The first version that is switched on (and exists for this line) becomes the main,
+        // full-size line that every effect (colour, glow, magnification, box) is driven from;
+        // the others follow as smaller lines underneath.
         CharSequence mainText;
-        if (!isStaticMode() && entry.hasWordSync()) {
-            mainText = buildWordSyncSpannable(entry, lineIndex);
+        boolean addRomanization = false;
+        boolean addTranslation = false;
+        if (isOriginalPrimary(entry)) {
+            mainText = (!isStaticMode() && entry.hasWordSync()) ? buildWordSyncSpannable(entry, lineIndex) : original;
+            addRomanization = showOriginal && showRomanization && romanization != null;
+            addTranslation = showOriginal && showTranslation && translation != null;
+        } else if (showRomanization && romanization != null) {
+            mainText = romanization;
+            addTranslation = showTranslation && translation != null;
         } else {
-            mainText = entry.getText().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "");
+            mainText = translation;
         }
         
         StaticLayout mainLayout = createSingleStaticLayout(mainText, normalPaint);
         float totalHeight = mainLayout.getHeight();
         
         StaticLayout romLayout = null;
-        if (entry.getRomanization() != null && !entry.getRomanization().trim().isEmpty()) {
-            String cleanRom = entry.getRomanization().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "");
-            romLayout = createSingleStaticLayout(cleanRom, romPaint);
+        if (addRomanization) {
+            romLayout = createSingleStaticLayout(romanization, romPaint);
             totalHeight += dp2px(getContext(), 8f) + romLayout.getHeight();
         }
         
         StaticLayout adlibLayout = null;
-        if (entry.getAdlib() != null && !entry.getAdlib().trim().isEmpty()) {
-            String cleanAdlib = entry.getAdlib().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "");
-            adlibLayout = createSingleStaticLayout(cleanAdlib, adlibPaint);
+        if (addTranslation) {
+            adlibLayout = createSingleStaticLayout(translation, adlibPaint);
             totalHeight += dp2px(getContext(), 6f) + adlibLayout.getHeight();
         }
         
@@ -900,6 +929,48 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         }
         
         return layout;
+    }
+    
+    private static boolean hasText(@Nullable String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+    
+    /**
+     * True when the original text is the main line of [entry]: it is switched on, or nothing else
+     * switched on exists for this line (so a line is never left blank).
+     */
+    private boolean isOriginalPrimary(LrcEntry entry) {
+        if (showOriginal) {
+            return true;
+        }
+        return !((showRomanization && hasText(entry.getRomanization()))
+                || (showTranslation && hasText(entry.getAdlib())));
+    }
+    
+    /** Word-by-word karaoke (and the gliding word box) only exist for the original text. */
+    private boolean usesWordSync(LrcEntry entry) {
+        return entry.hasWordSync() && isOriginalPrimary(entry);
+    }
+    
+    /**
+     * Chooses which versions of each lyric line are drawn. At least one is always kept on: if all
+     * three are off the original text is shown. Every effect applies to whichever line is main.
+     */
+    public void setDisplayModes(boolean original, boolean romanization, boolean translation) {
+        if (!original && !romanization && !translation) {
+            original = true;
+        }
+        if (original == showOriginal && romanization == showRomanization && translation == showTranslation) {
+            return;
+        }
+        showOriginal = original;
+        showRomanization = romanization;
+        showTranslation = translation;
+        normalLayoutCache.clear();
+        boxTargetWordIndex = -2;
+        boxTargetLineIndex = -2;
+        requestLayout();
+        invalidate();
     }
     
     private StaticLayout createSingleStaticLayout(CharSequence text, TextPaint paint) {
@@ -933,6 +1004,50 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                     .setIncludePad(false)
                     .build();
         }
+    }
+    
+    /**
+     * The magnification actually used for the highlighted line. [activeLineScale] is capped so the
+     * enlarged line never grows wider than the space the layout was built for; otherwise a long
+     * line that nearly fills the panel is scaled past its edges (and past the frosted glass).
+     */
+    private float effectiveActiveScale(StaticLayout layout) {
+        if (activeLineScale <= 1f || layout == null) {
+            return 1f;
+        }
+        float widest = 0f;
+        for (int i = 0; i < layout.getLineCount(); i++) {
+            widest = Math.max(widest, layout.getLineMax(i));
+        }
+        if (widest <= 0f) {
+            return activeLineScale;
+        }
+        return Math.max(1f, Math.min(activeLineScale, layout.getWidth() / widest));
+    }
+    
+    /**
+     * Soft glow behind a highlighted line that is not drawn word by word (a romanization or
+     * translation line, or lyrics without word timings), so the glow effect works for every
+     * version of the lyrics, not just the original karaoke text.
+     */
+    private void drawGlowPass(Canvas canvas, StaticLayout layout, TextPaint paint) {
+        if (layout == null || glowRadiusPx <= 0f || glowIntensity <= 0f) {
+            return;
+        }
+        int savedColor = paint.getColor();
+        android.graphics.MaskFilter savedMask = paint.getMaskFilter();
+        float glowKey = Math.max(1f, Math.round(glowRadiusPx * 2f) / 2f);
+        BlurMaskFilter glowFilter = blurMaskFilters.get(glowKey);
+        if (glowFilter == null) {
+            glowFilter = new BlurMaskFilter(glowKey, BlurMaskFilter.Blur.NORMAL);
+            blurMaskFilters.put(glowKey, glowFilter);
+        }
+        paint.setColor(Color.argb(Math.round(220f * glowIntensity * Math.max(0f, Math.min(1f, highlightFraction))),
+                Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor)));
+        paint.setMaskFilter(glowFilter);
+        layout.draw(canvas);
+        paint.setMaskFilter(savedMask);
+        paint.setColor(savedColor);
     }
     
     private void updateLineBoxTarget(int lineIndex) {
@@ -978,13 +1093,14 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         bottom += layoutY;
         
         // The highlighted line is drawn magnified; make the box follow the same transform.
-        if (activeLineScale > 1f) {
+        float boxScale = effectiveActiveScale(layout);
+        if (boxScale > 1f) {
             float cx = layoutX + layout.getWidth() / 2f;
             float cy = layoutY + layout.getHeight() / 2f;
-            actualLeft = cx + (actualLeft - cx) * activeLineScale;
-            actualRight = cx + (actualRight - cx) * activeLineScale;
-            top = cy + (top - cy) * activeLineScale;
-            bottom = cy + (bottom - cy) * activeLineScale;
+            actualLeft = cx + (actualLeft - cx) * boxScale;
+            actualRight = cx + (actualRight - cx) * boxScale;
+            top = cy + (top - cy) * boxScale;
+            bottom = cy + (bottom - cy) * boxScale;
         }
         
         float paddingX = dp2px(getContext(), 8f);
@@ -1200,13 +1316,14 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         bottom += layoutY;
         
         // The highlighted line is drawn magnified; make the box follow the same transform.
-        if (activeLineScale > 1f) {
+        float boxScale = effectiveActiveScale(layout);
+        if (boxScale > 1f) {
             float cx = layoutX + layout.getWidth() / 2f;
             float cy = layoutY + layout.getHeight() / 2f;
-            actualLeft = cx + (actualLeft - cx) * activeLineScale;
-            actualRight = cx + (actualRight - cx) * activeLineScale;
-            top = cy + (top - cy) * activeLineScale;
-            bottom = cy + (bottom - cy) * activeLineScale;
+            actualLeft = cx + (actualLeft - cx) * boxScale;
+            actualRight = cx + (actualRight - cx) * boxScale;
+            top = cy + (top - cy) * boxScale;
+            bottom = cy + (bottom - cy) * boxScale;
         }
         
         float paddingX = dp2px(getContext(), 3f);
@@ -1837,7 +1954,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         // so the first drawn frame already shows the correct word highlighted.
         if (currentLineIndex >= 0 && currentLineIndex < lrcData.size()) {
             LrcEntry posEntry = lrcData.getEntries().get(currentLineIndex);
-            if (posEntry.hasWordSync()) {
+            if (usesWordSync(posEntry)) {
                 currentWordIndex = findCurrentWordIndex(posEntry, adjustedTime);
             }
         }
@@ -1930,7 +2047,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         if (!isStaticMode() && currentLineIndex >= 0 && lrcData != null
                 && currentLineIndex < lrcData.size()) {
             LrcEntry wordSyncEntry = lrcData.getEntries().get(currentLineIndex);
-            if (wordSyncEntry.hasWordSync()) {
+            if (usesWordSync(wordSyncEntry)) {
                 int newWordIdx = findCurrentWordIndex(wordSyncEntry, timeInMillis);
                 if (newWordIdx != currentWordIndex) {
                     currentWordIndex = newWordIdx;
@@ -1958,7 +2075,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                             nextLineIdx = currentLineIndex;
                         } else if (currentLineIndex + 1 < lrcData.size()) {
                             LrcEntry nextEntry = lrcData.getEntries().get(currentLineIndex + 1);
-                            if (nextEntry.hasWordSync() && !nextEntry.getWords().isEmpty()) {
+                            if (usesWordSync(nextEntry) && !nextEntry.getWords().isEmpty()) {
                                 @SuppressWarnings ("SequencedCollectionMethodCanBeUsed")
                                 long startMs = nextEntry.getWords().get(0).getStartMs();
                                 nextStartMs = startMs;
@@ -2523,6 +2640,18 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                     float wordWidth = paint.measureText(text, start, end);
                     float cx = layoutX + x + wordWidth / 2f;
                     float cy = layoutY + top + (bottom - top) / 2f;
+                    // The box is expressed in the magnified space of the highlighted line, so the
+                    // word position has to be compared in that space too. Without this the sung
+                    // word was pushed sideways (up to 8dp) away from its own box.
+                    if (isCurrentLine) {
+                        float lineScale = effectiveActiveScale(layoutForThisLine.mainLayout);
+                        if (lineScale > 1f) {
+                            float lineCx = layoutX + layoutForThisLine.mainLayout.getWidth() / 2f;
+                            float lineCy = layoutY + layoutForThisLine.mainLayout.getHeight() / 2f;
+                            cx = lineCx + (cx - lineCx) * lineScale;
+                            cy = lineCy + (cy - lineCy) * lineScale;
+                        }
+                    }
                     
                     float boxCenterX = (currentBoxBounds.left + currentBoxBounds.right) / 2f;
                     float boxCenterY = (currentBoxBounds.top + currentBoxBounds.bottom) / 2f;

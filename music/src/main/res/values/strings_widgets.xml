@@ -19,4 +19,15 @@
     <string name="widget_glass_bar_description">A slim frosted-glass now-playing bar with art, title and previous, play/pause, next.</string>
     <string name="widget_glass_up_next_description">Frosted-glass queue: the song playing now and the next three, with play/pause and next.</string>
     <string name="widget_vinyl_description">A record-style disc with the album art as its label. A glowing rim shows when it is playing.</string>
+    <string name="glass_widgets">Frosted glass widgets</string>
+    <string name="glass_opacity_shared">Same opacity for all</string>
+    <string name="glass_opacity_shared_summary">Use one value for every frosted glass widget. Turn off to set each one separately.</string>
+    <string name="glass_opacity_all">Glass opacity</string>
+    <string name="glass_opacity_all_summary">How solid the glass is; lower values let the wallpaper show through</string>
+    <string name="glass_opacity_bar">Bar widget</string>
+    <string name="glass_opacity_card">Card widget</string>
+    <string name="glass_opacity_player">Player widget</string>
+    <string name="glass_opacity_lyrics">Lyrics widget</string>
+    <string name="glass_opacity_up_next">Up next widget</string>
+    <string name="glass_opacity_individual_summary">Used when "Same opacity for all" is off</string>
 </resources>

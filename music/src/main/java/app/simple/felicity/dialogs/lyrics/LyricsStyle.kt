@@ -208,6 +208,9 @@ object LyricsStyle {
         view.setActiveLineScale(LyricsPreferences.getStudioActiveScale())
         view.setEdgeBlurIntensity(LyricsPreferences.getStudioEdgeBlur())
         view.setBackgroundDim(backgroundDim())
+        // Translations only exist in the data while "Translated" is on, so showing them whenever
+        // present is the same as honouring that switch.
+        view.setDisplayModes(LyricsPreferences.isShowOriginal(), LyricsPreferences.isShowRomanized(), true)
     }
 
     // ---------------------------------------------------------------------------------------
