@@ -249,6 +249,7 @@ class FelicityAudioSink(
             val sampleCount = snapshotToFloat(snapshot, currentEncoding)
             if (sampleCount > 0) {
                 nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
+                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
                 visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
                 val samplesWritten = stream.write(floatScratchBuffer, sampleCount)
 
@@ -403,6 +404,7 @@ class FelicityAudioSink(
             val sampleCount = snapshotToFloat(snapshot, currentEncoding)
             if (sampleCount > 0) {
                 nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
+                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
                 visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
                 val samplesWritten = stream.write(floatScratchBuffer, sampleCount)
 
@@ -544,6 +546,7 @@ class FelicityAudioSink(
             val sampleCount = snapshotToFloat(snapshot, currentEncoding)
             if (sampleCount > 0) {
                 nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
+                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
                 visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
                 driver.nativePushPcm(floatScratchBuffer, 0, sampleCount)
             }
@@ -908,7 +911,57 @@ class FelicityAudioSink(
     }
 
     override fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        if (clamped != outputVolume && (clamped == 0f || clamped == 1f || clamped == 0.5f)) {
+            Log.d(TAG, "setVolume: $outputVolume -> $clamped sink=$activeSinkType")
+        }
+        outputVolume = clamped
         activeSink.setVolume(volume)
+    }
+
+    /**
+     * Player volume as last set by ExoPlayer (`player.volume = x`). [DefaultAudioSink] applies it to
+     * the AudioTrack itself, but the AAudio, Oboe and USB paths write straight to hardware and used
+     * to ignore it, which silently disabled every crossfade and fade-in on those outputs (both songs
+     * played at full volume). Those paths now apply it in software via [applyOutputGain].
+     */
+    @Volatile
+    private var outputVolume = 1f
+
+    /** The gain actually applied to the previous buffer, so changes ramp instead of clicking. */
+    private var appliedVolume = 1f
+
+    /**
+     * Scales [samples] by [outputVolume]. A change in volume is ramped linearly across the buffer
+     * (per frame, so channels stay in step) to avoid zipper noise; at unity gain this is a no-op.
+     */
+    private fun applyOutputGain(samples: FloatArray, sampleCount: Int, channelCount: Int) {
+        val target = outputVolume
+        val start = appliedVolume
+        if (start == 1f && target == 1f) return
+        val channels = channelCount.coerceAtLeast(1)
+        val frames = sampleCount / channels
+        if (frames <= 0) return
+        if (start == target) {
+            for (i in 0 until sampleCount) samples[i] *= target
+        } else {
+            val step = (target - start) / frames
+            var gain = start
+            var index = 0
+            for (frame in 0 until frames) {
+                gain += step
+                for (c in 0 until channels) {
+                    samples[index] *= gain
+                    index++
+                }
+            }
+            // Any trailing partial frame uses the final gain.
+            while (index < sampleCount) {
+                samples[index] *= target
+                index++
+            }
+        }
+        appliedVolume = target
     }
 
     override fun reset() {

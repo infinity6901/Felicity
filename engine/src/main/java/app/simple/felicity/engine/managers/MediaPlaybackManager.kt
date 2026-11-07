@@ -692,6 +692,9 @@ object MediaPlaybackManager {
         currentSongPosition = newCurrentPosition
         suppressPositionEmit = false
 
+        Log.d(TAG, "moveQueueItemSilently: $fromIndex -> $toIndex moved=${moved.id} playingId=${currentSong?.id} " +
+                "playingPos=$currentSongPosition size=${songs.size}")
+
         // Surgically move item in ExoPlayer — no setMediaItems, no prepare, no gap
         mediaController?.moveMediaItem(fromIndex, toIndex)
 
@@ -709,6 +712,7 @@ object MediaPlaybackManager {
     fun finishQueueReorder() {
         val position = currentSongPosition
         if (position !in songs.indices) return
+        Log.d(TAG, "finishQueueReorder: position=$position id=${songs[position].id} size=${songs.size}")
         scope.launch {
             _songListFlow.emit(this@MediaPlaybackManager.songs)
             _songPositionFlow.emit(position)
@@ -1620,7 +1624,10 @@ object MediaPlaybackManager {
         val id = mediaId?.toLongOrNull()
         if (id != null && !isQueueBeingReplaced && songs.getOrNull(rawPosition)?.id != id) {
             val remapped = songs.indexOfFirst { it.id == id }
-            if (remapped >= 0) position = remapped
+            if (remapped >= 0) {
+                Log.d(TAG, "notifyCurrentPosition: stale index $rawPosition for id=$id, remapped to $remapped")
+                position = remapped
+            }
         }
         if (isQueueBeingReplaced) {
             if (pendingSeekPositions.contains(position)) {

@@ -2227,7 +2227,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        savePlaybackStateToDatabase()
+        savePlaybackStateToDatabase(immediate = true)
         if (!player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }
@@ -2235,7 +2235,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     override fun onDestroy() {
-        savePlaybackStateToDatabase()
+        savePlaybackStateToDatabase(immediate = true)
         unregisterSharedPreferenceChangeListener()
 
         // Remove the service-level USB DAC listener first so it no longer receives
@@ -2293,8 +2293,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         super.onDestroy()
     }
 
-    private fun savePlaybackStateToDatabase() {
-        serviceScope.launch {
+    private var pendingStateSave: kotlinx.coroutines.Job? = null
+
+    /**
+     * Saves the queue / position, coalescing bursts. Track changes, pauses and queue edits often
+     * fire together, and each save writes the whole queue hash list, so a short debounce turns a
+     * burst of identical writes into one.
+     */
+    private fun savePlaybackStateToDatabase(immediate: Boolean = false) {
+        pendingStateSave?.cancel()
+        pendingStateSave = serviceScope.launch {
+            if (!immediate) kotlinx.coroutines.delay(400)
             PlaybackStateManager.saveCurrentPlaybackState(applicationContext, TAG)
         }
     }

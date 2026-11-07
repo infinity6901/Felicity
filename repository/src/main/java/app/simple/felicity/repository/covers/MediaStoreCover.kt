@@ -54,7 +54,7 @@ object MediaStoreCover {
         }
 
         // Turn the album ID into the well-known album art content URI.
-        return albumId?.let { id ->
+        return albumId?.takeIf { it > 0L }?.let { id ->
             val artworkUri = "content://media/external/audio/albumart".toUri()
             ContentUris.withAppendedId(artworkUri, id)
         }

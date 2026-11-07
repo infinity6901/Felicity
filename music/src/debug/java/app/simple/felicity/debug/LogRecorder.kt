@@ -13,7 +13,7 @@ import java.util.Locale
 /**
  * Debug-build-only logcat recorder.
  *
- * Runs `logcat -v threadtime` (an app may read its own process' log without any permission) and
+ * Runs `logcat -v threadtime,usec,uid -b main,system,crash,events` (an app may read its own process' log without any permission) and
  * appends everything to `files/debug-logs/felicity-log.txt`. When the file passes [MAX_BYTES] it
  * is rolled to `felicity-log.1.txt`, so disk use stays bounded.
  *
@@ -27,7 +27,7 @@ object LogRecorder {
     private const val PREFS = "debug_log_recorder"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_LAST_TS = "last_ts"
-    private const val MAX_BYTES = 8L * 1024 * 1024
+    private const val MAX_BYTES = 32L * 1024 * 1024
     private const val FILE_NAME = "felicity-log.txt"
     private const val ROLLED_NAME = "felicity-log.1.txt"
 
@@ -142,8 +142,13 @@ object LogRecorder {
             val lastTs = prefs.getString(KEY_LAST_TS, null)
             val command = ArrayList<String>().apply {
                 add("logcat")
+                // threadtime + microseconds; the first 18 chars stay "MM-dd HH:mm:ss.SSS" so -T resume works.
                 add("-v")
-                add("threadtime")
+                add("threadtime,usec,uid")
+                // Everything the app can see: app + system messages, crashes and binary events
+                // (activity lifecycle, GC, ANR hints).
+                add("-b")
+                add("main,system,crash,events")
                 if (lastTs != null) {
                     add("-T")
                     add(lastTs)
