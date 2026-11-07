@@ -14,10 +14,22 @@ class CrossfadeMathTest {
         assertEquals(1f, end.incoming, 0.0001f)
     }
 
-    @Test fun equalPowerKeepsSquaredGainConstant() {
-        for (step in 0..100) {
+    @Test fun incomingRisesGentlyAndOutgoingFallsMonotonically() {
+        var prev = CrossfadeMath.equalPowerGains(0f)
+        for (step in 1..100) {
             val gains = CrossfadeMath.equalPowerGains(step / 100f)
-            assertEquals(1f, gains.outgoing * gains.outgoing + gains.incoming * gains.incoming, 0.0002f)
+            assertTrue(gains.incoming >= prev.incoming)
+            assertTrue(gains.outgoing <= prev.outgoing)
+            prev = gains
+        }
+        // The new song is still quiet a quarter of the way in, the old one has already dipped.
+        val quarter = CrossfadeMath.equalPowerGains(0.25f)
+        assertTrue(quarter.incoming < 0.2f)
+        assertTrue(quarter.outgoing < 0.95f)
+        // Summed power never collapses mid-fade.
+        for (step in 0..100) {
+            val g = CrossfadeMath.equalPowerGains(step / 100f)
+            assertTrue(g.outgoing * g.outgoing + g.incoming * g.incoming > 0.6f)
         }
     }
 

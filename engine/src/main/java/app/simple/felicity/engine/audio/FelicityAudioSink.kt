@@ -836,6 +836,9 @@ class FelicityAudioSink(
             activeSink.release()
             activeSink = createSink(targetType, sr, ch)
             activeSinkType = targetType
+            // A fresh stream starts at whatever volume the player already holds (a crossfade's
+            // incoming deck is at 0): never ramp from a stale gain, that would leak a burst of sound.
+            appliedVolume = outputVolume
         }
 
         activeSink.configure(inputFormat, specifiedBufferSize, outputChannels)
@@ -872,6 +875,7 @@ class FelicityAudioSink(
     override fun flush() {
         nativeSourceEnded = false
         nativeEndDeadlineMs = 0L
+        appliedVolume = outputVolume
         activeSink.flush()
     }
 

@@ -8,11 +8,22 @@ import kotlin.math.sin
 internal object CrossfadeMath {
     data class Gains(val outgoing: Float, val incoming: Float)
 
-    /** Keeps perceived loudness steadier than a linear 1-t / t ramp. */
+    /**
+     * Fade curves for an overlap.
+     *
+     * A pure equal-power pair (cos / sin) is correct for measured power, but amplitude is not what
+     * the ear follows: sin(t) already sits at -16 dB after the first 10 % of the fade while cos(t)
+     * has barely moved, so the new song seems to start at full volume over a song that is still
+     * loud. Here the incoming song rises along sin^2 (a slow start that is still silent at 0 and
+     * unity at 1) and the outgoing song falls along cos^1.2, which leaves it audibly dimming from
+     * the first moments. The summed power dips by under 2 dB at the midpoint.
+     */
     fun equalPowerGains(progress: Float): Gains {
         val t = progress.coerceIn(0f, 1f)
         val angle = t * (PI.toFloat() / 2f)
-        return Gains(outgoing = cos(angle), incoming = sin(angle))
+        val s = sin(angle)
+        val c = cos(angle).coerceAtLeast(0f)
+        return Gains(outgoing = Math.pow(c.toDouble(), 1.2).toFloat(), incoming = s * s)
     }
 
     /** ExoPlayer positions advance in media time, so the coroutine delay must account for speed. */

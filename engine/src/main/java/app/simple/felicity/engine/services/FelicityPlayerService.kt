@@ -667,9 +667,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val incoming = standbyPlayer ?: return false
         val coordinator = dualPlayerCoordinator ?: return false
         if (!::player.isInitialized || incoming === player) return false
-        if (UsbDacManager.isActive || FelicityAudioSink.isAAudioStreamActive ||
-            FelicityAudioSink.isOboeStreamActive) {
-            Log.w(TAG, "Dual-player promotion skipped: exclusive/native output route is active")
+        if (UsbDacManager.isActive) {
+            Log.w(TAG, "Dual-player promotion skipped: exclusive USB DAC route is active")
             return false
         }
         if (incoming.playbackState != Player.STATE_READY || incoming.currentMediaItem == null) {
@@ -1692,10 +1691,10 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         if (isCrossfading) return
         if (!player.isPlaying) return
         if (!player.hasNextMediaItem()) return
-        // The temp player is a stock ExoPlayer on the default AudioTrack route: no ReplayGain,
-        // no DSP chain, and it can't share a USB DAC / AAudio / Oboe stream. Crossfading there
-        // would jump in loudness at the handoff or fight the exclusive output, so skip it.
-        if (UsbDacManager.isActive || FelicityAudioSink.isAAudioStreamActive || FelicityAudioSink.isOboeStreamActive) return
+        // An exclusive USB DAC stream cannot be shared by two decks, so no overlap there. AAudio and
+        // Oboe are shared-mode streams: the deck that owns the native route is faded in software
+        // (see FelicityAudioSink.applyOutputGain) while the other deck mixes in through AudioTrack.
+        if (UsbDacManager.isActive) return
         // Crossfading resolved, short-lived YouTube stream URLs adds a lot of fragility
         // (a second resolve, in the middle of a fade, for a URL that might already be
         // close to expiring) for comparatively little benefit — local-queue tracks only.
