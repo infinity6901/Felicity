@@ -89,6 +89,7 @@ class PreferenceSearch : PreferenceFragment() {
         all.addAll(createBehaviorPanel())
         all.addAll(createEnginePanel())
         all.addAll(createLibraryPanel())
+        all.addAll(createWidgetsPanel())
         all.addAll(createAccessibilityPanel())
         all.addAll(createAboutPanel())
         return all.filter {

@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import app.simple.felicity.decorations.lrc.model.LrcData
+import app.simple.felicity.decorations.lrc.model.LyricVersions
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.managers.LyricsManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -53,6 +54,16 @@ class LyricsWidgetUpdater @Inject constructor(
                     lyricsManager.syncOffsetMs
             ) { data, position, offset -> Triple(data, position, offset) }
                 .collect { (data, position, offset) -> update(data, position + offset) }
+        }
+    }
+
+    /** Forces the next position tick (or this call, when data is known) to redraw the widgets. */
+    @Synchronized
+    fun invalidate() {
+        lastKey = null
+        val data = lyricsManager.lrcData.value
+        if (job?.isActive == true && data != null) {
+            update(data, MediaPlaybackManager.getSeekPosition() + lyricsManager.syncOffsetMs.value)
         }
     }
 
@@ -108,7 +119,12 @@ class LyricsWidgetUpdater @Inject constructor(
             }
         }
 
-        fun text(i: Int) = entries.getOrNull(i)?.text?.trim().orEmpty()
+        val version = WidgetLyricStyle.getVersion()
+        fun text(i: Int): String {
+            val entry = entries.getOrNull(i) ?: return ""
+            val shown = LyricVersions.versionText(entry, version) ?: entry.text
+            return shown.trim()
+        }
         return if (index < 0) {
             // Intro: before the first line.
             WidgetLyricsPrefs.Lines("", "♪", text(0), WidgetLyricsPrefs.STATE_SYNCED)

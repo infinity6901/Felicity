@@ -26,6 +26,7 @@ import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.OverScroller;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -901,10 +902,10 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             addRomanization = showOriginal && showRomanization && romanization != null;
             addTranslation = showOriginal && showTranslation && translation != null;
         } else if (showRomanization && romanization != null) {
-            mainText = romanization;
+            mainText = (!isStaticMode() && entry.hasWordSync()) ? buildWordSyncSpannable(entry, lineIndex) : romanization;
             addTranslation = showTranslation && translation != null;
         } else {
-            mainText = translation;
+            mainText = (!isStaticMode() && entry.hasWordSync()) ? buildWordSyncSpannable(entry, lineIndex) : translation;
         }
         
         StaticLayout mainLayout = createSingleStaticLayout(mainText, normalPaint);
@@ -949,7 +950,82 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     
     /** Word-by-word karaoke (and the gliding word box) only exist for the original text. */
     private boolean usesWordSync(LrcEntry entry) {
-        return entry.hasWordSync() && isOriginalPrimary(entry);
+        return entry.hasWordSync();
+    }
+    
+    private static final class DerivedWords {
+        final String text;
+        final List <WordEntry> words;
+        
+        DerivedWords(String text, List <WordEntry> words) {
+            this.text = text;
+            this.words = words;
+        }
+    }
+    
+    private final java.util.IdentityHashMap <LrcEntry, DerivedWords> derivedWordCache = new java.util.IdentityHashMap <>();
+    
+    /** The text of the version that is drawn as the main line when it is not the original. */
+    private String derivedMainText(LrcEntry entry) {
+        if (showRomanization && hasText(entry.getRomanization())) {
+            return entry.getRomanization().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "");
+        }
+        return hasText(entry.getAdlib()) ? entry.getAdlib().replaceAll("<\\d{1,2}:\\d{2}\\.\\d{2,3}>", "") : "";
+    }
+    
+    /**
+     * The word timings of whichever version is drawn as the main line. A romanization or
+     * translation carries no timings of its own, so the original word timings are spread over its
+     * words (one to one when the word counts match, otherwise in proportion to their length), which
+     * lets every word effect (colour, glow, magnet, box) run word by word on those versions too.
+     */
+    private List <WordEntry> displayWords(LrcEntry entry) {
+        List <WordEntry> original = entry.getWords();
+        if (isOriginalPrimary(entry) || original.isEmpty()) {
+            return original;
+        }
+        String text = derivedMainText(entry);
+        DerivedWords cached = derivedWordCache.get(entry);
+        if (cached != null && cached.text.equals(text)) {
+            return cached.words;
+        }
+        List <String> tokens = new ArrayList <>();
+        int i = 0;
+        while (i < text.length()) {
+            int j = i;
+            while (j < text.length() && !Character.isWhitespace(text.charAt(j))) {
+                j++;
+            }
+            while (j < text.length() && Character.isWhitespace(text.charAt(j))) {
+                j++;
+            }
+            tokens.add(text.substring(i, j));
+            i = j;
+        }
+        List <WordEntry> result = new ArrayList <>();
+        if (!tokens.isEmpty()) {
+            long spanStart = original.get(0).getStartMs();
+            long spanEnd = original.get(original.size() - 1).getEndMs();
+            boolean oneToOne = tokens.size() == original.size();
+            int totalChars = Math.max(1, text.length());
+            int consumed = 0;
+            for (int k = 0; k < tokens.size(); k++) {
+                String token = tokens.get(k);
+                long start;
+                long end;
+                if (oneToOne) {
+                    start = original.get(k).getStartMs();
+                    end = original.get(k).getEndMs();
+                } else {
+                    start = spanStart + (spanEnd - spanStart) * consumed / totalChars;
+                    end = spanStart + (spanEnd - spanStart) * (consumed + token.length()) / totalChars;
+                }
+                consumed += token.length();
+                result.add(new WordEntry(start, end, token));
+            }
+        }
+        derivedWordCache.put(entry, new DerivedWords(text, result));
+        return result;
     }
     
     /**
@@ -967,6 +1043,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         showRomanization = romanization;
         showTranslation = translation;
         normalLayoutCache.clear();
+        derivedWordCache.clear();
+        currentWordIndex = -1;
         boxTargetWordIndex = -2;
         boxTargetLineIndex = -2;
         requestLayout();
@@ -1034,9 +1112,15 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         if (layout == null || glowRadiusPx <= 0f || glowIntensity <= 0f) {
             return;
         }
+        // Blurred (mask-filtered) text on the GPU falls back to path rendering for large glyphs and
+        // has crashed the RenderThread on some devices, so skip the whole-line glow when the
+        // effective glyph size is large and keep the blur radius modest.
+        if (paint.getTextSize() > 120f) {
+            return;
+        }
         int savedColor = paint.getColor();
         android.graphics.MaskFilter savedMask = paint.getMaskFilter();
-        float glowKey = Math.max(1f, Math.round(glowRadiusPx * 2f) / 2f);
+        float glowKey = Math.max(1f, Math.min(24f, Math.round(glowRadiusPx * 2f) / 2f));
         BlurMaskFilter glowFilter = blurMaskFilters.get(glowKey);
         if (glowFilter == null) {
             glowFilter = new BlurMaskFilter(glowKey, BlurMaskFilter.Blur.NORMAL);
@@ -1258,17 +1342,18 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         this.boxTargetLineIndex = lineIndex;
         
         LrcEntry entry = lrcData.getEntries().get(lineIndex);
-        if (wordIndex >= entry.getWords().size()) {
+        List <WordEntry> boxWords = displayWords(entry);
+        if (wordIndex >= boxWords.size()) {
             return;
         }
         
         LrcLineLayout lrcLayout = getOrCreateLayout(entry, normalPaint, lineIndex);
         StaticLayout layout = lrcLayout.mainLayout;
-        WordEntry word = entry.getWords().get(wordIndex);
+        WordEntry word = boxWords.get(wordIndex);
         
         int charStart = 0;
         for (int i = 0; i < wordIndex; i++) {
-            charStart += entry.getWords().get(i).getText().length();
+            charStart += boxWords.get(i).getText().length();
         }
         // Words carry their own spaces ("hello " / " hello"); the box must hug the letters only,
         // otherwise it starts a space early and spills over the neighbouring word.
@@ -1392,7 +1477,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
      * it stays lit until the next one takes over.</p>
      */
     private int findCurrentWordIndex(LrcEntry entry, long timeMs) {
-        List <WordEntry> words = entry.getWords();
+        List <WordEntry> words = displayWords(entry);
         int wordIdx = -1;
         for (int i = 0; i < words.size(); i++) {
             if (timeMs >= words.get(i).getStartMs()) {
@@ -1414,8 +1499,12 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
      * trimming or other transformations that could shift the boundaries.</p>
      */
     private CharSequence buildWordSyncSpannable(LrcEntry entry, int lineIndex) {
-        List <WordEntry> words = entry.getWords();
-        String fullText = entry.getText();
+        List <WordEntry> words = displayWords(entry);
+        StringBuilder joined = new StringBuilder();
+        for (WordEntry w : words) {
+            joined.append(w.getText());
+        }
+        String fullText = isOriginalPrimary(entry) ? entry.getText() : joined.toString();
         SpannableString spannable = new SpannableString(fullText);
         
         int charPos = 0;
@@ -2062,22 +2151,22 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 
                 // Continuous logic to handle gaps, slides, and fading.
                 if (currentWordIndex >= 0) {
-                    WordEntry currentWord = wordSyncEntry.getWords().get(currentWordIndex);
+                    WordEntry currentWord = displayWords(wordSyncEntry).get(currentWordIndex);
                     boolean isFinished = timeInMillis > currentWord.getEndMs() + 100;
                     if (isFinished) {
                         long nextStartMs = -1;
                         int nextWordIdx = -1;
                         int nextLineIdx = -1;
                         
-                        if (currentWordIndex + 1 < wordSyncEntry.getWords().size()) {
-                            nextStartMs = wordSyncEntry.getWords().get(currentWordIndex + 1).getStartMs();
+                        if (currentWordIndex + 1 < displayWords(wordSyncEntry).size()) {
+                            nextStartMs = displayWords(wordSyncEntry).get(currentWordIndex + 1).getStartMs();
                             nextWordIdx = currentWordIndex + 1;
                             nextLineIdx = currentLineIndex;
                         } else if (currentLineIndex + 1 < lrcData.size()) {
                             LrcEntry nextEntry = lrcData.getEntries().get(currentLineIndex + 1);
-                            if (usesWordSync(nextEntry) && !nextEntry.getWords().isEmpty()) {
+                            if (usesWordSync(nextEntry) && !displayWords(nextEntry).isEmpty()) {
                                 @SuppressWarnings ("SequencedCollectionMethodCanBeUsed")
-                                long startMs = nextEntry.getWords().get(0).getStartMs();
+                                long startMs = displayWords(nextEntry).get(0).getStartMs();
                                 nextStartMs = startMs;
                                 nextWordIdx = 0;
                                 nextLineIdx = currentLineIndex + 1;
@@ -2110,10 +2199,10 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                             setBoxAlphaTarget(1f);
                         }
                     }
-                } else if (!wordSyncEntry.getWords().isEmpty()) {
+                } else if (!displayWords(wordSyncEntry).isEmpty()) {
                     // Waiting for the very first word of the current line
                     @SuppressWarnings ("SequencedCollectionMethodCanBeUsed")
-                    long nextStartMs = wordSyncEntry.getWords().get(0).getStartMs();
+                    long nextStartMs = displayWords(wordSyncEntry).get(0).getStartMs();
                     long gapToNext = nextStartMs - timeInMillis;
                     
                     if (gapToNext > INSTRUMENTAL_GAP_THRESHOLD) {
@@ -2694,7 +2783,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 paint.setColor(originalColor);
             }
             if (activeWord && progressiveWordFill) {
-                WordEntry active = lrcData.getEntries().get(lineIndex).getWords().get(wordIndex);
+                WordEntry active = displayWords(lrcData.getEntries().get(lineIndex)).get(wordIndex);
                 long duration = Math.max(1L, active.getEndMs() - active.getStartMs());
                 float progress = Math.max(0f, Math.min(1f, (float) (currentPlaybackTimeMs - active.getStartMs()) / (float) duration));
                 int save = canvas.save();

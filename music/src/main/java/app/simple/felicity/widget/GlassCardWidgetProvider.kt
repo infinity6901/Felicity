@@ -56,7 +56,9 @@ class GlassCardWidgetProvider : BaseWidgetProvider() {
         accentColor = GlassRenderer.accentOf(art)
         GlassRenderer.artWithGlassStrip(
                 art, w, h, 28 * density, 8 * density, 56 * density,
-                GlassRenderer.Style(opacity = WidgetGlass.opacityFor(this@GlassCardWidgetProvider::class.java)))
+                GlassRenderer.Style(
+                        opacity = WidgetGlass.opacityFor(this@GlassCardWidgetProvider::class.java),
+                        transparency = WidgetGlass.transparencyFor(this@GlassCardWidgetProvider::class.java)))
     }
 
     override suspend fun loadBackgroundArt(

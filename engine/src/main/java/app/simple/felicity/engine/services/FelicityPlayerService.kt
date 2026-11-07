@@ -780,7 +780,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
         if (player.repeatMode == Player.REPEAT_MODE_ONE) return
 
-        val nextIndex = player.nextMediaItemIndex
+        val nextIndex = nextPlayableIndex()
         if (nextIndex == C.INDEX_UNSET || nextIndex !in 0 until player.mediaItemCount) {
             standby.playWhenReady = false
             standby.stop()
@@ -1686,6 +1686,33 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
     }
 
+    /**
+     * The queue index a crossfade (and the standby preload) should target: the next item, skipping
+     * songs flagged always-skip so the incoming song matches what the handoff would otherwise land
+     * on. Under shuffle, or when no playable item remains, an always-skip next item returns
+     * [C.INDEX_UNSET] and the normal (non-crossfaded) transition applies.
+     */
+    private fun nextPlayableIndex(): Int {
+        val next = player.nextMediaItemIndex
+        if (next == C.INDEX_UNSET) return next
+        val songs = MediaPlaybackManager.getSongs()
+        val count = player.mediaItemCount
+        if (songs.size != count || next !in 0 until count) return next
+        if (!songs[next].isAlwaysSkip) return next
+        if (player.shuffleModeEnabled || songs.all { it.isAlwaysSkip }) return C.INDEX_UNSET
+        var idx = next
+        repeat(count) {
+            if (!songs[idx].isAlwaysSkip) return idx
+            val n = idx + 1
+            idx = when {
+                n < count -> n
+                player.repeatMode == Player.REPEAT_MODE_ALL -> 0
+                else -> return C.INDEX_UNSET
+            }
+        }
+        return C.INDEX_UNSET
+    }
+
     private fun maybeStartCrossfade() {
         if (!CrossfadePreferences.isCrossfadeEnabled()) return
         if (isCrossfading) return
@@ -1709,7 +1736,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // With a single-item queue and repeat-all, "next" resolves to the item itself.
         // Crossfading into yourself ends with finishCrossfade() seeking the main player
         // back to ~0:00 several seconds before the track actually ends.
-        if (player.nextMediaItemIndex == player.currentMediaItemIndex) return
+        val targetIndex = nextPlayableIndex()
+        if (targetIndex == C.INDEX_UNSET || targetIndex == player.currentMediaItemIndex) return
 
         // "Stop after this song" must play the track out to its natural end so the
         // AUTO-transition hook can pause. A crossfade would start the next song audibly
@@ -1726,7 +1754,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             val nextItem = standby?.currentMediaItem
             if (standby != null && nextItem != null &&
                 standby.playbackState == Player.STATE_READY &&
-                standby.currentMediaItemIndex == player.nextMediaItemIndex
+                standby.currentMediaItemIndex == targetIndex
             ) {
                 val outAlbum = player.currentMediaItem?.mediaMetadata?.albumTitle?.toString()
                 val inAlbum = nextItem.mediaMetadata.albumTitle?.toString()
@@ -1752,7 +1780,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private fun beginCrossfade(fadeMs: Long) {
         val incoming = standbyPlayer ?: return
-        val expectedNextIndex = player.nextMediaItemIndex
+        val expectedNextIndex = nextPlayableIndex()
+        val startIndex = player.currentMediaItemIndex
         if (expectedNextIndex == C.INDEX_UNSET ||
             incoming.currentMediaItemIndex != expectedNextIndex ||
             incoming.currentMediaItem == null
@@ -1775,7 +1804,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // The permanent standby is already prepared and muted. Re-check identities and
             // queue position after entering the coroutine to reject stale preload completions.
             if (standbyPlayer !== incoming || player !== outgoing ||
-                outgoing.nextMediaItemIndex != expectedNextIndex ||
+                nextPlayableIndex() != expectedNextIndex ||
                 incoming.currentMediaItemIndex != expectedNextIndex ||
                 incoming.playbackState != Player.STATE_READY
             ) return@launch
@@ -1795,7 +1824,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             val readyDeadline = SystemClock.elapsedRealtime() + DUAL_FADE_READY_TIMEOUT_MS
             while (isActive && !(incoming.playbackState == Player.STATE_READY && incoming.isPlaying)) {
                 if (standbyPlayer !== incoming || player !== outgoing ||
-                    outgoing.currentMediaItemIndex == expectedNextIndex) {
+                    outgoing.currentMediaItemIndex != startIndex) {
                     incoming.playWhenReady = false
                     incoming.volume = 0f
                     return@launch
@@ -1832,7 +1861,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
                     incoming.play()
                 }
-                if (outgoing.currentMediaItemIndex == expectedNextIndex) {
+                if (outgoing.currentMediaItemIndex != startIndex) {
                     // Natural queue advance won the race. Do not promote a stale preload.
                     incoming.playWhenReady = false
                     incoming.volume = 0f
@@ -3088,9 +3117,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     companion object {
-        private const val CROSSFADE_PRELOAD_LEAD_MS = 5_000L
+        private const val CROSSFADE_PRELOAD_LEAD_MS = 1_800L
         private const val DUAL_FADE_READY_TIMEOUT_MS = 2_000L
-        private const val DUAL_FADE_END_MARGIN_MS = 1_500L
+        private const val DUAL_FADE_END_MARGIN_MS = 500L
         private const val DUAL_FADE_MIN_MS = 1_000L
         private const val FADE_TICK_MEDIA_MS = 25L
         private const val DUAL_FADE_RETRY_COOLDOWN_MS = 3_000L

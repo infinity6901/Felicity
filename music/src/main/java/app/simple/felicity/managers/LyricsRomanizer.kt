@@ -85,25 +85,55 @@ internal object LyricsRomanizer {
         val language = when {
             japanese -> "ja"
             all.codePoints().anyMatch { isHan(it) } -> "zh"
+            all.codePoints().anyMatch { isDevanagari(it) } -> "hi"
+            all.codePoints().anyMatch { isBengali(it) } -> "bn"
             else -> null
         }
         val dictionary = language
             ?.takeIf { RomanizationDictionaries.isInstalled(context, it) }
             ?.let { RomanizationDictionary.load(RomanizationDictionaries.file(context, it), all) }
-        return Prepared(dictionary, japanese)
+        return Prepared(dictionary, japanese, language == "hi" || language == "bn")
     }
 
     class Prepared internal constructor(
             private val dictionary: RomanizationDictionary?,
-            private val japanese: Boolean
+            private val japanese: Boolean,
+            private val indic: Boolean = false
     ) {
         fun romanize(text: String): String? {
             val dict = dictionary
+            if (dict != null && indic) {
+                runCatching { LyricsRomanizer.viaWordList(dict, text) }.getOrNull()?.let { return it }
+            }
             if (dict != null && text.codePoints().anyMatch { LyricsRomanizer.isKana(it) || LyricsRomanizer.isHan(it) }) {
                 runCatching { LyricsRomanizer.viaDictionary(dict, text, japanese) }.getOrNull()?.let { return it }
             }
             return LyricsRomanizer.romanize(text, japanese)
         }
+    }
+
+    /**
+     * Hindi / Bengali: words are separated by spaces, so each one is looked up whole. Words the
+     * dictionary does not know go through the built-in rules, so a line is never left half done.
+     */
+    private fun viaWordList(dict: RomanizationDictionary, text: String): String? {
+        val source = text.trim()
+        if (source.isEmpty() || source.codePoints().noneMatch { isDevanagari(it) || isBengali(it) }) return null
+        val result = source.split(' ', '　').joinToString(" ") { token ->
+            val start = token.indexOfFirst { it.isLetter() || Character.getType(it) == Character.NON_SPACING_MARK.toInt() ||
+                    Character.getType(it) == Character.COMBINING_SPACING_MARK.toInt() }
+            val end = token.indexOfLast { it.isLetter() || Character.getType(it) == Character.NON_SPACING_MARK.toInt() ||
+                    Character.getType(it) == Character.COMBINING_SPACING_MARK.toInt() }
+            if (start < 0 || end < start) {
+                token
+            } else {
+                val core = token.substring(start, end + 1)
+                val hit = dict.find(core)?.reading
+                val romanized = hit ?: romanizeWord(core, false)
+                token.substring(0, start) + romanized + token.substring(end + 1)
+            }
+        }.replace(Regex("\\s+"), " ").trim()
+        return result.takeIf { it.isNotEmpty() && !it.equals(source, ignoreCase = true) }
     }
 
     private const val OPENERS = "「『（([“‘<《〈"

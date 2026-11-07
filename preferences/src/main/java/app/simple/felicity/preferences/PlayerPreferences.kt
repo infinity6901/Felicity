@@ -17,6 +17,7 @@ object PlayerPreferences {
     const val CAPTION_BOX_OPACITY = "caption_box_opacity"
     const val CAPTION_GLOW = "caption_glow"
     const val CAPTION_TEXT_SIZE = "caption_text_size"
+    const val CAPTION_VERSION = "caption_version"
     const val CAPTION_COLOR_MODE = "caption_color_mode"
     const val CAPTION_PILL_OPACITY = "caption_pill_opacity"
     const val CAPTION_TEXT_COLOR = "caption_text_color"
@@ -107,6 +108,9 @@ object PlayerPreferences {
     fun setCaptionBoxOpacity(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_BOX_OPACITY, v) }
     fun isCaptionGlow(): Boolean = SharedPreferences.getSharedPreferences().getBoolean(CAPTION_GLOW, false)
     fun setCaptionGlow(v: Boolean) = SharedPreferences.getSharedPreferences().edit { putBoolean(CAPTION_GLOW, v) }
+    /** Which lyric version the player-screen caption shows: 0 original, 1 romanized, 2 translated. */
+    fun getCaptionVersion(): Int = SharedPreferences.getSharedPreferences().getInt(CAPTION_VERSION, 0)
+    fun setCaptionVersion(v: Int) = SharedPreferences.getSharedPreferences().edit { putInt(CAPTION_VERSION, v) }
     fun getCaptionTextSize(): Float = SharedPreferences.getSharedPreferences().getFloat(CAPTION_TEXT_SIZE, 16f)
     fun setCaptionTextSize(v: Float) = SharedPreferences.getSharedPreferences().edit { putFloat(CAPTION_TEXT_SIZE, v) }
     /** 0 theme, 1 accent, 2 white. */

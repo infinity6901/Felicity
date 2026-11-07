@@ -27,6 +27,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import app.simple.felicity.decorations.lrc.model.LrcData;
 import app.simple.felicity.decorations.lrc.model.LrcEntry;
+import app.simple.felicity.decorations.lrc.model.LyricVersions;
 import app.simple.felicity.decorations.lrc.model.WordEntry;
 import app.simple.felicity.decorations.typeface.TypeFace;
 import app.simple.felicity.preferences.AppearancePreferences;
@@ -278,6 +279,45 @@ public class LrcLineView extends View implements ThemeChangedListener {
      *
      * @param positionMs current playback position in milliseconds
      */
+    private int lyricVersion = LyricVersions.ORIGINAL;
+    private LrcEntry derivedEntry;
+    private String derivedText;
+    private List <WordEntry> derivedWords;
+    
+    /** Chooses which version of the lyrics the caption shows: original, romanized or translated. */
+    public void setLyricVersion(int version) {
+        if (version == lyricVersion) {
+            return;
+        }
+        lyricVersion = version;
+        derivedEntry = null;
+        invalidateCache();
+        boxKey = Long.MIN_VALUE;
+        requestLayout();
+        invalidate();
+    }
+    
+    /** Text of the chosen version for [entry], or null to use the original. */
+    @Nullable
+    private String versionText(@NonNull LrcEntry entry) {
+        return LyricVersions.versionText(entry, lyricVersion);
+    }
+    
+    /** Word timings that match the text that is displayed for [entry]. */
+    @NonNull
+    private List <WordEntry> wordsFor(@NonNull LrcEntry entry) {
+        String text = versionText(entry);
+        if (text == null) {
+            return entry.getWords();
+        }
+        if (derivedEntry != entry || derivedText == null || !derivedText.equals(text)) {
+            derivedWords = LyricVersions.deriveWords(entry.getWords(), text);
+            derivedEntry = entry;
+            derivedText = text;
+        }
+        return derivedWords;
+    }
+    
     public void updateTime(long positionMs) {
         if (lrcData == null || lrcData.isEmpty()) {
             return;
@@ -345,7 +385,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
      * Returns -1 if no word has started yet.
      */
     private int findCurrentWordIndex(@NonNull LrcEntry entry, long positionMs) {
-        List <WordEntry> words = entry.getWords();
+        List <WordEntry> words = wordsFor(entry);
         int result = -1;
         for (int i = 0; i < words.size(); i++) {
             if (words.get(i).getStartMs() <= positionMs) {
@@ -530,7 +570,7 @@ public class LrcLineView extends View implements ThemeChangedListener {
         int startOff = 0;
         int endOff = layout.getText().length();
         if (wordIdx >= 0) {
-            List <WordEntry> words = entry.getWords();
+            List <WordEntry> words = wordsFor(entry);
             startOff = 0;
             for (int i = 0; i < wordIdx && i < words.size(); i++) {
                 startOff += words.get(i).getText().length();
@@ -718,16 +758,18 @@ public class LrcLineView extends View implements ThemeChangedListener {
         
         LrcEntry entry = lrcData.getEntries().get(currentLineIndex);
         
+        String versionText = versionText(entry);
+        String plainText = versionText != null ? versionText : entry.getText();
         if (!entry.hasWordSync()) {
             // Plain line mode — use the theme's primary text color, nothing fancy
             textPaint.setColor(lineColor());
-            return entry.getText();
+            return plainText;
         }
         
-        List <WordEntry> words = entry.getWords();
+        List <WordEntry> words = wordsFor(entry);
         if (words.isEmpty()) {
             textPaint.setColor(lineColor());
-            return entry.getText();
+            return plainText;
         }
         
         // Word-by-word karaoke mode — sung words get the accent color, upcoming

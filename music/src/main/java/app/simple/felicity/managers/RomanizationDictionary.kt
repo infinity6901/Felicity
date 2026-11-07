@@ -28,6 +28,9 @@ internal class RomanizationDictionary private constructor(
     /** A stretch of the input; [entry] is null when no dictionary word covers it. */
     class Token(val text: String, val entry: Entry?)
 
+    /** The entry for exactly [word], or null. Used for scripts whose words are separated by spaces. */
+    fun find(word: String): Entry? = entries[word]
+
     /** The cheapest segmentation of [line] into dictionary words (single unknown characters otherwise). */
     fun segment(line: String): List<Token> {
         val n = line.length

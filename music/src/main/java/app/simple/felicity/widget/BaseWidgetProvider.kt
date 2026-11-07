@@ -311,7 +311,9 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
         accentColor = GlassRenderer.accentOf(art)
         GlassRenderer.frostedPane(
                 art, w, h, glassCornerDp * context.resources.displayMetrics.density,
-                GlassRenderer.Style(opacity = WidgetGlass.opacityFor(this@BaseWidgetProvider::class.java)))
+                GlassRenderer.Style(
+                        opacity = WidgetGlass.opacityFor(this@BaseWidgetProvider::class.java),
+                        transparency = WidgetGlass.transparencyFor(this@BaseWidgetProvider::class.java)))
     }
 
     protected fun dp(context: Context, value: Float): Float = value * context.resources.displayMetrics.density

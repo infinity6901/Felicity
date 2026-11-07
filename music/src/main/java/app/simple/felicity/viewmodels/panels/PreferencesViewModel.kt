@@ -75,6 +75,14 @@ class PreferencesViewModel(application: Application) : WrappedViewModel(applicat
 
             preferences.add(
                     Preference(
+                            title = R.string.widgets,
+                            description = R.string.widgets_desc,
+                            icon = R.drawable.ic_widgets
+                    )
+            )
+
+            preferences.add(
+                    Preference(
                             title = R.string.accessibility,
                             description = R.string.accessibility_desc,
                             icon = R.drawable.ic_accessibility

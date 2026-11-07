@@ -39,6 +39,8 @@ object RomanizationDictionaries {
     val PACKS = listOf(
             Pack("ja", "Japanese", "Kanji readings with word-aware spacing and particle sounds (は→wa, を→o). Based on IPAdic.", 2.7f),
             Pack("zh", "Chinese (Mandarin)", "Phrase-aware pinyin, so characters with several readings are romanized correctly.", 0.7f),
+            Pack("hi", "Hindi", "Spoken-style romanization with schwa deletion (kamal, not kamala) and common spellings, for about 24,000 frequent words.", 0.3f),
+            Pack("bn", "Bengali", "Silent final vowels, doubled conjuncts (shotto) and common spellings, for about 57,000 frequent words.", 0.7f),
     )
 
     /** Bumped on every install / removal so cached romanizations can be recomputed. */

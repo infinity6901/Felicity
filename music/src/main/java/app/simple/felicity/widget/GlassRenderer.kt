@@ -44,7 +44,12 @@ object GlassRenderer {
             /** Strength (0..1) of the top highlight and diagonal sheen. */
             val sheen: Float = 0.28f,
             /** Opacity (0..1) of the whole pane; below 1 whatever is behind the widget shows through. */
-            val opacity: Float = 1f
+            val opacity: Float = 1f,
+            /**
+             * How see-through the blurred artwork behind the frost is (0 = fully visible, 1 = clear glass).
+             * Unlike [opacity] the frost, sheen, grain and rim stay, so the pane still reads as glass.
+             */
+            val transparency: Float = 0f
     )
 
     private const val WORK_SIZE = 96f
@@ -234,6 +239,7 @@ object GlassRenderer {
         val blurred = blurredCopy(art, w, h, style.blurRadius)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         paint.colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(style.saturation) })
+        paint.alpha = (255 * (1f - style.transparency.coerceIn(0f, 1f))).toInt()
         canvas.drawBitmap(blurred, null, area, paint)
 
         val fill = Paint(Paint.ANTI_ALIAS_FLAG)

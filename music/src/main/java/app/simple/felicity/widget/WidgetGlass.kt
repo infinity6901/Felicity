@@ -17,8 +17,11 @@ object WidgetGlass {
     const val MAX_PERCENT = 100f
     const val DEFAULT_PERCENT = 100f
 
-    private const val KEY_SHARED = "widget_glass_shared"
+    const val KEY_SHARED = "widget_glass_shared"
     private const val KEY_ALL = "widget_glass_all"
+    private const val KEY_TRANSPARENCY_ALL = "widget_glass_transparency_all"
+    const val DEFAULT_TRANSPARENCY = 0f
+    const val MAX_TRANSPARENCY = 90f
 
     enum class Kind(val key: String, val provider: Class<out BaseWidgetProvider>) {
         BAR("widget_glass_bar", GlassBarWidgetProvider::class.java),
@@ -38,6 +41,23 @@ object WidgetGlass {
 
     fun getPercent(kind: Kind): Float = prefs.getFloat(kind.key, DEFAULT_PERCENT)
     fun setPercent(kind: Kind, value: Float) = prefs.edit { putFloat(kind.key, value.coerceIn(MIN_PERCENT, MAX_PERCENT)) }
+
+    fun getAllTransparency(): Float = prefs.getFloat(KEY_TRANSPARENCY_ALL, DEFAULT_TRANSPARENCY)
+    fun setAllTransparency(value: Float) = prefs.edit { putFloat(KEY_TRANSPARENCY_ALL, value.coerceIn(0f, MAX_TRANSPARENCY)) }
+
+    fun getTransparency(kind: Kind): Float = prefs.getFloat(kind.key + "_transparency", DEFAULT_TRANSPARENCY)
+    fun setTransparency(kind: Kind, value: Float) =
+        prefs.edit { putFloat(kind.key + "_transparency", value.coerceIn(0f, MAX_TRANSPARENCY)) }
+
+    /** How see-through (0..0.9) the blurred artwork of the widget class [provider] is. */
+    fun transparencyFor(provider: Class<*>): Float {
+        val percent = if (isShared()) {
+            getAllTransparency()
+        } else {
+            Kind.entries.firstOrNull { it.provider == provider }?.let { getTransparency(it) } ?: DEFAULT_TRANSPARENCY
+        }
+        return (percent / 100f).coerceIn(0f, MAX_TRANSPARENCY / 100f)
+    }
 
     /** Opacity (0.1..1) to paint the glass of the widget class [provider] with. */
     fun opacityFor(provider: Class<*>): Float {

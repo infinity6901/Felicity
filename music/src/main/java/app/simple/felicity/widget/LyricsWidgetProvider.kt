@@ -107,11 +107,17 @@ open class LyricsWidgetProvider : BaseWidgetProvider() {
                 views.setTextViewText(R.id.widget_lyric_next, "")
             }
             else -> {
-                views.setTextViewText(R.id.widget_lyric_prev, lines.prev)
-                views.setTextViewText(R.id.widget_lyric_current, lines.current)
-                views.setTextViewText(R.id.widget_lyric_next, lines.next)
+                val neighbours = WidgetLyricStyle.isShowNeighbours()
+                views.setTextViewText(R.id.widget_lyric_prev, if (neighbours) lines.prev else "")
+                views.setTextViewText(R.id.widget_lyric_current, WidgetLyricStyle.styleCurrent(lines.current))
+                views.setTextViewText(R.id.widget_lyric_next, if (neighbours) lines.next else "")
             }
         }
+        val currentSize = WidgetLyricStyle.getSize()
+        views.setTextViewTextSize(R.id.widget_lyric_current, android.util.TypedValue.COMPLEX_UNIT_SP, currentSize)
+        val neighbourSize = (currentSize * 0.65f).coerceAtLeast(10f)
+        views.setTextViewTextSize(R.id.widget_lyric_prev, android.util.TypedValue.COMPLEX_UNIT_SP, neighbourSize)
+        views.setTextViewTextSize(R.id.widget_lyric_next, android.util.TypedValue.COMPLEX_UNIT_SP, neighbourSize)
 
         views.setImageViewResource(
                 R.id.widget_play_pause,

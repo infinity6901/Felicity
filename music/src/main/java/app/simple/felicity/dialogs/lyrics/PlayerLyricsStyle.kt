@@ -42,6 +42,7 @@ object PlayerLyricsStyle {
 
     /** Pushes every saved caption setting onto [view]. */
     fun apply(view: LrcLineView) {
+        view.setLyricVersion(PlayerPreferences.getCaptionVersion())
         view.setTextSizeSp(PlayerPreferences.getCaptionTextSize())
         view.setTransitionMode(PlayerPreferences.getCaptionTransition())
         view.setBoxEnabled(PlayerPreferences.isCaptionBox())
@@ -373,6 +374,11 @@ private class PlayerLyricsStyleScreen(
                     slider("Text size", 12, 28, { PlayerPreferences.getCaptionTextSize().roundToInt() }, " sp") {
                         edit { PlayerPreferences.setCaptionTextSize(it.toFloat()) }
                     },
+                    block("Lyrics shown (falls back to original if a line has no romanization or translation)",
+                          chips(listOf("Original", "Romanized", "Translated"),
+                                { PlayerPreferences.getCaptionVersion() }) {
+                              edit { PlayerPreferences.setCaptionVersion(it) }
+                          }),
                     block("Line animation", chips(listOf("None", "Fade", "Slide up", "Pop"),
                                                   { PlayerPreferences.getCaptionTransition() }) {
                         edit { PlayerPreferences.setCaptionTransition(it) }
@@ -422,6 +428,7 @@ private class PlayerLyricsStyleScreen(
 
     private fun resetToDefaults() = edit {
         PlayerPreferences.setCaptionTextSize(16f)
+        PlayerPreferences.setCaptionVersion(0)
         PlayerPreferences.setCaptionTransition(0)
         PlayerPreferences.setCaptionBox(false)
         PlayerPreferences.setCaptionBoxOpacity(35)

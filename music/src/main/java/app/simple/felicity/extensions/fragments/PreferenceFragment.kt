@@ -29,6 +29,7 @@ import app.simple.felicity.models.Preference
 import app.simple.felicity.models.SeekbarState
 import app.simple.felicity.preferences.AccessibilityPreferences
 import app.simple.felicity.widget.WidgetGlass
+import app.simple.felicity.widget.WidgetLyricStyle
 import app.simple.felicity.preferences.AlbumArtPreferences
 import app.simple.felicity.preferences.AppearancePreferences
 import app.simple.felicity.preferences.AudioPreferences
@@ -114,6 +115,7 @@ abstract class PreferenceFragment : MediaFragment() {
      * Behavior Preferences: [createBehaviorPanel]
      * Engine Preferences: [createEnginePanel]
      * Library Preferences: [createLibraryPanel]
+     * Widgets Preferences: [createWidgetsPanel]
      * Accessibility Preferences: [createAccessibilityPanel]
      * About Preferences: [createAboutPanel]
      */
@@ -317,57 +319,6 @@ abstract class PreferenceFragment : MediaFragment() {
         )
 
 
-        val glassHeader = Preference(type = PreferenceType.SUB_HEADER, title = R.string.glass_widgets)
-
-        val glassShared = Preference(
-                title = R.string.glass_opacity_shared,
-                summary = R.string.glass_opacity_shared_summary,
-                icon = R.drawable.ic_invert,
-                type = PreferenceType.SWITCH,
-                onPreferenceAction = { view, callback ->
-                    WidgetGlass.setShared((view as FelicitySwitch).isChecked)
-                    WidgetGlass.refreshWidgets(requireContext())
-                },
-                valueProvider = Supplier { WidgetGlass.isShared() }
-        )
-
-        fun glassSlider(title: Int, summary: Int, read: () -> Float, write: (Float) -> Unit) = Preference(
-                title = title,
-                summary = summary,
-                icon = R.drawable.ic_invert,
-                type = PreferenceType.SLIDER,
-                onPreferenceAction = { view, callback ->
-                    write((view as FelicitySeekbar).getProgress())
-                    WidgetGlass.refreshWidgets(requireContext())
-                },
-                valueProvider = Supplier {
-                    SeekbarState(
-                            position = read(),
-                            max = WidgetGlass.MAX_PERCENT,
-                            min = WidgetGlass.MIN_PERCENT,
-                            default = WidgetGlass.DEFAULT_PERCENT,
-                            leftLabel = false,
-                            rightLabel = true,
-                            rightLabelProvider = { progress, _, _ ->
-                                String.format(Locale.getDefault(), "%.0f %%", progress)
-                            },
-                    )
-                }
-        )
-
-        val glassAll = glassSlider(R.string.glass_opacity_all, R.string.glass_opacity_all_summary,
-                                   { WidgetGlass.getAllPercent() }, { WidgetGlass.setAllPercent(it) })
-        val glassIndividual = listOf(
-                WidgetGlass.Kind.BAR to R.string.glass_opacity_bar,
-                WidgetGlass.Kind.CARD to R.string.glass_opacity_card,
-                WidgetGlass.Kind.PLAYER to R.string.glass_opacity_player,
-                WidgetGlass.Kind.LYRICS to R.string.glass_opacity_lyrics,
-                WidgetGlass.Kind.UP_NEXT to R.string.glass_opacity_up_next,
-        ).map { (kind, title) ->
-            glassSlider(title, R.string.glass_opacity_individual_summary,
-                        { WidgetGlass.getPercent(kind) }, { WidgetGlass.setPercent(kind, it) })
-        }
-
         preferences.add(colors)
         preferences.add(themes)
         preferences.add(accentColor)
@@ -386,10 +337,165 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(albumArtCorners)
         preferences.add(albumArtCrop)
         preferences.add(albumArtGreyscale)
-        preferences.add(glassHeader)
-        preferences.add(glassShared)
-        preferences.add(glassAll)
-        glassIndividual.forEach { preferences.add(it) }
+
+        return preferences
+    }
+
+    protected fun createWidgetsPanel(): List<Preference> {
+        val preferences = mutableListOf<Preference>()
+
+        fun percentSlider(
+                title: Int, summary: Int, min: Float, max: Float, default: Float,
+                read: () -> Float, write: (Float) -> Unit
+        ) = Preference(
+                title = title,
+                summary = summary,
+                icon = R.drawable.ic_invert,
+                type = PreferenceType.SLIDER,
+                onPreferenceAction = { view, callback ->
+                    write((view as FelicitySeekbar).getProgress())
+                    WidgetGlass.refreshWidgets(requireContext())
+                },
+                valueProvider = Supplier {
+                    SeekbarState(
+                            position = read(), max = max, min = min, default = default,
+                            leftLabel = false, rightLabel = true,
+                            rightLabelProvider = { progress, _, _ ->
+                                String.format(Locale.getDefault(), "%.0f %%", progress)
+                            },
+                    )
+                }
+        )
+
+        preferences.add(Preference(type = PreferenceType.SUB_HEADER, title = R.string.glass_widgets))
+        preferences.add(Preference(
+                title = R.string.glass_opacity_shared,
+                summary = R.string.glass_opacity_shared_summary,
+                icon = R.drawable.ic_invert,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, callback ->
+                    WidgetGlass.setShared((view as FelicitySwitch).isChecked)
+                    WidgetGlass.refreshWidgets(requireContext())
+                },
+                valueProvider = Supplier { WidgetGlass.isShared() }
+        ))
+
+        if (WidgetGlass.isShared()) {
+            preferences.add(percentSlider(
+                    R.string.glass_opacity_all, R.string.glass_opacity_all_summary,
+                    WidgetGlass.MIN_PERCENT, WidgetGlass.MAX_PERCENT, WidgetGlass.DEFAULT_PERCENT,
+                    { WidgetGlass.getAllPercent() }, { WidgetGlass.setAllPercent(it) }))
+            preferences.add(percentSlider(
+                    R.string.glass_transparency_all, R.string.glass_transparency_all_summary,
+                    0f, WidgetGlass.MAX_TRANSPARENCY, WidgetGlass.DEFAULT_TRANSPARENCY,
+                    { WidgetGlass.getAllTransparency() }, { WidgetGlass.setAllTransparency(it) }))
+        } else {
+            listOf(
+                    Triple(WidgetGlass.Kind.BAR, R.string.glass_opacity_bar, R.string.glass_transparency_bar),
+                    Triple(WidgetGlass.Kind.CARD, R.string.glass_opacity_card, R.string.glass_transparency_card),
+                    Triple(WidgetGlass.Kind.PLAYER, R.string.glass_opacity_player, R.string.glass_transparency_player),
+                    Triple(WidgetGlass.Kind.LYRICS, R.string.glass_opacity_lyrics, R.string.glass_transparency_lyrics),
+                    Triple(WidgetGlass.Kind.UP_NEXT, R.string.glass_opacity_up_next, R.string.glass_transparency_up_next),
+            ).forEach { (kind, opacityTitle, transparencyTitle) ->
+                preferences.add(percentSlider(
+                        opacityTitle, R.string.glass_individual_summary,
+                        WidgetGlass.MIN_PERCENT, WidgetGlass.MAX_PERCENT, WidgetGlass.DEFAULT_PERCENT,
+                        { WidgetGlass.getPercent(kind) }, { WidgetGlass.setPercent(kind, it) }))
+                preferences.add(percentSlider(
+                        transparencyTitle, R.string.glass_individual_summary,
+                        0f, WidgetGlass.MAX_TRANSPARENCY, WidgetGlass.DEFAULT_TRANSPARENCY,
+                        { WidgetGlass.getTransparency(kind) }, { WidgetGlass.setTransparency(kind, it) }))
+            }
+        }
+
+        fun choice(
+                title: Int, summary: Int, options: List<Int>,
+                read: () -> Int, write: (Int) -> Unit
+        ) = Preference(
+                title = title,
+                summary = summary,
+                icon = R.drawable.ic_text_fields,
+                type = PreferenceType.POPUP,
+                valueProvider = { getString(options[read().coerceIn(0, options.lastIndex)]) },
+                onPreferenceAction = { view, callback ->
+                    SharedScrollViewPopup(
+                            container = requireContainerView(),
+                            anchorView = view,
+                            menuItems = options.map { PopupMenuItem(title = it) },
+                            onMenuItemClick = { picked ->
+                                val index = options.indexOf(picked)
+                                if (index >= 0) {
+                                    write(index)
+                                    (view as TextView).text = getString(picked)
+                                    WidgetLyricStyle.refresh(requireContext())
+                                }
+                            }
+                    ).show()
+                }
+        )
+
+        fun toggle(title: Int, summary: Int, read: () -> Boolean, write: (Boolean) -> Unit) = Preference(
+                title = title,
+                summary = summary,
+                icon = R.drawable.ic_text_fields,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, callback ->
+                    write((view as FelicitySwitch).isChecked)
+                    WidgetLyricStyle.refresh(requireContext())
+                },
+                valueProvider = Supplier { read() }
+        )
+
+        fun lyricSlider(
+                title: Int, summary: Int, min: Float, max: Float, default: Float,
+                unit: String, read: () -> Float, write: (Float) -> Unit
+        ) = Preference(
+                title = title,
+                summary = summary,
+                icon = R.drawable.ic_text_fields,
+                type = PreferenceType.SLIDER,
+                onPreferenceAction = { view, callback ->
+                    write((view as FelicitySeekbar).getProgress())
+                    WidgetLyricStyle.refresh(requireContext())
+                },
+                valueProvider = Supplier {
+                    SeekbarState(
+                            position = read(), max = max, min = min, default = default,
+                            leftLabel = false, rightLabel = true,
+                            rightLabelProvider = { progress, _, _ ->
+                                String.format(Locale.getDefault(), "%.0f %s", progress, unit)
+                            },
+                    )
+                }
+        )
+
+        preferences.add(Preference(type = PreferenceType.SUB_HEADER, title = R.string.widget_lyrics_header))
+        preferences.add(choice(
+                R.string.widget_lyric_version, R.string.widget_lyric_version_summary,
+                listOf(R.string.widget_lyric_version_original, R.string.widget_lyric_version_romanized,
+                       R.string.widget_lyric_version_translated),
+                { WidgetLyricStyle.getVersion() }, { WidgetLyricStyle.setVersion(it) }))
+        preferences.add(toggle(
+                R.string.widget_lyric_neighbours, R.string.widget_lyric_neighbours_summary,
+                { WidgetLyricStyle.isShowNeighbours() }, { WidgetLyricStyle.setShowNeighbours(it) }))
+        preferences.add(lyricSlider(
+                R.string.widget_lyric_size, R.string.widget_lyric_size_summary,
+                WidgetLyricStyle.SIZE_MIN, WidgetLyricStyle.SIZE_MAX, WidgetLyricStyle.SIZE_DEFAULT, "sp",
+                { WidgetLyricStyle.getSize() }, { WidgetLyricStyle.setSize(it) }))
+        preferences.add(choice(
+                R.string.widget_lyric_color, R.string.widget_lyric_note,
+                listOf(R.string.widget_lyric_color_default, R.string.widget_lyric_color_accent,
+                       R.string.widget_lyric_color_white),
+                { WidgetLyricStyle.getColorMode() }, { WidgetLyricStyle.setColorMode(it) }))
+        preferences.add(toggle(
+                R.string.widget_lyric_box, R.string.widget_lyric_box_summary,
+                { WidgetLyricStyle.isBox() }, { WidgetLyricStyle.setBox(it) }))
+        if (WidgetLyricStyle.isBox()) {
+            preferences.add(lyricSlider(
+                    R.string.widget_lyric_box_opacity, R.string.widget_lyric_box_summary,
+                    WidgetLyricStyle.BOX_MIN, WidgetLyricStyle.BOX_MAX, WidgetLyricStyle.BOX_DEFAULT, "%",
+                    { WidgetLyricStyle.getBoxOpacity() }, { WidgetLyricStyle.setBoxOpacity(it) }))
+        }
 
         return preferences
     }
