@@ -36,7 +36,7 @@ The primary player listener now refreshes the standby target on `onMediaItemTran
 ## Active-player promotion transaction (implementation step)
 
 - Added `promoteStandbyPlayerAfterFade()` to the playback service.
-- Promotion is restricted to the Android shared-mixer path; USB DAC, AAudio and Oboe routes are rejected until both renderer factories can guarantee compatible simultaneous output and role reversal.
+- Promotion is rejected only for the exclusive USB DAC route. AAudio and Oboe are allowed (see "Known limitation: output route alternates" below).
 - The transaction rebinds player/analytics listeners, swaps the active and standby ExoPlayer references, swaps their independent DSP-manager references, reattaches visualizer/equalizer ownership, and points the MediaLibrarySession at the promoted player.
 - The outgoing player is muted/paused and retained as the permanent standby instance; the queue-preload synchronizer then prepares its next target.
 - A rollback path restores player references, listeners, DSP ownership, and MediaSession if a handoff step throws.
@@ -47,5 +47,21 @@ The primary player listener now refreshes the standby target on `onMediaItemTran
 1. Compile `:engine:compileDebugKotlin` and run the engine unit tests in an environment with the Gradle 9.8.1 distribution available.
 2. Verify a complete transition on Android AudioTrack, including notification/MediaSession controls and track-stat updates.
 3. Test pause/resume, manual next/previous, seek, queue replacement, repeat/shuffle changes, and service destruction during the fade.
-4. Confirm native USB DAC/AAudio/Oboe routes remain on the guarded non-overlap path.
+4. Confirm the USB DAC route remains on the guarded non-overlap path, and that AAudio/Oboe crossfades are clean (no burst at the start of the incoming deck, no gap at handoff).
 5. Only then remove the now-unused temporary-player compatibility code and consider enabling dual overlap for additional output backends.
+
+## Known limitation: output route alternates between songs when crossfading on AAudio/Oboe
+
+Crossfade now works on AAudio and Oboe, but only because the two decks use different output paths:
+
+- The standby deck is built by `DualPlayerStandbyRenderersFactory` with a plain `DefaultAudioSink` (AudioTrack). It never owns a native stream.
+- The primary deck uses `FelicityAudioSink`, which owns the single global AAudio/Oboe stream. During a fade it is faded in software (`FelicityAudioSink.applyOutputGain`), while the other deck mixes in through AudioTrack.
+- Promotion swaps the decks, so after a crossfade the playing song is on AudioTrack and the old native deck becomes standby. At the next crossfade the roles reverse. Result: with crossfade enabled, songs alternate between the native route and AudioTrack instead of staying on the native route.
+
+Consequences to keep in mind: the chosen low-latency / bit-perfect-style path is not used for every song; both paths must produce the same loudness and DSP result; and `FelicityAudioSink.isAAudioStreamActive` / `isOboeStreamActive` are process-wide flags that only one deck is meant to set.
+
+Possible ways to address it later:
+
+1. Give both decks a sink that can render to the shared native stream, mixing the standby deck's float PCM into the primary's native write (needs matching sample rate and channel count, or resampling).
+2. Make the native stream owner follow the active deck: after promotion, reopen the native route on the new active deck mid-song (needs a seamless handoff).
+3. Offer a setting: crossfade on AudioTrack only, or keep native output and skip crossfade (the previous behaviour).
