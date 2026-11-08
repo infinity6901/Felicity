@@ -268,6 +268,10 @@ class TiledHome : BaseHomeFragment() {
             tiles.add(SpannedTile.PanelTile(R.string.bookmarks, R.drawable.ic_bookmark_16dp))
         }
 
+        tiles.add(SpannedTile.PanelTile(R.string.online, R.drawable.ic_radio))
+        if (app.simple.felicity.repository.youtube.YoutubeSupport.AVAILABLE)
+            tiles.add(SpannedTile.PanelTile(R.string.youtube_panel, R.drawable.ic_radio))
+
         tiles.add(SpannedTile.PanelTile(R.string.preferences, R.drawable.ic_settings))
 
         return tiles

@@ -111,7 +111,7 @@ class ArtFlowHome : MediaFragment() {
                             container = requireActivity().findViewById(R.id.app_container),
                             anchorView = anchorView,
                             backProgression = false,
-                            menuItems = listOf(
+                            menuItems = listOfNotNull(
                                     PopupMenuItem(title = R.string.album_artists, icon = R.drawable.ic_artist),
                                     PopupMenuItem(title = R.string.composers, icon = R.drawable.ic_composer),
                                     PopupMenuItem(title = R.string.genres, icon = R.drawable.ic_piano),
@@ -126,7 +126,11 @@ class ArtFlowHome : MediaFragment() {
                                     PopupMenuItem(title = R.string.most_played, icon = R.drawable.ic_equalizer),
                                     PopupMenuItem(title = R.string.always_skipped, icon = R.drawable.ic_skip_next),
                                     PopupMenuItem(title = R.string.most_skipped, icon = R.drawable.ic_skip_next),
-                                    PopupMenuItem(title = R.string.bookmarks, icon = R.drawable.ic_bookmark_16dp)
+                                    PopupMenuItem(title = R.string.bookmarks, icon = R.drawable.ic_bookmark_16dp),
+                                    PopupMenuItem(title = R.string.online, icon = R.drawable.ic_radio),
+                                    if (app.simple.felicity.repository.youtube.YoutubeSupport.AVAILABLE)
+                                        PopupMenuItem(title = R.string.youtube_panel, icon = R.drawable.ic_radio)
+                                    else null
                             ),
                             onMenuItemClick = { itemResId ->
                                 when (itemResId) {
@@ -145,6 +149,11 @@ class ArtFlowHome : MediaFragment() {
                                     R.string.always_skipped -> openFragment(AlwaysSkipped.newInstance(), AlwaysSkipped.TAG)
                                     R.string.most_skipped -> openFragment(MostSkipped.newInstance(), MostSkipped.TAG)
                                     R.string.bookmarks -> openFragment(Bookmarks.newInstance(), Bookmarks.TAG)
+                                    R.string.online -> openFragment(
+                                            app.simple.felicity.ui.panels.Online.newInstance(), app.simple.felicity.ui.panels.Online.TAG)
+                                    R.string.youtube_panel -> openFragment(
+                                            app.simple.felicity.ui.panels.YoutubeSection.newInstance(),
+                                            app.simple.felicity.ui.panels.YoutubeSection.TAG)
                                     else -> Log.w(TAG, "Unknown popup item clicked: $itemResId")
                                 }
                             },

@@ -164,6 +164,10 @@ class DashboardViewModel @Inject constructor(
         if (UserInterfacePreferences.isPanelVisible(UserInterfacePreferences.PANEL_MOST_SKIPPED))
             panels.add(Panel(R.string.most_skipped, R.drawable.ic_skip_16dp))
 
+        panels.add(Panel(R.string.online, R.drawable.ic_radio))
+        if (app.simple.felicity.repository.youtube.YoutubeSupport.AVAILABLE)
+            panels.add(Panel(R.string.youtube_panel, R.drawable.ic_radio))
+
         return panels
     }
 
