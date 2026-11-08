@@ -414,6 +414,12 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             })
             holder.b.details.text = buildList {
                 add(c.provider)
+                // Spelled out in the details too, starred for word-by-word, so it reads at a glance.
+                add(when {
+                    c.wordSynced -> "★ " + getString(R.string.lyrics_word_by_word)
+                    c.synced -> getString(R.string.lyrics_line_by_line)
+                    else -> getString(R.string.lyrics_plain_text)
+                })
                 add("${c.lineCount} lines")
                 if (c.durationSec > 0) add(String.format(java.util.Locale.US, "%d:%02d", c.durationSec / 60, c.durationSec % 60))
                 add("${c.confidence}%")
