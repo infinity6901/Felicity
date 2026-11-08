@@ -604,7 +604,7 @@ abstract class PreferenceFragment : MediaFragment() {
                             anchorView = view,
                             menuItems = names.map { PopupMenuItem(title = it) },
                             onMenuItemClick = { picked ->
-                                val index = names.indexOf(picked)
+                                val index = names.indexOf(picked as? String)
                                 if (index >= 0) {
                                     LyricsPreferences.setPreferredSource(index)
                                     (view as TextView).text = names[index]
