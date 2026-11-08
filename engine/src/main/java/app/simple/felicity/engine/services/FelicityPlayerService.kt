@@ -1389,6 +1389,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (recoverFromStuckPlayer(error)) return
             when (error.errorCode) {
                 PlaybackException.ERROR_CODE_DECODING_FAILED,
                 PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
@@ -1850,6 +1851,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // Progress follows the outgoing track's own media clock instead of counting timer
             // ticks, so the curve stays exact through pauses, speed changes and delayed ticks.
             val fadeStartPositionMs = outgoing.currentPosition
+            var lastFadeLogMs = 0L
+            Log.d(TAG, "Dual-player fade: start fadeMs=$fadeDurationMs remaining=${actualRemainingMs}ms " +
+                    "outPos=$fadeStartPositionMs inPos=${incoming.currentPosition}")
             while (true) {
                 if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
                 // A manual pause pauses both decks. Resume only when the active deck resumes.
@@ -1879,6 +1883,13 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 val gains = CrossfadeMath.equalPowerGains(progress)
                 outgoing.volume = gains.outgoing
                 incoming.volume = gains.incoming
+                val nowMs = SystemClock.elapsedRealtime()
+                if (nowMs - lastFadeLogMs >= 500L) {
+                    lastFadeLogMs = nowMs
+                    Log.d(TAG, "Dual-player fade: p=${"%.2f".format(progress)} out=${"%.2f".format(gains.outgoing)} " +
+                            "in=${"%.2f".format(gains.incoming)} outPos=${outgoing.currentPosition} " +
+                            "inPos=${incoming.currentPosition} inPlaying=${incoming.isPlaying}")
+                }
                 if (progress >= 1f) break
                 delay(CrossfadeMath.wallClockStepMs(FADE_TICK_MEDIA_MS, outgoing.playbackParameters.speed))
             }
@@ -1900,6 +1911,31 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 if (dualPlayerFadeJob === job) dualPlayerFadeJob = null
             }
         }
+    }
+
+    private var lastStuckRecoveryMs = 0L
+
+    /**
+     * ExoPlayer's stuck-player detector raises ERROR_CODE_TIMEOUT when playback reports "playing" but
+     * makes no progress for 10 s, which happens after an audio route is rebuilt (for example several
+     * output-sink switches in a row). Preparing again at the same position rebuilds the sink and
+     * normally resumes playback, so it is tried once (at most every 30 s) before the error is reported.
+     */
+    private fun recoverFromStuckPlayer(error: PlaybackException): Boolean {
+        if (error.errorCode != PlaybackException.ERROR_CODE_TIMEOUT) return false
+        val stuck = generateSequence(error as Throwable?) { it.cause }.any { it.javaClass.simpleName == "StuckPlayerException" }
+        val now = SystemClock.elapsedRealtime()
+        if (!stuck || now - lastStuckRecoveryMs < 30_000L) return false
+        lastStuckRecoveryMs = now
+        Log.w(TAG, "Player stuck with no progress; re-preparing at the current position")
+        cancelCrossfadeIfActive()
+        val index = player.currentMediaItemIndex
+        val position = player.currentPosition
+        player.stop()
+        player.seekTo(index, position)
+        player.prepare()
+        player.playWhenReady = true
+        return true
     }
 
     /** Silences the standby, restores the active player and backs off before the next attempt. */

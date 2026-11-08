@@ -932,6 +932,8 @@ class FelicityAudioSink(
     @Volatile
     private var outputVolume = 1f
 
+    private var lastGainLogMs = 0L
+
     /** The gain actually applied to the previous buffer, so changes ramp instead of clicking. */
     private var appliedVolume = 1f
 
@@ -943,6 +945,11 @@ class FelicityAudioSink(
         val target = outputVolume
         val start = appliedVolume
         if (start == 1f && target == 1f) return
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastGainLogMs >= 500L) {
+            lastGainLogMs = nowMs
+            Log.d(TAG, "software gain: applied=$start target=$target sink=$activeSinkType")
+        }
         val channels = channelCount.coerceAtLeast(1)
         val frames = sampleCount / channels
         if (frames <= 0) return
