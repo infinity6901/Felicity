@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lyrics_sources">Lyrics sources</string>
+    <string name="lyrics_source_better_lyrics">Better Lyrics</string>
+    <string name="lyrics_source_lyricsplus">LyricsPlus</string>
+    <string name="lyrics_source_lrclib">LRCLib</string>
+    <string name="lyrics_source_summary">Ask this source when looking for lyrics.</string>
+    <string name="lyrics_preferred_source">Preferred source</string>
+    <string name="lyrics_preferred_source_summary">Used first when more than one source has word-timed lyrics for the song.</string>
+</resources>

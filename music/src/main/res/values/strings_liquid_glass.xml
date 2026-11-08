@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="liquid_glass">Liquid glass</string>
+    <string name="liquid_glass_summary">Frosted, see-through floating surfaces. Starts with the mini player.</string>
+    <string name="glass_intensity">Glass intensity</string>
+    <string name="glass_intensity_summary">Higher is more see-through; lower is closer to a solid surface.</string>
+</resources>

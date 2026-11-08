@@ -34,3 +34,7 @@ local.properties
 /signing/
 *.jks
 *.keystore
+
+# Python bytecode
+__pycache__/
+*.pyc

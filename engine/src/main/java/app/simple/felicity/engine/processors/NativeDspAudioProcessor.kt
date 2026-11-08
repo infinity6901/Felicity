@@ -84,6 +84,13 @@ class NativeDspAudioProcessor(
     private var tagReplayGainLinearGain: Float = 1f
 
     /**
+     * Linear gain set from outside the user's own settings, such as proximity volume. Multiplied
+     * in the same pass as the other gains; 1.0 (unity) when nothing is using it.
+     */
+    @Volatile
+    var externalLinearGain: Float = 1f
+
+    /**
      * When set to `true`, [queueInput] becomes a transparent passthrough — the buffer is
      * returned from [getOutput] unchanged and no DSP is applied. This lets [FelicityAudioSink]
      * own the DSP execution when USB or AAudio is the active output, while still keeping this
@@ -324,7 +331,7 @@ class NativeDspAudioProcessor(
             workBuf = FloatArray(numSamples)
         }
 
-        val preamp = preampLinearGain * replayGainLinearGain * tagReplayGainLinearGain
+        val preamp = preampLinearGain * replayGainLinearGain * tagReplayGainLinearGain * externalLinearGain
 
         /**
          * Input stage: all PCM encodings are converted to 32-bit float here.

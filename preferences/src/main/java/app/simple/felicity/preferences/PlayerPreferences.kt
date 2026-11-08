@@ -93,6 +93,17 @@ object PlayerPreferences {
         SharedPreferences.getSharedPreferences().edit { putBoolean(SHOW_LYRICS, value) }
     }
 
+    const val BLUETOOTH_RESUME = "bluetooth_resume"
+    const val PROXIMITY_VOLUME = "proximity_volume"
+
+    /** Start the music again when Bluetooth audio connects after it stopped because the output went away. */
+    fun isBluetoothResume(): Boolean = SharedPreferences.getSharedPreferences().getBoolean(BLUETOOTH_RESUME, false)
+    fun setBluetoothResume(value: Boolean) { SharedPreferences.getSharedPreferences().edit().putBoolean(BLUETOOTH_RESUME, value).apply() }
+
+    /** Turn the music down as the listener walks away from the phone (Bluetooth headphones only). */
+    fun isProximityVolume(): Boolean = SharedPreferences.getSharedPreferences().getBoolean(PROXIMITY_VOLUME, false)
+    fun setProximityVolume(value: Boolean) { SharedPreferences.getSharedPreferences().edit().putBoolean(PROXIMITY_VOLUME, value).apply() }
+
     fun isShowLyrics(): Boolean {
         return SharedPreferences.getSharedPreferences().getBoolean(SHOW_LYRICS, true)
     }

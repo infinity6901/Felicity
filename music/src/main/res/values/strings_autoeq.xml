@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="autoeq_menu">Headphone curve (AutoEq)</string>
+    <string name="autoeq_title">Headphone curve</string>
+    <string name="autoeq_search_hint">Search your headphones</string>
+    <string name="autoeq_loading">Loading the list of headphones…</string>
+    <string name="autoeq_type_to_search">Type a model name to search.</string>
+    <string name="autoeq_offline">Could not reach AutoEq. Check your connection and try again.</string>
+    <string name="autoeq_not_ten_bands">This model has no ten-band curve.</string>
+    <string name="autoeq_applied">Applied the curve for %1$s</string>
+</resources>

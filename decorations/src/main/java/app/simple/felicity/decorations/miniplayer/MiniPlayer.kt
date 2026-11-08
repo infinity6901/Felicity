@@ -1827,6 +1827,18 @@ class MiniPlayer @JvmOverloads constructor(
     // -------------------------------------------------------------------------
 
     private var cardColor: Int = ThemeManager.theme.viewGroupTheme.backgroundColor
+
+    /**
+     * Multiplies the card's opacity: 1 draws the card as themed, below 1 lets what is behind it show
+     * through, which is what liquid glass asks for. The card's own color and its animations are untouched.
+     */
+    var glassAlpha: Float = 1f
+        set(value) {
+            val clamped = value.coerceIn(0f, 1f)
+            if (field == clamped) return
+            field = clamped
+            invalidate()
+        }
     private var titleColor: Int = ThemeManager.theme.textViewTheme.primaryTextColor
     private var artistColor: Int = ThemeManager.theme.textViewTheme.secondaryTextColor
     private var iconColor: Int = ThemeManager.theme.iconTheme.regularIconColor
@@ -2123,8 +2135,9 @@ class MiniPlayer @JvmOverloads constructor(
         val cardSave = canvas.save()
         canvas.translate(0f, buttonStripHeightPx)
 
-        // 1. Card background
-        bgPaint.color = cardColor
+        // 1. Card background (translucent while liquid glass is on)
+        bgPaint.color = if (glassAlpha >= 1f) cardColor else
+            Color.argb((Color.alpha(cardColor) * glassAlpha).toInt(), Color.red(cardColor), Color.green(cardColor), Color.blue(cardColor))
         canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, bgPaint)
 
         // 2. Optional stroke border

@@ -606,8 +606,19 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         textSizeHandler.removeCallbacks(textSizeRunnable)
     }
 
+    /** Runs the lyrics on in real time between the player's coarse position readings. */
+    private val clockDriver = app.simple.felicity.managers.LyricsClockDriver { position ->
+        if (this::binding.isInitialized) binding.lrc.updateTime(position + lyricsViewModel.syncOffset)
+    }
+
+    override fun onPause() {
+        clockDriver.stop()
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        clockDriver.start(MediaPlaybackManager.getSeekPosition())
         // If lyrics data is missing after returning from a long background session,
         // force a fresh reload so the view is not left blank.
         if (lyricsViewModel.lrcData.value?.isEmpty == true) {
@@ -617,7 +628,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
     override fun onSeekChanged(seek: Long) {
         super.onSeekChanged(seek)
-        binding.lrc.updateTime(seek + lyricsViewModel.syncOffset)
+        clockDriver.read(seek)
         binding.seekbar.setProgress(seek, animate = true)
     }
 

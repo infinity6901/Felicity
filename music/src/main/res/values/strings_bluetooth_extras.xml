@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bluetooth_extras">Bluetooth</string>
+    <string name="bluetooth_resume">Resume when Bluetooth connects</string>
+    <string name="bluetooth_resume_summary">Music that stopped because your headphones or car went away starts again when Bluetooth audio reconnects.</string>
+    <string name="proximity_volume">Quieter as you walk away</string>
+    <string name="proximity_volume_summary">Turns the music down gently as you move away from the phone. Bluetooth headphones only; needs the Nearby devices permission.</string>
+</resources>

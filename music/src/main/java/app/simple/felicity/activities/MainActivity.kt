@@ -126,6 +126,7 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
         setContentView(binding.root)
 
         applyMiniPlayerResponsiveLayout(UserInterfacePreferences.getMiniplayerWidth())
+        binding.miniPlayer.glassAlpha = app.simple.felicity.preferences.LiquidGlassPreferences.surfaceAlpha()
 
         binding.miniPlayer.callbacks = object : MiniPlayer.Callbacks {
             override fun onPageSelected(position: Int, fromUser: Boolean) {
@@ -711,6 +712,10 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
             }
             UserInterfacePreferences.MINIPLAYER_WIDTH -> {
                 applyMiniPlayerResponsiveLayout(UserInterfacePreferences.getMiniplayerWidth())
+            }
+            app.simple.felicity.preferences.LiquidGlassPreferences.LIQUID_GLASS,
+            app.simple.felicity.preferences.LiquidGlassPreferences.GLASS_INTENSITY -> {
+                binding.miniPlayer.glassAlpha = app.simple.felicity.preferences.LiquidGlassPreferences.surfaceAlpha()
             }
         }
     }

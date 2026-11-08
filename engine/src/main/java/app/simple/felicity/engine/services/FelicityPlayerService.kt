@@ -343,6 +343,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 }
         }
         app.simple.felicity.engine.managers.BluetoothProfileManager.register(this)
+        registerPlaybackExtras()
 
         // Expose the processor via VisualizerManager so the player fragment can call
         // setDirectOutput() and wire the lock-free twin-buffer path without a service bind.
@@ -1283,6 +1284,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // its own, so a pause of the main player (user, phone call, headphones unplugged)
             // would otherwise leave the incoming track playing out loud until the fade ends.
             crossfadePlayer?.playWhenReady = playWhenReady
+            bluetoothResume.playWhenReadyChanged(playWhenReady, reason, SystemClock.elapsedRealtime())
+            updatePlaybackWatches()
 
             // Any manual play/pause (or an external pause) supersedes the pending gap resume.
             if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
@@ -1346,6 +1349,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            updatePlaybackWatches()
             when (playbackState) {
                 Player.STATE_BUFFERING -> MediaPlaybackManager.notifyPlaybackState(MediaConstants.PLAYBACK_BUFFERING)
                 Player.STATE_READY -> {
@@ -2168,8 +2172,134 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = mediaSession
 
+
+    // ---- Playback extras adapted from InterTune (GPL-3.0): Bluetooth resume, proximity volume, stall watch ----
+
+    private val bluetoothResume = app.simple.felicity.engine.playback.BluetoothResume()
+    private var proximityVolume: app.simple.felicity.engine.playback.ProximityVolume? = null
+    private var proximityJob: Job? = null
+    private val stallWatch = app.simple.felicity.engine.playback.StallWatch()
+    private var stallJob: Job? = null
+    private val extrasHandler = Handler(Looper.getMainLooper())
+
+    private val extrasAudioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            val ids = addedDevices.filter { app.simple.felicity.engine.playback.BluetoothResume.isMusicOutput(it.type, it.isSink) }.map { it.id }
+            if (ids.isNotEmpty() && bluetoothResume.outputsAdded(ids)) {
+                extrasHandler.postDelayed({ resumeAfterBluetooth() }, app.simple.felicity.engine.playback.BluetoothResume.SETTLE_MS)
+            }
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            val ids = removedDevices.filter { app.simple.felicity.engine.playback.BluetoothResume.isMusicOutput(it.type, it.isSink) }.map { it.id }
+            if (ids.isNotEmpty()) bluetoothResume.outputsRemoved(ids, SystemClock.elapsedRealtime())
+        }
+    }
+
+    private fun registerPlaybackExtras() {
+        val audioManager = getSystemService(AudioManager::class.java) ?: return
+        runCatching {
+            bluetoothResume.outputsThere(
+                    audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                        .filter { app.simple.felicity.engine.playback.BluetoothResume.isMusicOutput(it.type, it.isSink) }
+                        .map { it.id })
+            audioManager.registerAudioDeviceCallback(extrasAudioDeviceCallback, extrasHandler)
+        }
+    }
+
+    private fun unregisterPlaybackExtras() {
+        runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioDeviceCallback(extrasAudioDeviceCallback) }
+        extrasHandler.removeCallbacksAndMessages(null)
+        stallJob?.cancel()
+        proximityJob?.cancel()
+        proximityVolume?.stop()
+        proximityVolume = null
+        setExternalGain(1f)
+    }
+
+    private fun resumeAfterBluetooth() {
+        if (!::player.isInitialized) return
+        val resume = bluetoothResume.shouldResume(
+                PlayerPreferences.isBluetoothResume(), SystemClock.elapsedRealtime(),
+                player.playWhenReady, player.playbackState, player.currentMediaItem != null)
+        if (resume) {
+            Log.i(TAG, "Bluetooth audio connected; resuming the music that stopped when its output went away")
+            player.play()
+        }
+    }
+
+    private fun setExternalGain(gain: Float) {
+        runCatching { dualAudioProcessorSet.first.nativeDspProcessor.externalLinearGain = gain }
+        runCatching { dualAudioProcessorSet.second.nativeDspProcessor.externalLinearGain = gain }
+    }
+
+    /** Starts or stops the proximity scan and the stall watch to match what the player is doing. */
+    private fun updatePlaybackWatches() {
+        if (!::player.isInitialized) return
+
+        val proximityOn = PlayerPreferences.isProximityVolume()
+        val scan = app.simple.felicity.engine.playback.ProximityVolume.shouldScan(proximityOn, player.playWhenReady, player.playbackState)
+        if (scan) {
+            val watcher = proximityVolume ?: app.simple.felicity.engine.playback.ProximityVolume(applicationContext).also { created ->
+                proximityVolume = created
+                proximityJob = serviceScope.launch(Dispatchers.Main) { created.factor.collect { setExternalGain(it) } }
+            }
+            watcher.start()
+        } else {
+            proximityVolume?.stop()
+            if (!proximityOn) setExternalGain(1f)
+        }
+
+        val stalled = player.playWhenReady && player.playbackState == Player.STATE_BUFFERING
+        if (stalled && stallJob == null) {
+            stallJob = serviceScope.launch(Dispatchers.Main) {
+                while (isActive) {
+                    delay(1_000L)
+                    val connectivity = getSystemService(android.net.ConnectivityManager::class.java)
+                    val online = connectivity?.activeNetwork != null
+                    val action = stallWatch.tick(
+                            app.simple.felicity.engine.playback.StallWatch.Tick(
+                                    songId = player.currentMediaItem?.mediaId,
+                                    wantsToPlay = player.playWhenReady,
+                                    buffering = player.playbackState == Player.STATE_BUFFERING,
+                                    streamed = MediaPlaybackManager.getCurrentOnlineTrack() != null,
+                                    resolving = false,
+                                    casting = false,
+                                    waitingForNetwork = !online,
+                                    online = online,
+                                    // The player's own buffer position stands in for bytes read: it moves while data arrives.
+                                    bytes = player.bufferedPosition,
+                                    now = SystemClock.elapsedRealtime()))
+                    when (action) {
+                        app.simple.felicity.engine.playback.StallWatch.Action.NOTHING -> Unit
+                        app.simple.felicity.engine.playback.StallWatch.Action.CUT_CONNECTION,
+                        app.simple.felicity.engine.playback.StallWatch.Action.CHANGE_ROUTE -> {
+                            Log.w(TAG, "No data arriving for the buffering stream; asking again at the same position")
+                            cancelCrossfadeIfActive()
+                            val index = player.currentMediaItemIndex
+                            val position = player.currentPosition
+                            player.stop()
+                            player.seekTo(index, position)
+                            player.prepare()
+                            player.playWhenReady = true
+                        }
+                        app.simple.felicity.engine.playback.StallWatch.Action.GIVE_UP -> {
+                            Log.w(TAG, "Stream still silent after retrying; pausing")
+                            player.pause()
+                        }
+                    }
+                }
+            }
+        } else if (!stalled) {
+            stallJob?.cancel()
+            stallJob = null
+            stallWatch.reset()
+        }
+    }
+
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         when (key) {
+            app.simple.felicity.preferences.PlayerPreferences.PROXIMITY_VOLUME -> updatePlaybackWatches()
             AudioPreferences.AUDIO_DECODER -> {
                 Log.d(TAG, "Audio decoder preference changed, switching decoder...")
                 switchDecoder()
@@ -2331,6 +2461,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     override fun onDestroy() {
+        unregisterPlaybackExtras()
         savePlaybackStateToDatabase(immediate = true)
         unregisterSharedPreferenceChangeListener()
 

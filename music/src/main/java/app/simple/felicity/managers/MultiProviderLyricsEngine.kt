@@ -2,6 +2,7 @@ package app.simple.felicity.managers
 
 import android.content.Context
 import androidx.core.content.edit
+import app.simple.felicity.preferences.LyricsPreferences
 import app.simple.felicity.repository.models.LrcLibResponse
 import app.simple.felicity.decorations.lrc.model.WordEntry
 import app.simple.felicity.repository.repositories.LrcRepository
@@ -65,15 +66,24 @@ class MultiProviderLyricsEngine @Inject constructor(
 
     suspend fun search(title: String, artist: String): List<Candidate> = supervisorScope {
         if (title.isBlank()) return@supervisorScope emptyList()
-        val lrclib = async(Dispatchers.IO) { searchLrcLib(title, artist) }
-        val mirrors = async(Dispatchers.IO) { withTimeoutOrNull(12_000L) { searchLyricsPlus(title, artist) }.orEmpty() }
+        val lrclib = async(Dispatchers.IO) {
+            if (LyricsPreferences.isSourceEnabled("LRCLib")) searchLrcLib(title, artist) else emptyList()
+        }
+        val mirrors = async(Dispatchers.IO) {
+            if (LyricsPreferences.isSourceEnabled("LyricsPlus")) withTimeoutOrNull(12_000L) { searchLyricsPlus(title, artist) }.orEmpty() else emptyList()
+        }
+        val better = async(Dispatchers.IO) {
+            if (LyricsPreferences.isSourceEnabled("Better Lyrics")) withTimeoutOrNull(12_000L) { searchBetterLyrics(title, artist) }.orEmpty() else emptyList()
+        }
         val fetched = (runCatching { lrclib.await() }.getOrDefault(emptyList()) +
-            runCatching { mirrors.await() }.getOrDefault(emptyList()))
+            runCatching { mirrors.await() }.getOrDefault(emptyList()) +
+            runCatching { better.await() }.getOrDefault(emptyList()))
             .distinctBy { it.provider + ":" + it.rawLyrics.hashCode() }
         val candidates = fetched.ifEmpty { cachedCandidates(title, artist) }
         if (fetched.isNotEmpty()) saveCandidates(title, artist, fetched)
         candidates.sortedWith(compareByDescending<Candidate> { selectedId(title, artist) == it.id }
             .thenByDescending { it.wordSynced }
+            .thenBy { LyricsPreferences.sourceRank(it.provider) }
             .thenByDescending { it.confidence }
             .thenByDescending { it.synced })
     }
@@ -162,6 +172,42 @@ class MultiProviderLyricsEngine @Inject constructor(
             if (result.isNotEmpty()) return@withContext result
         }
         emptyList()
+    }
+
+    /**
+     * Better Lyrics (lyrics-api.boidu.dev): lyrics timed word by word, answered as TTML.
+     * Adapted from InterTune's provider (GPL-3.0).
+     */
+    private suspend fun searchBetterLyrics(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {
+        val url = okhttp3.HttpUrl.Builder().scheme("https").host("lyrics-api.boidu.dev")
+            .addPathSegment("getLyrics")
+            .addQueryParameter("s", title)
+            .addQueryParameter("a", artist)
+            .build()
+        val ttml = runCatching {
+            client.newCall(Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", "Felicity").build())
+                .execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    JSONObject(response.body.string()).optString("ttml").trim().takeIf { it.isNotEmpty() }
+                }
+        }.getOrNull() ?: return@withContext emptyList()
+        val parsed = TtmlParser.parse(ttml)
+        if (parsed.isEmpty()) return@withContext emptyList()
+        val extras = ArrayList<LineExtras>()
+        val raw = buildString {
+            for (line in parsed) {
+                val minutes = line.startMs / 60_000L
+                val seconds = (line.startMs % 60_000L) / 1_000.0
+                append(String.format(java.util.Locale.ROOT, "[%02d:%06.3f]", minutes, seconds))
+                append(line.text).append('\n')
+                extras += LineExtras(timeMs = line.startMs, words = line.words.map { WordEntry(it.first, it.second, it.third) })
+            }
+        }.trim()
+        listOf(Candidate(
+            id = "betterlyrics:${raw.hashCode()}", provider = "Better Lyrics",
+            title = title, artist = artist, synced = true, confidence = 91,
+            rawLyrics = raw, lineExtras = extras
+        ))
     }
 
     private fun parseLyricsPlus(body: String, title: String, artist: String): List<Candidate> {

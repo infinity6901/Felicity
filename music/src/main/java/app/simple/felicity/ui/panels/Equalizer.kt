@@ -121,6 +121,7 @@ class Equalizer : MediaFragment() {
                             },
                             PopupMenuItem(title = R.string.save_preset),
                             PopupMenuItem(title = R.string.import_peq_file),
+                            PopupMenuItem(title = R.string.autoeq_menu),
                             PopupMenuItem(title = R.string.reset),
                             if (isParametric) {
                                 PopupMenuItem(title = R.string.switch_to_graphic_eq)
@@ -173,6 +174,7 @@ class Equalizer : MediaFragment() {
                                 // The actual parsing happens when the picker returns a URI.
                                 peqFilePicker.launch(arrayOf("*/*"))
                             }
+                            R.string.autoeq_menu -> app.simple.felicity.dialogs.player.AutoEqDialog.show(requireContext(), viewLifecycleOwner.lifecycleScope)
                             R.string.reset -> withSureDialog { sure ->
                                 if (sure) {
                                     if (EqualizerPreferences.isParametricEqMode()) {

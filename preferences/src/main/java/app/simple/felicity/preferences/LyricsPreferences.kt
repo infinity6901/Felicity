@@ -33,6 +33,32 @@ object LyricsPreferences {
     const val SHOW_ORIGINAL = "lyrics_show_original"
     const val SHOW_ROMANIZED = "lyrics_show_romanized"
 
+    const val SOURCE_BETTER_LYRICS = "lyrics_source_better_lyrics"
+    const val SOURCE_LYRICSPLUS = "lyrics_source_lyricsplus"
+    const val SOURCE_LRCLIB = "lyrics_source_lrclib"
+    const val PREFERRED_SOURCE = "lyrics_preferred_source"
+
+    /** Provider names as they appear on candidates, in the order the preferred-source popup lists them. */
+    val SOURCE_NAMES = listOf("Better Lyrics", "LyricsPlus", "LRCLib")
+
+    fun isSourceEnabled(name: String): Boolean = SharedPreferences.getSharedPreferences().getBoolean(sourceKey(name), true)
+    fun setSourceEnabled(name: String, enabled: Boolean) { SharedPreferences.getSharedPreferences().edit { putBoolean(sourceKey(name), enabled) } }
+    fun getPreferredSource(): Int = SharedPreferences.getSharedPreferences().getInt(PREFERRED_SOURCE, 0).coerceIn(0, SOURCE_NAMES.lastIndex)
+    fun setPreferredSource(index: Int) { SharedPreferences.getSharedPreferences().edit { putInt(PREFERRED_SOURCE, index) } }
+
+    private fun sourceKey(name: String) = when (name) {
+        "Better Lyrics" -> SOURCE_BETTER_LYRICS
+        "LyricsPlus" -> SOURCE_LYRICSPLUS
+        else -> SOURCE_LRCLIB
+    }
+
+    /** Rank of a provider: the preferred one first, the others in list order. Unknown providers last. */
+    fun sourceRank(name: String): Int {
+        val index = SOURCE_NAMES.indexOf(name)
+        if (index < 0) return SOURCE_NAMES.size
+        return if (index == getPreferredSource()) -1 else index
+    }
+
     const val LEFT = 0
     const val CENTER = 1
     const val RIGHT = 2

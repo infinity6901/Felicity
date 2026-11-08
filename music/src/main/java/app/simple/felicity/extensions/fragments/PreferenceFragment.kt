@@ -21,6 +21,8 @@ import app.simple.felicity.dialogs.app.JamendoClientIdDialog.Companion.showJamen
 import app.simple.felicity.decorations.toggles.FelicityButtonGroup
 import app.simple.felicity.decorations.toggles.FelicityButtonGroup.Companion.Button
 import app.simple.felicity.decorations.toggles.FelicitySwitch
+import app.simple.felicity.preferences.LiquidGlassPreferences
+import app.simple.felicity.preferences.LyricsPreferences
 import app.simple.felicity.decorations.views.AppHeader
 import app.simple.felicity.decorations.views.PopupMenuItem
 import app.simple.felicity.decorations.views.SharedScrollViewPopup
@@ -119,6 +121,36 @@ abstract class PreferenceFragment : MediaFragment() {
      * Accessibility Preferences: [createAccessibilityPanel]
      * About Preferences: [createAboutPanel]
      */
+
+    /** Liquid glass: a switch and one "how much glass" slider. */
+    private fun createLiquidGlassPreferences(): List<Preference> = listOf(
+            Preference(type = PreferenceType.SUB_HEADER, title = R.string.liquid_glass),
+            Preference(
+                    title = R.string.liquid_glass,
+                    summary = R.string.liquid_glass_summary,
+                    icon = R.drawable.ic_invert,
+                    type = PreferenceType.SWITCH,
+                    onPreferenceAction = { view, _ -> LiquidGlassPreferences.setLiquidGlass((view as FelicitySwitch).isChecked) },
+                    valueProvider = Supplier { LiquidGlassPreferences.isLiquidGlass() }
+            ),
+            Preference(
+                    title = R.string.glass_intensity,
+                    summary = R.string.glass_intensity_summary,
+                    icon = R.drawable.ic_invert,
+                    type = PreferenceType.SLIDER,
+                    onPreferenceAction = { view, _ ->
+                        LiquidGlassPreferences.setIntensity((view as FelicitySeekbar).getProgress() / 100f)
+                    },
+                    valueProvider = Supplier {
+                        SeekbarState(
+                                position = LiquidGlassPreferences.getIntensity() * 100f, max = 100f, min = 0f,
+                                default = LiquidGlassPreferences.DEFAULT_INTENSITY * 100f,
+                                leftLabel = false, rightLabel = true,
+                                rightLabelProvider = { progress, _, _ -> String.format(Locale.getDefault(), "%.0f %%", progress) },
+                        )
+                    }
+            ),
+    )
 
     protected fun createAppearancePanel(): List<Preference> {
         val preferences = mutableListOf<Preference>()
@@ -337,6 +369,7 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(albumArtCorners)
         preferences.add(albumArtCrop)
         preferences.add(albumArtGreyscale)
+        preferences.addAll(createLiquidGlassPreferences())
 
         return preferences
     }
@@ -498,6 +531,89 @@ abstract class PreferenceFragment : MediaFragment() {
         }
 
         return preferences
+    }
+
+    private val bluetoothScanPermission = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        // Without the permission the scan can never start, so the switch goes back off.
+        if (!granted) PlayerPreferences.setProximityVolume(false)
+    }
+
+    /** Bluetooth resume and proximity volume, both off until switched on. */
+    private fun createPlaybackExtrasPreferences(): List<Preference> {
+        return listOf(
+                Preference(type = PreferenceType.SUB_HEADER, title = R.string.bluetooth_extras),
+                Preference(
+                        title = R.string.bluetooth_resume,
+                        summary = R.string.bluetooth_resume_summary,
+                        icon = R.drawable.ic_play,
+                        type = PreferenceType.SWITCH,
+                        onPreferenceAction = { view, _ -> PlayerPreferences.setBluetoothResume((view as FelicitySwitch).isChecked) },
+                        valueProvider = Supplier { PlayerPreferences.isBluetoothResume() }
+                ),
+                Preference(
+                        title = R.string.proximity_volume,
+                        summary = R.string.proximity_volume_summary,
+                        icon = R.drawable.ic_equalizer,
+                        type = PreferenceType.SWITCH,
+                        onPreferenceAction = { view, _ ->
+                            val on = (view as FelicitySwitch).isChecked
+                            PlayerPreferences.setProximityVolume(on)
+                            if (on && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+                                    androidx.core.content.ContextCompat.checkSelfPermission(
+                                            requireContext(), android.Manifest.permission.BLUETOOTH_SCAN)
+                                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                bluetoothScanPermission.launch(android.Manifest.permission.BLUETOOTH_SCAN)
+                            }
+                        },
+                        valueProvider = Supplier { PlayerPreferences.isProximityVolume() }
+                ),
+        )
+    }
+
+    /** Which lyrics sources are asked, and which one wins when several have the song. */
+    private fun createLyricsSourcePreferences(): List<Preference> {
+        val list = mutableListOf<Preference>()
+        list.add(Preference(type = PreferenceType.SUB_HEADER, title = R.string.lyrics_sources))
+        listOf(
+                "Better Lyrics" to R.string.lyrics_source_better_lyrics,
+                "LyricsPlus" to R.string.lyrics_source_lyricsplus,
+                "LRCLib" to R.string.lyrics_source_lrclib
+        ).forEach { (name, title) ->
+            list.add(Preference(
+                    title = title,
+                    summary = R.string.lyrics_source_summary,
+                    icon = R.drawable.ic_lyrics,
+                    type = PreferenceType.SWITCH,
+                    onPreferenceAction = { view, _ ->
+                        LyricsPreferences.setSourceEnabled(name, (view as FelicitySwitch).isChecked)
+                    },
+                    valueProvider = Supplier { LyricsPreferences.isSourceEnabled(name) }
+            ))
+        }
+        val names = LyricsPreferences.SOURCE_NAMES
+        list.add(Preference(
+                title = R.string.lyrics_preferred_source,
+                summary = R.string.lyrics_preferred_source_summary,
+                icon = R.drawable.ic_lyrics,
+                type = PreferenceType.POPUP,
+                valueProvider = { names[LyricsPreferences.getPreferredSource()] },
+                onPreferenceAction = { view, _ ->
+                    SharedScrollViewPopup(
+                            container = requireContainerView(),
+                            anchorView = view,
+                            menuItems = names.map { PopupMenuItem(title = it) },
+                            onMenuItemClick = { picked ->
+                                val index = names.indexOf(picked)
+                                if (index >= 0) {
+                                    LyricsPreferences.setPreferredSource(index)
+                                    (view as TextView).text = names[index]
+                                }
+                            }
+                    ).show()
+                }
+        ))
+        return list
     }
 
     protected fun createUserInterfacePanel(): List<Preference> {
@@ -739,6 +855,8 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(playerHeader)
         preferences.add(playerInterface)
         preferences.add(lyricsToggle)
+        preferences.addAll(createLyricsSourcePreferences())
+        preferences.addAll(createPlaybackExtrasPreferences())
         preferences.add(stackMediaControlsToggle)
         preferences.add(pagesHeader)
         preferences.add(songsFirstToggle)

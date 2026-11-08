@@ -33,6 +33,7 @@ internal object LyricsRomanizer {
 
     private fun isKana(cp: Int) = cp in 0x3040..0x30FF || cp in 0x31F0..0x31FF || cp in 0xFF66..0xFF9F
     private fun isHan(cp: Int) = cp in 0x3400..0x4DBF || cp in 0x4E00..0x9FFF || cp in 0xF900..0xFAFF
+    private fun isHangul(cp: Int) = cp in 0xAC00..0xD7A3 || cp in 0x3131..0x3163
     private fun isDevanagari(cp: Int) = cp in 0x0900..0x097F
     private fun isBengali(cp: Int) = cp in 0x0980..0x09FF
 
@@ -69,6 +70,7 @@ internal object LyricsRomanizer {
                 isDevanagari(cp) -> indic(word, "Devanagari-Latin", bengali = false)
                 isBengali(cp) -> indic(word, "Bengali-Latin", bengali = true)
                 isKana(cp) || (isHan(cp) && japanese) -> japanese(word)
+                isHangul(cp) -> stripMarks(HangulLatin.of(word))
                 else -> generic(word)
             }
         }.getOrDefault(word)
@@ -262,7 +264,8 @@ internal object LyricsRomanizer {
      */
     private fun indic(word: String, id: String, bengali: Boolean): String {
         val t = transliterator(id) ?: return generic(word)
-        var s = Normalizer.normalize(t.transliterate(word).lowercase(), Normalizer.Form.NFC)
+        // Mark the unsaid "a" with a virama first, so ICU leaves it out (दिल is dil, not dila).
+        var s = Normalizer.normalize(t.transliterate(IndicSchwa.drop(word)).lowercase(), Normalizer.Form.NFC)
 
         s = s.replace(consonantEnd, "")
         if (bengali) {
