@@ -61,6 +61,7 @@ import app.simple.felicity.engine.managers.VisualizerManager
 import app.simple.felicity.engine.model.AudioPipelineSnapshot
 import app.simple.felicity.engine.notifications.PlaybackErrorNotifier
 import app.simple.felicity.engine.playback.CrossfadeMath
+import app.simple.felicity.engine.playback.TrailingSilenceDetector
 import app.simple.felicity.engine.usb.UsbDacDriver
 import app.simple.felicity.engine.usb.UsbDacManager
 import app.simple.felicity.manager.SharedPreferences.initRegisterSharedPreferenceChangeListener
@@ -1714,6 +1715,30 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         return C.INDEX_UNSET
     }
 
+    private val trailingSilenceMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val trailingSilenceJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Milliseconds of silence at the end of [item], measured once per song in the background.
+     * Returns null while the measurement is still running, so the crossfade can wait for it
+     * instead of overlapping an inaudible tail.
+     */
+    private fun trailingSilenceFor(item: MediaItem?, durationMs: Long): Long? {
+        val id = item?.mediaId ?: return 0L
+        trailingSilenceMs[id]?.let { return it }
+        val uri = item.localConfiguration?.uri ?: return 0L
+        if (trailingSilenceJobs.add(id)) {
+            serviceScope.launch(Dispatchers.IO) {
+                val tail = TrailingSilenceDetector.detect(applicationContext, uri, durationMs)
+                if (trailingSilenceMs.size > 64) trailingSilenceMs.clear()
+                trailingSilenceMs[id] = tail
+                trailingSilenceJobs.remove(id)
+                Log.d(TAG, "Trailing silence for $id: ${tail}ms")
+            }
+        }
+        return null
+    }
+
     private fun maybeStartCrossfade() {
         if (!CrossfadePreferences.isCrossfadeEnabled()) return
         if (isCrossfading) return
@@ -1766,7 +1791,13 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                         sameAlbum = !outAlbum.isNullOrBlank() && outAlbum == inAlbum)
             }
         }
-        val remaining = duration - player.currentPosition
+        val rawRemaining = duration - player.currentPosition
+        // Nothing to measure or decide until the end is reasonably close.
+        if (rawRemaining > fadeMs + CROSSFADE_PRELOAD_LEAD_MS + TrailingSilenceDetector.MAX_TAIL_MS) return
+        // Time the overlap against the last audible moment: many songs end in seconds of silence,
+        // and overlapping that would blend the next song with nothing.
+        val tailMs = trailingSilenceFor(player.currentMediaItem, duration) ?: return
+        val remaining = rawRemaining - tailMs
         // Give the incoming decoder/network source a short head start. Starting the
         // volume ramp while it is still buffering creates an audible hole in the mix.
         if (remaining > fadeMs + CROSSFADE_PRELOAD_LEAD_MS) return
@@ -1838,7 +1869,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 delay(20L)
             }
 
-            val actualRemainingMs = (outgoing.duration - outgoing.currentPosition).coerceAtLeast(1L)
+            val outgoingTailMs = trailingSilenceMs[outgoingItem.mediaId] ?: 0L
+            val actualRemainingMs = (outgoing.duration - outgoingTailMs - outgoing.currentPosition).coerceAtLeast(1L)
             // Finish well before the outgoing track ends by itself. If the natural track change
             // wins the race, ExoPlayer starts the same item again from 0 on the outgoing deck
             // while the incoming deck is already playing it - an audible restart.
@@ -1852,7 +1884,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // ticks, so the curve stays exact through pauses, speed changes and delayed ticks.
             val fadeStartPositionMs = outgoing.currentPosition
             var lastFadeLogMs = 0L
-            Log.d(TAG, "Dual-player fade: start fadeMs=$fadeDurationMs remaining=${actualRemainingMs}ms " +
+            Log.d(TAG, "Dual-player fade: start fadeMs=$fadeDurationMs remaining=${actualRemainingMs}ms tail=${outgoingTailMs}ms " +
                     "outPos=$fadeStartPositionMs inPos=${incoming.currentPosition}")
             while (true) {
                 if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
