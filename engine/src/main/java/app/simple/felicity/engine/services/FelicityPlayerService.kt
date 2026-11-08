@@ -2192,7 +2192,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             val ids = removedDevices.filter { app.simple.felicity.engine.playback.BluetoothResume.isMusicOutput(it.type, it.isSink) }.map { it.id }
-            if (ids.isNotEmpty()) bluetoothResume.outputsRemoved(ids, SystemClock.elapsedRealtime())
+            pauseIfHeadphonesLeft(removedDevices)
+            if (ids.isNotEmpty()) {
+                // After the pause above has been reported, so the watch can tell the stop was the output's.
+                extrasHandler.postDelayed({ bluetoothResume.outputsRemoved(ids, SystemClock.elapsedRealtime()) }, 300L)
+            }
         }
     }
 
@@ -2215,6 +2219,33 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         proximityVolume?.stop()
         proximityVolume = null
         setExternalGain(1f)
+    }
+
+    /**
+     * A safety net for ACTION_AUDIO_BECOMING_NOISY, which the player is meant to act on but which
+     * is not reliably sent when the audio goes out through a native stream. When the last pair of
+     * headphones or Bluetooth speaker for music goes away mid-song, the music is paused instead of
+     * carrying on out of the phone's speaker.
+     */
+    private fun pauseIfHeadphonesLeft(removed: Array<out AudioDeviceInfo>) {
+        if (!::player.isInitialized || !player.playWhenReady) return
+        val wasExternal = removed.any { isExternalMusicOutput(it) }
+        if (!wasExternal) return
+        val audioManager = getSystemService(AudioManager::class.java) ?: return
+        val stillExternal = runCatching {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { isExternalMusicOutput(it) }
+        }.getOrDefault(false)
+        if (stillExternal) return
+        Log.i(TAG, "The headphones or Bluetooth speaker went away; pausing instead of playing out of the phone")
+        player.pause()
+    }
+
+    private fun isExternalMusicOutput(device: AudioDeviceInfo): Boolean {
+        if (!device.isSink) return false
+        return when (device.type) {
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET -> true
+            else -> app.simple.felicity.engine.playback.BluetoothResume.isMusicOutput(device.type, device.isSink)
+        }
     }
 
     private fun resumeAfterBluetooth() {

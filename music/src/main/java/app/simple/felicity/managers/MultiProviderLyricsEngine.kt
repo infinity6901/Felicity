@@ -75,10 +75,13 @@ class MultiProviderLyricsEngine @Inject constructor(
         val better = async(Dispatchers.IO) {
             if (LyricsPreferences.isSourceEnabled("Better Lyrics")) withTimeoutOrNull(12_000L) { searchBetterLyrics(title, artist) }.orEmpty() else emptyList()
         }
-        val fetched = (runCatching { lrclib.await() }.getOrDefault(emptyList()) +
-            runCatching { mirrors.await() }.getOrDefault(emptyList()) +
-            runCatching { better.await() }.getOrDefault(emptyList()))
+        val fromLrclib = runCatching { lrclib.await() }.getOrDefault(emptyList())
+        val fromMirrors = runCatching { mirrors.await() }.getOrDefault(emptyList())
+        val fromBetter = runCatching { better.await() }.getOrDefault(emptyList())
+        val fetched = (fromLrclib + fromMirrors + fromBetter)
             .distinctBy { it.provider + ":" + it.rawLyrics.hashCode() }
+        android.util.Log.d("LyricsSearch", "\"$title\" / \"$artist\": LRCLib=${fromLrclib.size} " +
+            "LyricsPlus=${fromMirrors.size} BetterLyrics=${fromBetter.size}; word-by-word=${fetched.count { it.wordSynced }}")
         val candidates = fetched.ifEmpty { cachedCandidates(title, artist) }
         if (fetched.isNotEmpty()) saveCandidates(title, artist, fetched)
         candidates.sortedWith(compareByDescending<Candidate> { selectedId(title, artist) == it.id }

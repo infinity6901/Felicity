@@ -46,13 +46,19 @@ object GlassRenderer {
             /** Opacity (0..1) of the whole pane; below 1 whatever is behind the widget shows through. */
             val opacity: Float = 1f,
             /**
-             * How see-through the blurred artwork behind the frost is (0 = fully visible, 1 = clear glass).
-             * Unlike [opacity] the frost, sheen, grain and rim stay, so the pane still reads as glass.
+             * How clearly the artwork shows through the glass (0 = milky, heavily blurred frosted glass,
+             * 1 = nearly clear glass over a sharp picture). The artwork itself is never faded: the blur,
+             * the white frost and the shading over it are eased off instead, and the rim and a trace of
+             * sheen stay so the pane still reads as glass. Unlike [opacity] it does not let whatever is
+             * behind the widget show through.
              */
             val transparency: Float = 0f
     )
 
     private const val WORK_SIZE = 96f
+
+    /** Working size of the artwork copy at full transparency: sharp enough to read as the cover. */
+    private const val CLEAR_WORK_SIZE = 360f
     private const val MAX_PIXELS = 900_000
 
     private val noiseTile: Bitmap by lazy {
@@ -236,46 +242,55 @@ object GlassRenderer {
         val w = area.width()
         val h = area.height()
 
-        val blurred = blurredCopy(art, w, h, style.blurRadius)
+        // Transparency shows the artwork more clearly: less blur on a sharper working copy, and the
+        // frost, shade, sheen and grain laid over it eased off. The picture itself stays fully opaque.
+        val t = style.transparency.coerceIn(0f, 1f)
+        val blurRadius = max(1, Math.round(style.blurRadius * (1f - 0.85f * t)))
+        val workSize = WORK_SIZE + (CLEAR_WORK_SIZE - WORK_SIZE) * t
+        val frostAmount = style.frost * (1f - 0.85f * t)
+        val shadeAmount = style.shade * (1f - 0.5f * t)
+        val sheenAmount = style.sheen * (1f - 0.6f * t)
+        val grainAmount = style.grain * (1f - 0.7f * t)
+
+        val blurred = blurredCopy(art, w, h, blurRadius, workSize)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         paint.colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(style.saturation) })
-        paint.alpha = (255 * (1f - style.transparency.coerceIn(0f, 1f))).toInt()
         canvas.drawBitmap(blurred, null, area, paint)
 
         val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         // Frost: the white wash that turns "blurred picture" into "glass".
-        fill.color = Color.argb((255 * style.frost).toInt(), 255, 255, 255)
+        fill.color = Color.argb((255 * frostAmount).toInt(), 255, 255, 255)
         canvas.drawRect(area, fill)
 
         // Shade towards the bottom for text legibility.
         fill.shader = LinearGradient(0f, area.top, 0f, area.bottom,
-                                     Color.argb(0, 0, 0, 0), Color.argb((255 * style.shade).toInt(), 0, 0, 0),
+                                     Color.argb(0, 0, 0, 0), Color.argb((255 * shadeAmount).toInt(), 0, 0, 0),
                                      Shader.TileMode.CLAMP)
         canvas.drawRect(area, fill)
 
         // Specular highlight along the top, plus a faint diagonal sheen.
         fill.shader = LinearGradient(0f, area.top, 0f, area.top + h * 0.55f,
-                                     Color.argb((255 * style.sheen).toInt(), 255, 255, 255), Color.argb(0, 255, 255, 255),
+                                     Color.argb((255 * sheenAmount).toInt(), 255, 255, 255), Color.argb(0, 255, 255, 255),
                                      Shader.TileMode.CLAMP)
         canvas.drawRect(area, fill)
         fill.shader = LinearGradient(area.left, area.top, area.right, area.bottom,
-                                     intArrayOf(Color.argb((255 * style.sheen * 0.55f).toInt(), 255, 255, 255),
+                                     intArrayOf(Color.argb((255 * sheenAmount * 0.55f).toInt(), 255, 255, 255),
                                                 Color.argb(0, 255, 255, 255),
-                                                Color.argb((255 * style.sheen * 0.3f).toInt(), 255, 255, 255)),
+                                                Color.argb((255 * sheenAmount * 0.3f).toInt(), 255, 255, 255)),
                                      floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         canvas.drawRect(area, fill)
 
         // A soft inner glow in one corner, like light catching the pane.
         fill.shader = RadialGradient(area.left + w * 0.12f, area.top + h * 0.1f, max(w, h) * 0.55f,
-                                     Color.argb((255 * style.sheen * 0.45f).toInt(), 255, 255, 255), Color.argb(0, 255, 255, 255),
+                                     Color.argb((255 * sheenAmount * 0.45f).toInt(), 255, 255, 255), Color.argb(0, 255, 255, 255),
                                      Shader.TileMode.CLAMP)
         canvas.drawRect(area, fill)
 
         // Film grain.
-        if (style.grain > 0f) {
+        if (grainAmount > 0f) {
             val grain = Paint()
             grain.shader = BitmapShader(noiseTile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-            grain.alpha = (255 * style.grain).toInt()
+            grain.alpha = (255 * grainAmount).toInt()
             grain.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.OVERLAY)
             canvas.drawRect(area, grain)
         }
@@ -304,8 +319,8 @@ object GlassRenderer {
     }
 
     /** Blurs a small centre-cropped copy of [art]; the result is stretched back up by the caller. */
-    private fun blurredCopy(art: Bitmap?, w: Float, h: Float, radius: Int): Bitmap {
-        val scale = WORK_SIZE / max(w, h)
+    private fun blurredCopy(art: Bitmap?, w: Float, h: Float, radius: Int, workSize: Float = WORK_SIZE): Bitmap {
+        val scale = workSize / max(w, h)
         val sw = max(8, (w * scale).toInt())
         val sh = max(8, (h * scale).toInt())
         val small = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)

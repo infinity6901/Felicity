@@ -58,7 +58,13 @@ internal object TtmlParser {
                 }
                 XmlPullParser.TEXT -> if (inLine && skipDepth == 0) {
                     plain.append(parser.text)
-                    if (spanDepth > 0) spanText.append(parser.text)
+                    if (spanDepth > 0) {
+                        spanText.append(parser.text)
+                    } else if (parser.text.isNotEmpty() && parser.text.isBlank() && words.isNotEmpty()) {
+                        // A space between two words belongs to the word before it, as in enhanced LRC.
+                        val last = words.removeAt(words.lastIndex)
+                        words += Triple(last.first, last.second, last.third + " ")
+                    }
                 }
                 XmlPullParser.END_TAG -> when (parser.name.substringAfter(':')) {
                     "span" -> if (inLine) {

@@ -21,7 +21,7 @@ object WidgetGlass {
     private const val KEY_ALL = "widget_glass_all"
     private const val KEY_TRANSPARENCY_ALL = "widget_glass_transparency_all"
     const val DEFAULT_TRANSPARENCY = 0f
-    const val MAX_TRANSPARENCY = 90f
+    const val MAX_TRANSPARENCY = 100f
 
     enum class Kind(val key: String, val provider: Class<out BaseWidgetProvider>) {
         BAR("widget_glass_bar", GlassBarWidgetProvider::class.java),
@@ -49,7 +49,7 @@ object WidgetGlass {
     fun setTransparency(kind: Kind, value: Float) =
         prefs.edit { putFloat(kind.key + "_transparency", value.coerceIn(0f, MAX_TRANSPARENCY)) }
 
-    /** How see-through (0..0.9) the blurred artwork of the widget class [provider] is. */
+    /** How clearly (0..1) the artwork shows through the glass of of the widget class [provider] is. */
     fun transparencyFor(provider: Class<*>): Float {
         val percent = if (isShared()) {
             getAllTransparency()

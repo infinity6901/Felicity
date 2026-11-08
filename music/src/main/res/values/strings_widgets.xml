@@ -27,7 +27,7 @@
     <string name="glass_opacity_all">Glass opacity</string>
     <string name="glass_opacity_all_summary">How solid the whole glass pane is; lower values let the wallpaper show through</string>
     <string name="glass_transparency_all">Glass transparency</string>
-    <string name="glass_transparency_all_summary">Fades the blurred artwork behind the frost, leaving clear frosted glass</string>
+    <string name="glass_transparency_all_summary">Shows the cover art more clearly through the glass: less blur and less frost over it</string>
     <string name="glass_opacity_bar">Bar widget opacity</string>
     <string name="glass_opacity_card">Card widget opacity</string>
     <string name="glass_opacity_player">Player widget opacity</string>
