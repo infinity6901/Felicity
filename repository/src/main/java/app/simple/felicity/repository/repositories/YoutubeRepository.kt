@@ -5,6 +5,12 @@ import android.util.Log
 import app.simple.felicity.repository.online.OnlineSource
 import app.simple.felicity.repository.online.OnlineTrack
 import app.simple.felicity.repository.youtube.YoutubeApiClient
+import app.simple.felicity.repository.youtube.YoutubeBrowseParser
+import app.simple.felicity.repository.youtube.YoutubeConstants
+import app.simple.felicity.repository.youtube.YoutubeDetailPage
+import app.simple.felicity.repository.youtube.YoutubeHomePage
+import app.simple.felicity.repository.youtube.YoutubeItemsPage
+import app.simple.felicity.repository.youtube.YoutubeSongItem
 import app.simple.felicity.repository.youtube.YoutubeDownloadWorker
 import app.simple.felicity.repository.youtube.YoutubePlaylist
 import app.simple.felicity.repository.youtube.YoutubePlaylistParser
@@ -74,20 +80,26 @@ class YoutubeRepository @Inject constructor(
     suspend fun resolveStreamUrl(track: OnlineTrack): String? = withContext(Dispatchers.IO) {
         if (track.source != OnlineSource.YOUTUBE) return@withContext track.streamUrl
 
+        // InnerTube first: its VISIONOS client is exempt from the proof-of-origin check that cuts
+        // ANDROID_VR / IOS (and the web streams yt-dlp picks) off after about 1 MB.
+        try {
+            val session = currentSession()
+            val resolved = YoutubeStreamResolver.resolve(track.id, session)
+            Log.d(TAG, "InnerTube resolved a stream for ${track.id}")
+            resolved.playbackTrackingUrl?.let { url ->
+                if (session.isLoggedIn) YoutubeApiClient.reportPlayback(url, session)
+            }
+            return@withContext resolved.url
+        } catch (e: Exception) {
+            Log.w(TAG, "InnerTube resolution failed for ${track.id}, trying yt-dlp", e)
+        }
+
         val ytDlpUrl = YtDlpManager.resolveDirectUrl(track.id)
         if (ytDlpUrl != null && YoutubeApiClient.headCheck(ytDlpUrl)) {
             Log.d(TAG, "yt-dlp resolved valid stream URL for ${track.id}")
-            return@withContext ytDlpUrl
-        } else if (ytDlpUrl != null) {
-            Log.w(TAG, "yt-dlp URL for ${track.id} failed HEAD check, falling back to InnerTube resolver")
-        }
-
-        try {
-            val resolved = YoutubeStreamResolver.resolve(track.id, currentSession())
-            Log.d(TAG, "InnerTube resolved valid stream URL for ${track.id}")
-            resolved.url
-        } catch (e: Exception) {
-            Log.w(TAG, "Both yt-dlp and InnerTube resolution failed for video: ${track.id}", e)
+            ytDlpUrl
+        } else {
+            Log.w(TAG, "No usable stream for ${track.id}")
             null
         }
     }
@@ -170,11 +182,132 @@ class YoutubeRepository @Inject constructor(
         return YoutubeDownloadWorker.enqueue(context, track.id, track.title, track.subtitle, format)
     }
 
+    // ------------------------------------------------------------------ Home, pages, search, library
+
+    /**
+     * The Home feed. Quick picks live in the first continuation rather than the first response, so up to
+     * three continuations are followed until a Quick picks shelf shows up (or the feed runs out).
+     */
+    suspend fun getHome(chipParams: String? = null): YoutubeHomePage = withContext(Dispatchers.IO) {
+        try {
+            val session = currentSession()
+            var page = YoutubeBrowseParser.parseHome(YoutubeApiClient.browse("FEmusic_home", session, params = chipParams))
+            val shelves = page.shelves.toMutableList()
+            var token = page.continuation
+            var batches = 0
+            while (token != null && batches < 3 && (chipParams != null || shelves.none { it.isQuickPicks })) {
+                val more = YoutubeBrowseParser.parseHomeContinuation(YoutubeApiClient.browse("", session, continuation = token))
+                shelves += more.shelves
+                token = more.continuation
+                batches++
+            }
+            page.copy(shelves = shelves, continuation = token)
+        } catch (e: Exception) {
+            Log.w(TAG, "Home feed failed", e)
+            YoutubeHomePage(emptyList(), emptyList(), null)
+        }
+    }
+
+    suspend fun getHomeContinuation(token: String): YoutubeHomePage = withContext(Dispatchers.IO) {
+        runCatching {
+            YoutubeBrowseParser.parseHomeContinuation(YoutubeApiClient.browse("", currentSession(), continuation = token))
+        }.getOrElse { YoutubeHomePage(emptyList(), emptyList(), null) }
+    }
+
+    /** Search in one of [YoutubeConstants.SearchFilter]'s views (null = everything), or fetch the next page with [continuation]. */
+    suspend fun searchPage(query: String, filter: String?, continuation: String? = null): YoutubeItemsPage = withContext(Dispatchers.IO) {
+        if (query.isBlank() && continuation == null) return@withContext YoutubeItemsPage(emptyList(), null)
+        try {
+            YoutubeBrowseParser.parseItemsPage(YoutubeApiClient.search(query, currentSession(), filter, continuation))
+        } catch (e: Exception) {
+            Log.w(TAG, "Search failed for: $query", e)
+            YoutubeItemsPage(emptyList(), null)
+        }
+    }
+
+    suspend fun getArtist(browseId: String): YoutubeDetailPage? = detail(browseId, YoutubeDetailPage.Kind.ARTIST)
+    suspend fun getAlbum(browseId: String): YoutubeDetailPage? = detail(browseId, YoutubeDetailPage.Kind.ALBUM)
+
+    suspend fun getPlaylist(playlistId: String): YoutubeDetailPage? =
+        detail(if (playlistId.startsWith("VL")) playlistId else "VL$playlistId", YoutubeDetailPage.Kind.PLAYLIST)
+
+    private suspend fun detail(browseId: String, kind: YoutubeDetailPage.Kind): YoutubeDetailPage? = withContext(Dispatchers.IO) {
+        try {
+            YoutubeBrowseParser.parseDetailPage(YoutubeApiClient.browse(browseId, currentSession()), kind)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load $kind page $browseId", e)
+            null
+        }
+    }
+
+    /** More tracks of a long playlist. */
+    suspend fun getPlaylistMore(token: String): Pair<List<YoutubeSongItem>, String?> = withContext(Dispatchers.IO) {
+        runCatching { YoutubeBrowseParser.parsePlaylistContinuation(YoutubeApiClient.browse("", currentSession(), continuation = token)) }
+            .getOrElse { emptyList<YoutubeSongItem>() to null }
+    }
+
+    /** The account's library lists. [browseId] is one of the `LIBRARY_*` ids below. */
+    suspend fun getLibrary(browseId: String, continuation: String? = null): YoutubeItemsPage = withContext(Dispatchers.IO) {
+        val session = currentSession()
+        if (!session.isLoggedIn) return@withContext YoutubeItemsPage(emptyList(), null)
+        try {
+            YoutubeBrowseParser.parseItemsPage(YoutubeApiClient.browse(browseId, session, continuation))
+        } catch (e: Exception) {
+            Log.w(TAG, "Library $browseId failed", e)
+            YoutubeItemsPage(emptyList(), null)
+        }
+    }
+
+    /** A radio queue seeded by a song ([videoId]) or a playlist / mix id. */
+    suspend fun getRadio(videoId: String?, playlistId: String? = null): List<OnlineTrack> = withContext(Dispatchers.IO) {
+        try {
+            val list = playlistId ?: videoId?.let { "RDAMVM$it" }
+            YoutubeBrowseParser.parseRadio(YoutubeApiClient.next(videoId, list, currentSession())).map { it.toOnlineTrack() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Radio failed", e)
+            emptyList()
+        }
+    }
+
+    suspend fun like(videoId: String, like: Boolean): Boolean = withContext(Dispatchers.IO) {
+        currentSession().isLoggedIn && YoutubeApiClient.likeVideo(videoId, like, currentSession())
+    }
+
+    suspend fun subscribe(channelId: String, subscribe: Boolean): Boolean = withContext(Dispatchers.IO) {
+        currentSession().isLoggedIn && YoutubeApiClient.subscribeChannel(channelId, subscribe, currentSession())
+    }
+
+    suspend fun addToPlaylist(playlistId: String, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        currentSession().isLoggedIn && YoutubeApiClient.addToPlaylist(playlistId, videoId, currentSession())
+    }
+
+    suspend fun createPlaylist(title: String, videoIds: List<String>): String? = withContext(Dispatchers.IO) {
+        if (!currentSession().isLoggedIn) null else YoutubeApiClient.createPlaylist(title, videoIds, currentSession())
+    }
+
     fun signOut() {
         YoutubeSessionStore.signOut(context)
     }
 
     companion object {
         private const val TAG = "YoutubeRepository"
+
+        const val LIBRARY_LIKED_SONGS = "FEmusic_liked_videos"
+        const val LIBRARY_ALBUMS = "FEmusic_liked_albums"
+        const val LIBRARY_ARTISTS = "FEmusic_library_corpus_artists"
+        const val LIBRARY_HISTORY = "FEmusic_history"
     }
 }
+
+/** Plays and downloads work on [OnlineTrack]s; this maps a parsed song onto one. */
+fun YoutubeSongItem.toOnlineTrack(): OnlineTrack = OnlineTrack(
+    source = OnlineSource.YOUTUBE,
+    id = videoId,
+    title = title,
+    subtitle = subtitle,
+    artworkUrl = thumbnailUrl.ifBlank { null },
+    streamUrl = null,
+    durationMs = durationText.split(":").mapNotNull { it.toIntOrNull() }.takeIf { it.size in 2..3 }?.let { p ->
+        (if (p.size == 2) p[0] * 60 + p[1] else p[0] * 3600 + p[1] * 60 + p[2]) * 1000L
+    },
+)

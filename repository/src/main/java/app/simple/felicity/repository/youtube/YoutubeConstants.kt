@@ -20,6 +20,25 @@ object YoutubeConstants {
     const val PLAYER_ENDPOINT = "$BASE_URL/player"
     const val SEARCH_ENDPOINT = "$BASE_URL/search"
     const val BROWSE_ENDPOINT = "$BASE_URL/browse"
+    const val NEXT_ENDPOINT = "$BASE_URL/next"
+    const val LIKE_ENDPOINT = "$BASE_URL/like/like"
+    const val REMOVE_LIKE_ENDPOINT = "$BASE_URL/like/removelike"
+    const val EDIT_PLAYLIST_ENDPOINT = "$BASE_URL/browse/edit_playlist"
+    const val CREATE_PLAYLIST_ENDPOINT = "$BASE_URL/playlist/create"
+    const val SUBSCRIBE_ENDPOINT = "$BASE_URL/subscription/subscribe"
+    const val UNSUBSCRIBE_ENDPOINT = "$BASE_URL/subscription/unsubscribe"
+    const val ACCOUNT_MENU_ENDPOINT = "$BASE_URL/account/account_menu"
+    const val VISITOR_DATA_URL = "https://music.youtube.com/sw.js_data"
+
+    /** Search filter `params` values (URL-decoded form is what the API expects in the JSON body). */
+    object SearchFilter {
+        const val SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D"
+        const val VIDEOS = "EgWKAQIQAWoKEAkQChAFEAMQBA%3D%3D"
+        const val ALBUMS = "EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D"
+        const val ARTISTS = "EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D"
+        const val FEATURED_PLAYLISTS = "EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ%3D"
+        const val COMMUNITY_PLAYLISTS = "EgeKAQQoAEABagoQAxAEEAoQCRAF"
+    }
 
     // Public InnerTube key used by the official web client. Widely known/published;
     // not a secret credential, just an API routing key.
@@ -66,8 +85,41 @@ object YoutubeConstants {
             put("gl", "US")
         }
 
+        /**
+         * visionOS app client. Since mid-2026 YouTube answers ANDROID_VR / IOS requests that carry no
+         * proof-of-origin token with a stream that is cut off after about 1 MB (HTTP 403, ExoPlayer
+         * source error 2004). VISIONOS is exempt, needs no signature deobfuscation and only wants a
+         * visitorData. Values follow InterTune's YouTubeClient (GPL-3.0, used under the AGPL-3.0).
+         */
+        val VISIONOS: JSONObject = JSONObject().apply {
+            put("clientName", "VISIONOS")
+            put("clientVersion", "1.02")
+            put("xClientName", "101")
+            put("osName", "visionOS")
+            put("osVersion", "2.3.21O5565d")
+            put("deviceMake", "Apple")
+            put("deviceModel", "RealityDevice17,1")
+            put("userAgent", "com.google.ios.youtube/1.02 (RealityDevice17,1; U; visionOS 2_3)")
+            put("hl", "en")
+            put("gl", "US")
+        }
+
+        /** Newer visionOS build, tried when [VISIONOS] is refused. */
+        val VISIONOS_1_04: JSONObject = JSONObject().apply {
+            put("clientName", "VISIONOS")
+            put("clientVersion", "1.04")
+            put("xClientName", "101")
+            put("osName", "visionOS")
+            put("osVersion", "26.6.0.23O770")
+            put("deviceMake", "Apple")
+            put("deviceModel", "RealityDevice17,1")
+            put("userAgent", "com.google.visionos.youtube/1.04(RealityDevice17,1; U; CPU visionOS 26_6_0 like Mac OS X; US)")
+            put("hl", "en")
+            put("gl", "US")
+        }
+
         /** Order in which clients are tried when resolving a stream. */
-        val FALLBACK_ORDER = listOf(ANDROID_MUSIC, IOS_MUSIC, WEB_REMIX)
+        val FALLBACK_ORDER = listOf(VISIONOS, VISIONOS_1_04, IOS_MUSIC, ANDROID_MUSIC, WEB_REMIX)
     }
 
     const val RETRY_COUNT = 3

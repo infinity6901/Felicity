@@ -20,6 +20,8 @@ object YoutubeStreamResolver {
         val mimeType: String,
         val bitrate: Int,
         val approxDurationMs: Long?,
+        /** `videostatsPlaybackUrl` from the player response, used to register the play in the account's history. */
+        val playbackTrackingUrl: String? = null,
     )
 
     suspend fun resolve(
@@ -44,6 +46,10 @@ object YoutubeStreamResolver {
     }
 
     private fun resolveOnce(videoId: String, session: YoutubeSession?): ResolvedStream {
+        // VISIONOS / iOS player calls need a visitorData; fetch an anonymous one when the session has none.
+        if (session != null && session.visitorData.isNullOrBlank()) {
+            YoutubeApiClient.fetchVisitorData()?.let { session.visitorData = it }
+        }
         for (clientFingerprint in YoutubeConstants.Client.FALLBACK_ORDER) {
             var hardTries = 0
             var softTries = 0
@@ -55,7 +61,7 @@ object YoutubeStreamResolver {
 
                 val result = runCatching {
                     val raw = YoutubeApiClient.getPlayerInfo(videoId, session, clientFingerprint)
-                    extractStream(raw, session)
+                    extractStream(raw, session, clientFingerprint.optString("userAgent").ifBlank { YoutubeConstants.STREAMING_USER_AGENT })
                 }
 
                 result.getOrNull()?.let { return it }
@@ -71,7 +77,7 @@ object YoutubeStreamResolver {
         throw Exception("No client fingerprint could resolve a stream for $videoId")
     }
 
-    private fun extractStream(rawResponse: String, session: YoutubeSession?): ResolvedStream {
+    private fun extractStream(rawResponse: String, session: YoutubeSession?, userAgent: String): ResolvedStream {
         val root = JSONObject(rawResponse)
 
         root.optJSONObject("responseContext")?.optString("visitorData")
@@ -106,15 +112,18 @@ object YoutubeStreamResolver {
         val chosen = best ?: throw Exception("($status) $reason — no audio formats returned")
         val url = chosen.getString("url")
 
-        if (!YoutubeApiClient.headCheck(url)) {
-            throw Exception("($status) Resolved URL failed HEAD check")
+        if (!YoutubeApiClient.headCheck(url, userAgent)) {
+            throw Exception("($status) Resolved URL failed the byte-range check")
         }
+        YoutubeStreamAgents.remember(url, userAgent)
 
         return ResolvedStream(
             url = url,
             mimeType = chosen.optString("mimeType"),
             bitrate = chosen.optInt("bitrate", 0),
             approxDurationMs = chosen.optString("approxDurationMs").toLongOrNull(),
+            playbackTrackingUrl = root.optJSONObject("playbackTracking")
+                ?.optJSONObject("videostatsPlaybackUrl")?.optString("baseUrl")?.takeIf { it.isNotBlank() },
         )
     }
 }

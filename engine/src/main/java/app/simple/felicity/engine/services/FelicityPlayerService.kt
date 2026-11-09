@@ -145,11 +145,26 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 mapOf(
                     "User-Agent" to YoutubeConstants.STREAMING_USER_AGENT,
                     "Accept" to "*/*",
-                    "Accept-Encoding" to "gzip, deflate, br"
+                    "Accept-Encoding" to "gzip, deflate, br",
+                    // googlevideo holds the first bytes back for several seconds unless the request
+                    // is ranged; ExoPlayer replaces this value itself whenever it seeks.
+                    "Range" to "bytes=0-"
                 )
             )
 
-        val dataSourceFactory = DefaultDataSource.Factory(this, httpDataSourceFactory)
+        // Present the User-Agent that minted a stream URL, which googlevideo checks.
+        val perUrlAgent = androidx.media3.datasource.ResolvingDataSource.Factory(httpDataSourceFactory) { dataSpec ->
+            val uri = dataSpec.uri
+            if (uri.host?.endsWith("googlevideo.com") == true) {
+                dataSpec.withAdditionalHeaders(
+                    mapOf("User-Agent" to app.simple.felicity.repository.youtube.YoutubeStreamAgents.userAgentFor(uri.toString()))
+                )
+            } else {
+                dataSpec
+            }
+        }
+
+        val dataSourceFactory = DefaultDataSource.Factory(this, perUrlAgent)
         return DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory)
     }
 
