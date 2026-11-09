@@ -51,6 +51,16 @@
  * @author Hamza417
  */
 struct AaudioContext {
+    /**
+     * Unique id of this context. Recovery threads look the context up by id instead of holding a raw
+     * pointer, because malloc reuses the address of a freed context for the next one (a Bluetooth
+     * reroute destroys and re-creates the sink within milliseconds).
+     */
+    uint64_t id = 0;
+
+    /** Number of background threads currently using this context; destroy waits for it to reach 0. */
+    std::atomic<int> pins{0};
+
     /** The underlying AAudio output stream. Null when not open. */
     AAudioStream *stream;
 

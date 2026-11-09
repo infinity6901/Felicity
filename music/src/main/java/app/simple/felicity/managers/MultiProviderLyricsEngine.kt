@@ -12,6 +12,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -157,24 +159,33 @@ class MultiProviderLyricsEngine @Inject constructor(
             "https://lyricsplus.prjktla.my.id",
             "https://lyricsplus-seven.vercel.app"
         )
-        for (server in servers) {
-            val url = okhttp3.HttpUrl.Builder().scheme("https")
-                .host(server.removePrefix("https://").substringBefore('/'))
-                .addPathSegments("v2/lyrics/get")
-                .addQueryParameter("title", title)
-                .addQueryParameter("artist", artist)
-                .build()
-            val result = runCatching {
-                client.newCall(Request.Builder().url(url).header("Accept", "application/json").build())
-                    .execute().use { response ->
-                        if (!response.isSuccessful) return@use emptyList()
-                        val body = response.body.string()
-                        parseLyricsPlus(body, title, artist)
-                    }
-            }.getOrDefault(emptyList())
-            if (result.isNotEmpty()) return@withContext result
+        // Race every mirror; a dead or slow one must not hold up the others.
+        val results = kotlinx.coroutines.channels.Channel<List<Candidate>>(servers.size)
+        coroutineScope {
+            val jobs = servers.map { server ->
+                launch {
+                    val url = okhttp3.HttpUrl.Builder().scheme("https")
+                        .host(server.removePrefix("https://").substringBefore('/'))
+                        .addPathSegments("v2/lyrics/get")
+                        .addQueryParameter("title", title)
+                        .apply { if (artist.isNotBlank()) addQueryParameter("artist", artist) }
+                        .build()
+                    val r = runCatching {
+                        client.newCall(Request.Builder().url(url).header("Accept", "application/json").build())
+                            .execute().use { response ->
+                                if (!response.isSuccessful) emptyList() else parseLyricsPlus(response.body.string(), title, artist)
+                            }
+                    }.getOrDefault(emptyList())
+                    results.trySend(r)
+                }
+            }
+            var found: List<Candidate> = emptyList()
+            repeat(servers.size) {
+                if (found.isEmpty()) found = results.receive()
+            }
+            jobs.forEach { it.cancel() }
+            return@coroutineScope found
         }
-        emptyList()
     }
 
     /**

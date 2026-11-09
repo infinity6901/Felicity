@@ -240,7 +240,8 @@
         android:layout_marginHorizontal="@dimen/padding_15"
         android:layout_marginTop="@dimen/padding_15"
         android:paddingHorizontal="@dimen/padding_10"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:tag="fit_status">
 
             <app.simple.felicity.decorations.views.FavoriteButton
                 android:id="@+id/favorite"

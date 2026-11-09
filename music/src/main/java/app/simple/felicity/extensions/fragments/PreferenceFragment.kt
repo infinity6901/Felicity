@@ -592,6 +592,7 @@ abstract class PreferenceFragment : MediaFragment() {
             ))
         }
         val names = LyricsPreferences.SOURCE_NAMES
+        val sourceTitles = listOf(R.string.lyrics_source_better_lyrics, R.string.lyrics_source_lyricsplus, R.string.lyrics_source_lrclib)
         list.add(Preference(
                 title = R.string.lyrics_preferred_source,
                 summary = R.string.lyrics_preferred_source_summary,
@@ -602,9 +603,9 @@ abstract class PreferenceFragment : MediaFragment() {
                     SharedScrollViewPopup(
                             container = requireContainerView(),
                             anchorView = view,
-                            menuItems = names.map { PopupMenuItem(title = it) },
+                            menuItems = sourceTitles.map { PopupMenuItem(title = it) },
                             onMenuItemClick = { picked ->
-                                val index = names.indexOf(picked as? String)
+                                val index = sourceTitles.indexOf(picked)
                                 if (index >= 0) {
                                     LyricsPreferences.setPreferredSource(index)
                                     (view as TextView).text = names[index]

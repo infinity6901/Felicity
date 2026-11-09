@@ -659,11 +659,13 @@ abstract class BasePlayerFragment : MediaFragment() {
         title.text = track.title
         artist.text = track.subtitle
         album.text = ""
-        pcmInfo.text = ""
+        pcmInfo.text = track.source.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
         lrc.clear()
 
-        // A radio station has no fixed duration; Jamendo/Audius tracks do.
-        seekbar.setDurationWithReset(track.durationMs ?: 0L)
+        // A radio station has no fixed duration; Jamendo/Audius/YouTube tracks do, but the
+        // listing's duration can be blank, in which case the player's own duration is used.
+        onlineDurationMs = track.durationMs ?: 0L
+        seekbar.setDurationWithReset(onlineDurationMs.takeIf { it > 0L } ?: MediaPlaybackManager.getDuration().coerceAtLeast(0L))
 
         lyricsViewModel.loadLrcData()
     }
@@ -818,8 +820,22 @@ abstract class BasePlayerFragment : MediaFragment() {
         loadWaveformWhenReady(audio)
     }
 
+    /** Last duration pushed to the seekbar for the current online track (0 = unknown). */
+    private var onlineDurationMs: Long = 0L
+
+    /** Online tracks often arrive without a duration; adopt the real one as soon as the player knows it. */
+    private fun syncOnlineDuration() {
+        if (MediaPlaybackManager.getCurrentOnlineTrack() == null) return
+        val real = MediaPlaybackManager.getDuration()
+        if (real > 0L && real != onlineDurationMs) {
+            onlineDurationMs = real
+            seekbar.setDuration(real)
+        }
+    }
+
     override fun onSeekChanged(seek: Long) {
         super.onSeekChanged(seek)
+        syncOnlineDuration()
         seekbar.setProgress(seek, animate = true)
         lrc.updateTime(seek + lyricsViewModel.syncOffset)
     }
@@ -828,6 +844,7 @@ abstract class BasePlayerFragment : MediaFragment() {
         super.onPlaybackStateChanged(state)
         when (state) {
             MediaConstants.PLAYBACK_READY -> {
+                syncOnlineDuration()
                 // ExoPlayer has finished buffering and the decoder is ready. This is the
                 // earliest safe moment to run Amplituda's extraction in parallel, regardless
                 // of whether playback will start immediately or stay paused.

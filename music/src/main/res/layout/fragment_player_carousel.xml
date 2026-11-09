@@ -42,9 +42,9 @@
         <app.simple.felicity.decorations.glass.GlassPanelLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="top"
+            android:layout_gravity="bottom"
             android:layout_marginHorizontal="@dimen/padding_15"
-            android:layout_marginTop="@dimen/padding_15"
+            android:layout_marginBottom="@dimen/padding_15"
             android:paddingHorizontal="@dimen/padding_10"
             android:orientation="horizontal">
     

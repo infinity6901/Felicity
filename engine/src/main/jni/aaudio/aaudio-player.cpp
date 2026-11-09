@@ -23,6 +23,7 @@
 #include <chrono>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include "aaudio-player.h"
 
@@ -52,6 +53,30 @@ namespace {
     constexpr auto kRecoveryLockTimeout = std::chrono::milliseconds(1000);
 
     void aaudioErrorCallback(AAudioStream *stream, void *userData, aaudio_result_t error);
+
+/**
+ * Registry of live contexts. A recovery thread started by the error callback outlives the callback,
+ * and the Kotlin sink may destroy and re-create the context (a Bluetooth reroute) before it runs. A
+ * raw pointer then points at freed memory, or, worse, at the NEXT context allocated at the same address,
+ * and the stale thread swaps a second stream into the live context and leaves it silent. Threads
+ * therefore hold an id and must [pinContext] it; destroy removes the id and waits for the pins to drop.
+ */
+    std::mutex gRegistryMutex;
+    std::unordered_map<uint64_t, AaudioContext *> gContexts;
+    std::atomic<uint64_t> gNextContextId{1};
+
+    AaudioContext *pinContext(uint64_t id) {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        auto it = gContexts.find(id);
+        if (it == gContexts.end()) return nullptr;
+        it->second->pins.fetch_add(1);
+        return it->second;
+    }
+
+    struct ContextPin {
+        AaudioContext *ctx;
+        ~ContextPin() { if (ctx) ctx->pins.fetch_sub(1); }
+    };
 }  // namespace
 
 /**
@@ -187,7 +212,10 @@ namespace {
  * by [AaudioContext::destroyed] so a reopen that races against [nativeAaudioDestroy]
  * backs off instead of resurrecting a stream nobody owns anymore.
  */
-    void recoverAaudioStream(AaudioContext *ctx) {
+    void recoverAaudioStream(uint64_t contextId) {
+        AaudioContext *ctx = pinContext(contextId);
+        if (!ctx) return; // The context was destroyed (for example by a reroute) before this thread ran.
+        ContextPin pin{ctx};
         if (ctx->destroyed.load()) return;
 
         bool expected = false;
@@ -257,7 +285,7 @@ namespace {
         if (!ctx) return;
         AAUDIO_LOGW("aaudioErrorCallback: stream error %d — scheduling recovery", error);
         ctx->running.store(false);
-        std::thread(recoverAaudioStream, ctx).detach();
+        std::thread(recoverAaudioStream, ctx->id).detach();
     }
 
 }  // namespace
@@ -313,6 +341,12 @@ Java_app_simple_felicity_engine_processors_AaudioOutputProcessor_nativeAaudioCre
         return 0L;
     }
     ctx->stream = stream;
+
+    ctx->id = gNextContextId.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        gContexts[ctx->id] = ctx;
+    }
 
     return reinterpret_cast<jlong>(ctx);
 }
@@ -676,6 +710,15 @@ Java_app_simple_felicity_engine_processors_AaudioOutputProcessor_nativeAaudioDes
 
     ctx->destroyed.store(true);
     ctx->running.store(false);
+
+    // No new recovery thread can pin this context after this point; wait for any that already did.
+    {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        gContexts.erase(ctx->id);
+    }
+    for (int i = 0; i < 600 && ctx->pins.load() > 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 
     AAudioStream *stream = nullptr;
     {

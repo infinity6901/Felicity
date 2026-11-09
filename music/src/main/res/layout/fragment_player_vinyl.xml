@@ -92,12 +92,11 @@
     <app.simple.felicity.decorations.glass.GlassPanelLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="top"
+        android:layout_gravity="bottom"
         android:layout_marginHorizontal="@dimen/padding_15"
-        android:layout_marginTop="@dimen/padding_15"
+        android:layout_marginBottom="56dp"
         android:paddingHorizontal="@dimen/padding_10"
-        android:orientation="horizontal"
-        android:tag="fit_status">
+        android:orientation="horizontal">
 
         <app.simple.felicity.decorations.views.FavoriteButton
             android:id="@+id/favorite"
