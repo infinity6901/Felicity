@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="youtube_panel">YouTube</string>
+    <string name="youtube_search_hint">Search YouTube Music…</string>
+    <string name="youtube_tab_search">Search</string>
+    <string name="youtube_tab_playlists">Playlists</string>
+    <string name="youtube_back_to_playlists">← Back to playlists</string>
+    <string name="youtube_back_to_playlists_named">← %1$s</string>
+    <string name="youtube_empty_state">Search YouTube Music, or sign in to see your playlists.</string>
+
+    <string name="online_track_menu_download">Download</string>
+    <string name="online_track_menu_info">Info</string>
+    <string name="online_track_menu_info_body">Artist: %1$s\nSource: %2$s</string>
+    <string name="youtube_download_all">Download all</string>
+
+    <string name="youtube_tab_home">Home</string>
+    <string name="youtube_tab_library">Library</string>
+    <string name="youtube_play">Play</string>
+    <string name="youtube_shuffle">Shuffle</string>
+    <string name="youtube_radio">Radio</string>
+    <string name="youtube_subscribe">Subscribe</string>
+    <string name="youtube_subscribed">Subscribed</string>
+    <string name="youtube_back">← Back</string>
+    <string name="youtube_menu_radio">Start radio</string>
+    <string name="youtube_menu_like">Like</string>
+    <string name="youtube_menu_add_to_playlist">Add to playlist</string>
+    <string name="youtube_pick_playlist">Add to playlist</string>
+    <string name="youtube_quick_picks">Quick picks</string>
+    <string name="youtube_empty_library">Nothing here yet. Sign in to see your library.</string>
+</resources>
