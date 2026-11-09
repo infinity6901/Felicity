@@ -9,7 +9,7 @@
     app:navigationPaddingRequired="true"
     app:statusPaddingRequired="false">
 
-    <FrameLayout
+    <app.simple.felicity.decorations.glass.GlassHostLayout
         android:layout_width="match_parent"
         android:layout_height="@dimen/padding_10"
         android:layout_weight="1">
@@ -34,16 +34,16 @@
             android:layout_gravity="bottom"
             android:layout_height="wrap_content" />
 
-    </FrameLayout>
 
-    <app.simple.felicity.decorations.theme.ThemeDivider
-        android:layout_width="match_parent"
-        android:layout_height="1px" />
-
-    <LinearLayout
+    <app.simple.felicity.decorations.glass.GlassPanelLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:layout_gravity="top"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:layout_marginTop="@dimen/padding_15"
+        android:paddingHorizontal="@dimen/padding_10"
+        android:orientation="horizontal"
+        android:tag="fit_status">
 
         <app.simple.felicity.decorations.views.FavoriteButton
             android:id="@+id/favorite"
@@ -100,7 +100,14 @@
             android:src="@drawable/ic_more_vert"
             app:buttonTintType="regular" />
 
-    </LinearLayout>
+    </app.simple.felicity.decorations.glass.GlassPanelLayout>
+
+    </app.simple.felicity.decorations.glass.GlassHostLayout>
+
+    <app.simple.felicity.decorations.theme.ThemeDivider
+        android:layout_width="match_parent"
+        android:layout_height="1px" />
+
 
     <LinearLayout
         android:layout_width="match_parent"

@@ -70,18 +70,41 @@ class GlassHostLayout @JvmOverloads constructor(
         }
         val node = contentNode ?: RenderNode("felicity-glass-content").also { contentNode = it }
         node.setPosition(0, 0, width, height)
-        val recording = node.beginRecording(width, height)
+        val rc = node.beginRecording(width, height)
+        recording = true
         try {
-            super.dispatchDraw(recording)
+            super.dispatchDraw(rc)
         } finally {
+            recording = false
             node.endRecording()
         }
         canvas.drawRenderNode(node)
+        // Glass children are drawn here, over the recording, so they never sample themselves.
+        val time = drawingTime
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            if (child in targets && child.visibility == VISIBLE) drawChild(canvas, child, time)
+        }
     }
+
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        if (recording && child in targets) return false
+        return super.drawChild(canvas, child, drawingTime)
+    }
+
+    private var recording = false
+    private var invalidatingTargets = false
 
     override fun onDescendantInvalidated(child: View, target: View) {
         super.onDescendantInvalidated(child, target)
-        if (glassEnabled) for (i in targets.indices) targets[i].invalidate()
+        if (!glassEnabled || invalidatingTargets) return
+        // A glass child's own invalidation lands back here, so it must not trigger another round.
+        invalidatingTargets = true
+        try {
+            for (i in targets.indices) if (targets[i] !== child) targets[i].invalidate()
+        } finally {
+            invalidatingTargets = false
+        }
     }
 
     /**
