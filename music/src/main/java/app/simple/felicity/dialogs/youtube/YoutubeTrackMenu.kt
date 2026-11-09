@@ -16,6 +16,9 @@ class YoutubeTrackMenu : ScopedBottomSheetFragment() {
     private var track: OnlineTrack? = null
     var onDownloadRequested: ((OnlineTrack) -> Unit)? = null
 
+    /** Extra entries (label to action) shown under Download and Share, such as radio, like and add to playlist. */
+    var extras: List<Pair<String, () -> Unit>> = emptyList()
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val context = requireContext()
         val layout = LinearLayout(context).apply {
@@ -58,16 +61,34 @@ class YoutubeTrackMenu : ScopedBottomSheetFragment() {
         }
         layout.addView(btnShare)
 
+        extras.forEach { (label, action) ->
+            layout.addView(TextView(context).apply {
+                text = label
+                textSize = 16f
+                setPadding(16, 24, 16, 24)
+                setOnClickListener {
+                    dismiss()
+                    action()
+                }
+            })
+        }
+
         return layout
     }
 
     companion object {
         private const val TAG = "YoutubeTrackMenu"
 
-        fun show(fragmentManager: FragmentManager, track: OnlineTrack, onDownload: (OnlineTrack) -> Unit) {
+        fun show(
+                fragmentManager: FragmentManager,
+                track: OnlineTrack,
+                extras: List<Pair<String, () -> Unit>> = emptyList(),
+                onDownload: (OnlineTrack) -> Unit
+        ) {
             val menu = YoutubeTrackMenu().apply {
                 this.track = track
                 this.onDownloadRequested = onDownload
+                this.extras = extras
             }
             menu.show(fragmentManager, TAG)
         }

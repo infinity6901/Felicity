@@ -10,7 +10,17 @@ import app.simple.felicity.repository.notifications.DownloadNotificationManager
 import app.simple.felicity.repository.online.OnlineTrack
 import app.simple.felicity.repository.repositories.YoutubeRepository
 import app.simple.felicity.repository.youtube.YoutubeDownloadWorker
+import app.simple.felicity.repository.repositories.toOnlineTrack
+import app.simple.felicity.repository.youtube.YoutubeAlbumItem
+import app.simple.felicity.repository.youtube.YoutubeArtistItem
+import app.simple.felicity.repository.youtube.YoutubeChip
+import app.simple.felicity.repository.youtube.YoutubeConstants
+import app.simple.felicity.repository.youtube.YoutubeDetailPage
+import app.simple.felicity.repository.youtube.YoutubeItem
 import app.simple.felicity.repository.youtube.YoutubePlaylist
+import app.simple.felicity.repository.youtube.YoutubePlaylistItem
+import app.simple.felicity.repository.youtube.YoutubeShelf
+import app.simple.felicity.repository.youtube.YoutubeSongItem
 import app.simple.felicity.repository.youtube.YoutubeSessionStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -22,7 +32,26 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import javax.inject.Inject
 import kotlin.coroutines.resume
 
-enum class YoutubeTab { SEARCH, PLAYLISTS, DOWNLOADED }
+enum class YoutubeTab { HOME, SEARCH, PLAYLISTS, DOWNLOADED }
+
+/** Result type filters offered under the search box. */
+enum class YoutubeSearchFilter(val label: String, val params: String?) {
+    ALL("All", null),
+    SONGS("Songs", YoutubeConstants.SearchFilter.SONGS),
+    VIDEOS("Videos", YoutubeConstants.SearchFilter.VIDEOS),
+    ALBUMS("Albums", YoutubeConstants.SearchFilter.ALBUMS),
+    ARTISTS("Artists", YoutubeConstants.SearchFilter.ARTISTS),
+    PLAYLISTS("Playlists", YoutubeConstants.SearchFilter.COMMUNITY_PLAYLISTS),
+}
+
+/** What the Library tab (the old Playlists tab) lists. */
+enum class YoutubeLibraryKind(val label: String, val browseId: String?) {
+    PLAYLISTS("Playlists", null),
+    LIKED("Liked songs", YoutubeRepository.LIBRARY_LIKED_SONGS),
+    ALBUMS("Albums", YoutubeRepository.LIBRARY_ALBUMS),
+    ARTISTS("Artists", YoutubeRepository.LIBRARY_ARTISTS),
+    HISTORY("History", YoutubeRepository.LIBRARY_HISTORY),
+}
 
 @HiltViewModel
 class YoutubeViewModel @Inject constructor(
@@ -38,7 +67,7 @@ class YoutubeViewModel @Inject constructor(
         MediaPlaybackManager.onlineStreamResolver = { track -> youtubeRepository.resolveStreamUrl(track) }
     }
 
-    private val _activeTab = MutableStateFlow(YoutubeTab.SEARCH)
+    private val _activeTab = MutableStateFlow(YoutubeTab.HOME)
     val activeTab: StateFlow<YoutubeTab> = _activeTab.asStateFlow()
 
     private val _searchResults = MutableStateFlow<List<OnlineTrack>>(emptyList())
@@ -92,10 +121,257 @@ class YoutubeViewModel @Inject constructor(
         }
     }
 
+    // ------------------------------------------------------------------ Home
+
+    private val _homeChips = MutableStateFlow<List<YoutubeChip>>(emptyList())
+    val homeChips: StateFlow<List<YoutubeChip>> = _homeChips.asStateFlow()
+
+    private val _homeShelves = MutableStateFlow<List<YoutubeShelf>>(emptyList())
+    val homeShelves: StateFlow<List<YoutubeShelf>> = _homeShelves.asStateFlow()
+
+    /** The chip currently filtering Home (its `params`), null for the plain feed. */
+    private val _homeChipParams = MutableStateFlow<String?>(null)
+    val homeChipParams: StateFlow<String?> = _homeChipParams.asStateFlow()
+
+    private var homeToken: String? = null
+    private var homeLoaded = false
+
+    fun loadHome(chipParams: String? = null, force: Boolean = false) {
+        if (homeLoaded && !force && chipParams == _homeChipParams.value) return
+        homeLoaded = true
+        _homeChipParams.value = chipParams
+        viewModelScope.launch {
+            _isLoading.value = true
+            val page = youtubeRepository.getHome(chipParams)
+            if (chipParams == null || _homeChips.value.isEmpty()) _homeChips.value = page.chips
+            _homeShelves.value = page.shelves
+            homeToken = page.continuation
+            _isLoading.value = false
+        }
+    }
+
+    // ------------------------------------------------------------------ Search
+
+    private val _searchFilter = MutableStateFlow(YoutubeSearchFilter.ALL)
+    val searchFilter: StateFlow<YoutubeSearchFilter> = _searchFilter.asStateFlow()
+
+    private val _searchItems = MutableStateFlow<List<YoutubeItem>>(emptyList())
+    val searchItems: StateFlow<List<YoutubeItem>> = _searchItems.asStateFlow()
+
+    private var searchQuery = ""
+    private var searchToken: String? = null
+    private var searchJob: Job? = null
+
+    fun setSearchFilter(filter: YoutubeSearchFilter) {
+        if (_searchFilter.value == filter) return
+        _searchFilter.value = filter
+        runSearch(searchQuery)
+    }
+
+    private fun runSearch(query: String) {
+        searchQuery = query
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _searchItems.value = emptyList()
+            searchToken = null
+            return
+        }
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(300)
+            _isLoading.value = true
+            val page = youtubeRepository.searchPage(query, _searchFilter.value.params)
+            _searchItems.value = page.items
+            _searchResults.value = page.items.filterIsInstance<YoutubeSongItem>().map { it.toOnlineTrack() }
+            searchToken = page.continuation
+            _isLoading.value = false
+        }
+    }
+
+    // ------------------------------------------------------------------ Library
+
+    private val _libraryKind = MutableStateFlow(YoutubeLibraryKind.PLAYLISTS)
+    val libraryKind: StateFlow<YoutubeLibraryKind> = _libraryKind.asStateFlow()
+
+    private val _libraryItems = MutableStateFlow<List<YoutubeItem>>(emptyList())
+    val libraryItems: StateFlow<List<YoutubeItem>> = _libraryItems.asStateFlow()
+
+    private var libraryToken: String? = null
+
+    fun setLibraryKind(kind: YoutubeLibraryKind) {
+        _libraryKind.value = kind
+        loadLibrary()
+    }
+
+    fun loadLibrary() {
+        val kind = _libraryKind.value
+        libraryToken = null
+        viewModelScope.launch {
+            _isLoading.value = true
+            if (kind.browseId == null) {
+                _libraryItems.value = youtubeRepository.getLibraryPlaylists().map {
+                    YoutubePlaylistItem(it.playlistId.removePrefix("VL"), it.title, it.subtitle, it.thumbnailUrl)
+                }
+            } else {
+                val page = youtubeRepository.getLibrary(kind.browseId)
+                _libraryItems.value = page.items
+                libraryToken = page.continuation
+            }
+            _isLoading.value = false
+        }
+    }
+
+    // ------------------------------------------------------------------ Detail pages (artist / album / playlist)
+
+    private val detailStack = ArrayList<YoutubeDetailPage>()
+
+    private val _detail = MutableStateFlow<YoutubeDetailPage?>(null)
+    val detail: StateFlow<YoutubeDetailPage?> = _detail.asStateFlow()
+
+    private var detailToken: String? = null
+
+    /** Opens the page behind an album, artist or playlist card; songs are played, not opened. */
+    fun openItem(item: YoutubeItem) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val page = when (item) {
+                is YoutubeAlbumItem -> youtubeRepository.getAlbum(item.browseId)
+                is YoutubeArtistItem -> youtubeRepository.getArtist(item.browseId)
+                is YoutubePlaylistItem -> youtubeRepository.getPlaylist(item.playlistId)
+                is YoutubeSongItem -> null
+            }
+            if (page != null) {
+                _detail.value?.let { detailStack.add(it) }
+                _detail.value = page
+                detailToken = page.continuation
+            } else if (item !is YoutubeSongItem) {
+                _playbackError.value = "Could not open ${item.title}."
+            }
+            _isLoading.value = false
+        }
+    }
+
+    /** Goes back one page; returns false when no detail page was open. */
+    fun closeDetail(): Boolean {
+        if (_detail.value == null) return false
+        _detail.value = detailStack.removeLastOrNull()
+        detailToken = _detail.value?.continuation
+        return true
+    }
+
+    // ------------------------------------------------------------------ Paging
+
+    private var loadingMore = false
+
+    /** Fetches the next page of whatever list is showing, if it has one. */
+    fun loadMore() {
+        if (loadingMore) return
+        val detailPage = _detail.value
+        when {
+            detailPage != null -> {
+                val token = detailToken ?: return
+                loadingMore = true
+                viewModelScope.launch {
+                    val (more, next) = youtubeRepository.getPlaylistMore(token)
+                    detailToken = next
+                    _detail.value = detailPage.copy(tracks = detailPage.tracks + more, continuation = next)
+                    loadingMore = false
+                }
+            }
+            _activeTab.value == YoutubeTab.SEARCH -> {
+                val token = searchToken ?: return
+                loadingMore = true
+                viewModelScope.launch {
+                    val page = youtubeRepository.searchPage(searchQuery, _searchFilter.value.params, token)
+                    searchToken = page.continuation
+                    _searchItems.value = _searchItems.value + page.items
+                    _searchResults.value = _searchItems.value.filterIsInstance<YoutubeSongItem>().map { it.toOnlineTrack() }
+                    loadingMore = false
+                }
+            }
+            _activeTab.value == YoutubeTab.PLAYLISTS -> {
+                val token = libraryToken ?: return
+                val browseId = _libraryKind.value.browseId ?: return
+                loadingMore = true
+                viewModelScope.launch {
+                    val page = youtubeRepository.getLibrary(browseId, token)
+                    libraryToken = page.continuation
+                    _libraryItems.value = _libraryItems.value + page.items
+                    loadingMore = false
+                }
+            }
+            _activeTab.value == YoutubeTab.HOME -> {
+                val token = homeToken ?: return
+                loadingMore = true
+                viewModelScope.launch {
+                    val page = youtubeRepository.getHomeContinuation(token)
+                    homeToken = page.continuation
+                    _homeShelves.value = _homeShelves.value + page.shelves
+                    loadingMore = false
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ Playback and account actions
+
+    /** Plays [song] and queues the other [songs] of its list behind it. */
+    fun playSong(song: YoutubeSongItem, songs: List<YoutubeSongItem>) {
+        val queue = songs.map { it.toOnlineTrack() }
+        val index = songs.indexOfFirst { it.videoId == song.videoId }.coerceAtLeast(0)
+        MediaPlaybackManager.playOnlineQueue(queue, index)
+    }
+
+    fun playAll(songs: List<YoutubeSongItem>, shuffle: Boolean = false) {
+        if (songs.isEmpty()) return
+        val queue = songs.map { it.toOnlineTrack() }.let { if (shuffle) it.shuffled() else it }
+        MediaPlaybackManager.playOnlineQueue(queue, 0)
+    }
+
+    /** Starts the radio for a song, or for an artist / album / playlist mix id. */
+    fun startRadio(videoId: String?, playlistId: String? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val tracks = youtubeRepository.getRadio(videoId, playlistId)
+            _isLoading.value = false
+            if (tracks.isEmpty()) _playbackError.value = "Could not start the radio." else MediaPlaybackManager.playOnlineQueue(tracks, 0)
+        }
+    }
+
+    fun like(videoId: String, like: Boolean = true) {
+        viewModelScope.launch {
+            val ok = youtubeRepository.like(videoId, like)
+            _playbackError.value = if (ok) null else "Sign in to YouTube to like songs."
+        }
+    }
+
+    fun toggleSubscribe(page: YoutubeDetailPage) {
+        val channel = page.channelId ?: return
+        viewModelScope.launch {
+            val target = !page.subscribed
+            if (youtubeRepository.subscribe(channel, target)) {
+                _detail.value = _detail.value?.copy(subscribed = target)
+            } else {
+                _playbackError.value = "Sign in to YouTube to subscribe."
+            }
+        }
+    }
+
+    fun addToPlaylist(playlistId: String, videoId: String) {
+        viewModelScope.launch {
+            val ok = youtubeRepository.addToPlaylist(playlistId, videoId)
+            if (!ok) _playbackError.value = "Could not add the song to the playlist."
+        }
+    }
+
+    suspend fun libraryPlaylistsForPicker(): List<YoutubePlaylist> =
+        _playlists.value.ifEmpty { youtubeRepository.getLibraryPlaylists().also { _playlists.value = it } }
+
     fun setActiveTab(tab: YoutubeTab) {
         _activeTab.value = tab
-        if (tab == YoutubeTab.PLAYLISTS && _playlists.value.isEmpty() && _openedPlaylist.value == null) {
-            loadLibraryPlaylists()
+        when (tab) {
+            YoutubeTab.HOME -> loadHome()
+            YoutubeTab.PLAYLISTS -> if (_libraryItems.value.isEmpty()) loadLibrary()
+            else -> Unit
         }
     }
 
@@ -123,20 +399,7 @@ class YoutubeViewModel @Inject constructor(
     }
 
     fun search(query: String) {
-        if (query.isBlank()) {
-            _searchResults.value = emptyList()
-            _searchSuggestions.value = emptyList()
-            if (_quickPicks.value.isEmpty()) {
-                loadHomeSections()
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            _isLoading.value = true
-            _searchResults.value = youtubeRepository.search(query)
-            _isLoading.value = false
-        }
+        runSearch(query.trim())
     }
 
     fun loadLibraryPlaylists() {
