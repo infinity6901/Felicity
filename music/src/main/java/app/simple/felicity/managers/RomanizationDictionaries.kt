@@ -41,6 +41,7 @@ object RomanizationDictionaries {
             Pack("zh", "Chinese (Mandarin)", "Phrase-aware pinyin, so characters with several readings are romanized correctly.", 0.7f),
             Pack("hi", "Hindi", "Spoken-style romanization with schwa deletion (kamal, not kamala) and common spellings, for about 24,000 frequent words.", 0.3f),
             Pack("bn", "Bengali", "Silent final vowels, doubled conjuncts (shotto) and common spellings, for about 57,000 frequent words.", 0.7f),
+            Pack("ur", "Urdu", "Spoken-style romanization of Arabic-script Urdu (short vowels filled in, bh/ph/kh aspirates, common words checked by hand), for about 22,000 frequent words.", 0.2f),
     )
 
     /** Bumped on every install / removal so cached romanizations can be recomputed. */

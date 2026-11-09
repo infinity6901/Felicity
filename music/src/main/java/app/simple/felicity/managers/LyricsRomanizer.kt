@@ -37,6 +37,10 @@ internal object LyricsRomanizer {
     private fun isDevanagari(cp: Int) = cp in 0x0900..0x097F
     private fun isBengali(cp: Int) = cp in 0x0980..0x09FF
 
+    /** Arabic-script text that uses letters only Urdu has (ٹ ڈ ڑ ں ے ھ ہ), as opposed to Arabic or Persian. */
+    fun isUrdu(texts: Sequence<String>): Boolean =
+        texts.any { line -> line.codePoints().anyMatch { UrduLatin.isUrduSpecific(it) } }
+
     private fun needsRomanization(cp: Int): Boolean =
         cp in 0x0370..0x052F || cp in 0x0590..0x08FF || cp in 0x0900..0x0DFF ||
             cp in 0x0E00..0x0EFF || cp in 0x10A0..0x10FF || cp in 0x1C90..0x1CBF ||
@@ -50,17 +54,17 @@ internal object LyricsRomanizer {
      * Romanizes [text]. [japanese] says the song contains kana, which changes how kanji is treated.
      * Returns null when there is nothing to romanize or the result would be identical.
      */
-    fun romanize(text: String, japanese: Boolean = false): String? {
+    fun romanize(text: String, japanese: Boolean = false, urdu: Boolean = false): String? {
         val source = text.trim()
         if (source.isEmpty() || source.codePoints().noneMatch { needsRomanization(it) }) return null
 
-        val result = source.split(' ', '　').joinToString(" ") { word -> romanizeWord(word, japanese) }
+        val result = source.split(' ', '　').joinToString(" ") { word -> romanizeWord(word, japanese, urdu) }
             .replace(Regex("\\s+"), " ")
             .trim()
         return result.takeIf { it.isNotEmpty() && !it.equals(source, ignoreCase = true) }
     }
 
-    private fun romanizeWord(word: String, japanese: Boolean): String {
+    private fun romanizeWord(word: String, japanese: Boolean, urdu: Boolean = false): String {
         if (word.isEmpty()) return word
         val first = word.codePoints().filter { needsRomanization(it) }.findFirst()
         if (!first.isPresent) return word
@@ -71,6 +75,7 @@ internal object LyricsRomanizer {
                 isBengali(cp) -> indic(word, "Bengali-Latin", bengali = true)
                 isKana(cp) || (isHan(cp) && japanese) -> japanese(word)
                 isHangul(cp) -> stripMarks(HangulLatin.of(word))
+                urdu && UrduLatin.isUrduLetter(cp) -> UrduLatin.of(word)
                 else -> generic(word)
             }
         }.getOrDefault(word)
@@ -89,18 +94,20 @@ internal object LyricsRomanizer {
             all.codePoints().anyMatch { isHan(it) } -> "zh"
             all.codePoints().anyMatch { isDevanagari(it) } -> "hi"
             all.codePoints().anyMatch { isBengali(it) } -> "bn"
+            isUrdu(texts.asSequence()) -> "ur"
             else -> null
         }
         val dictionary = language
             ?.takeIf { RomanizationDictionaries.isInstalled(context, it) }
             ?.let { RomanizationDictionary.load(RomanizationDictionaries.file(context, it), all) }
-        return Prepared(dictionary, japanese, language == "hi" || language == "bn")
+        return Prepared(dictionary, japanese, language == "hi" || language == "bn" || language == "ur", language == "ur")
     }
 
     class Prepared internal constructor(
             private val dictionary: RomanizationDictionary?,
             private val japanese: Boolean,
-            private val indic: Boolean = false
+            private val indic: Boolean = false,
+            private val urdu: Boolean = false
     ) {
         fun romanize(text: String): String? {
             val dict = dictionary
@@ -110,7 +117,7 @@ internal object LyricsRomanizer {
             if (dict != null && text.codePoints().anyMatch { LyricsRomanizer.isKana(it) || LyricsRomanizer.isHan(it) }) {
                 runCatching { LyricsRomanizer.viaDictionary(dict, text, japanese) }.getOrNull()?.let { return it }
             }
-            return LyricsRomanizer.romanize(text, japanese)
+            return LyricsRomanizer.romanize(text, japanese, urdu)
         }
     }
 
@@ -120,7 +127,7 @@ internal object LyricsRomanizer {
      */
     private fun viaWordList(dict: RomanizationDictionary, text: String): String? {
         val source = text.trim()
-        if (source.isEmpty() || source.codePoints().noneMatch { isDevanagari(it) || isBengali(it) }) return null
+        if (source.isEmpty() || source.codePoints().noneMatch { isDevanagari(it) || isBengali(it) || UrduLatin.isUrduLetter(it) }) return null
         val result = source.split(' ', '　').joinToString(" ") { token ->
             val start = token.indexOfFirst { it.isLetter() || Character.getType(it) == Character.NON_SPACING_MARK.toInt() ||
                     Character.getType(it) == Character.COMBINING_SPACING_MARK.toInt() }
@@ -131,7 +138,7 @@ internal object LyricsRomanizer {
             } else {
                 val core = token.substring(start, end + 1)
                 val hit = dict.find(core)?.reading
-                val romanized = hit ?: romanizeWord(core, false)
+                val romanized = hit ?: romanizeWord(core, false, urdu = UrduLatin.isUrduLetter(core.codePointAt(0)))
                 token.substring(0, start) + romanized + token.substring(end + 1)
             }
         }.replace(Regex("\\s+"), " ").trim()

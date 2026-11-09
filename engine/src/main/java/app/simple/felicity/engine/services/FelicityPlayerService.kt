@@ -1395,6 +1395,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         override fun onPlayerError(error: PlaybackException) {
             if (recoverFromStuckPlayer(error)) return
+            if (recoverFromLoudnessControllerError(error)) return
             when (error.errorCode) {
                 PlaybackException.ERROR_CODE_DECODING_FAILED,
                 PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
@@ -1950,6 +1951,32 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     private var lastStuckRecoveryMs = 0L
+    private var lastLoudnessRecoveryMs = 0L
+
+    /**
+     * Media3's loudness-codec controller throws IllegalArgumentException ("Loudness controller does
+     * not contain MediaCodec") when a codec is released after the controller was already reset, which
+     * happens when the audio route or the dual-player standby swaps codecs. The track itself is fine,
+     * so playback is re-prepared at the same position (at most every 5 s) instead of surfacing an error.
+     */
+    private fun recoverFromLoudnessControllerError(error: PlaybackException): Boolean {
+        if (error.errorCode != PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK) return false
+        val match = generateSequence(error as Throwable?) { it.cause }
+            .any { it.message?.contains("Loudness controller does not contain", ignoreCase = true) == true }
+        val now = SystemClock.elapsedRealtime()
+        if (!match || now - lastLoudnessRecoveryMs < 5_000L) return false
+        lastLoudnessRecoveryMs = now
+        Log.w(TAG, "Loudness controller codec mismatch; re-preparing at the current position")
+        cancelCrossfadeIfActive()
+        val index = player.currentMediaItemIndex
+        val position = player.currentPosition
+        val wasPlaying = player.playWhenReady
+        player.stop()
+        player.seekTo(index, position)
+        player.prepare()
+        player.playWhenReady = wasPlaying
+        return true
+    }
 
     /**
      * ExoPlayer's stuck-player detector raises ERROR_CODE_TIMEOUT when playback reports "playing" but

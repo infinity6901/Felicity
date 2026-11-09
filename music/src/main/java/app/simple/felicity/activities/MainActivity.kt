@@ -126,7 +126,7 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
         setContentView(binding.root)
 
         applyMiniPlayerResponsiveLayout(UserInterfacePreferences.getMiniplayerWidth())
-        binding.miniPlayer.glassAlpha = app.simple.felicity.preferences.LiquidGlassPreferences.surfaceAlpha()
+        applyLiquidGlass()
 
         binding.miniPlayer.callbacks = object : MiniPlayer.Callbacks {
             override fun onPageSelected(position: Int, fromUser: Boolean) {
@@ -700,6 +700,22 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
         }
     }
 
+    /**
+     * Liquid glass: the mini player becomes a blurred, refracting pane over the screen behind it. On
+     * Android 12+ the fragment container records itself so the player can blur it live; older versions
+     * get the plain translucent tint.
+     */
+    private fun applyLiquidGlass() {
+        val prefs = app.simple.felicity.preferences.LiquidGlassPreferences
+        val on = prefs.isLiquidGlass()
+        val real = on && binding.fragmentContainer.isSupported
+        binding.fragmentContainer.glassEnabled = real
+        binding.miniPlayer.glassHost = if (real) binding.fragmentContainer else null
+        binding.miniPlayer.glassTint = prefs.tintAlpha(min = 0.22f, max = 0.82f)
+        binding.miniPlayer.glassRefraction = prefs.getIntensity()
+        binding.miniPlayer.glassAlpha = prefs.surfaceAlpha()
+    }
+
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         super.onSharedPreferenceChanged(sharedPreferences, key)
         when (key) {
@@ -715,7 +731,7 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
             }
             app.simple.felicity.preferences.LiquidGlassPreferences.LIQUID_GLASS,
             app.simple.felicity.preferences.LiquidGlassPreferences.GLASS_INTENSITY -> {
-                binding.miniPlayer.glassAlpha = app.simple.felicity.preferences.LiquidGlassPreferences.surfaceAlpha()
+                applyLiquidGlass()
             }
         }
     }

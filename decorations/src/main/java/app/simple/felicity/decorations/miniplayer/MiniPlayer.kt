@@ -1839,6 +1839,72 @@ class MiniPlayer @JvmOverloads constructor(
             field = clamped
             invalidate()
         }
+
+    /**
+     * The host whose content this card is glass over. While it is set and able to draw, the card shows a
+     * blurred, rim-refracted picture of what is behind it instead of a flat translucent fill; [glassAlpha]
+     * is then unused and [glassTint] decides how much of the theme color is laid over the glass.
+     */
+    var glassHost: app.simple.felicity.decorations.glass.GlassHostLayout? = null
+        set(value) {
+            if (field === value) return
+            field?.removeGlassTarget(this)
+            field = value
+            value?.addGlassTarget(this)
+            invalidate()
+        }
+
+    /** Opacity of the theme-colored tint over the glass, 0 clear to 1 solid. */
+    var glassTint: Float = 0.45f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
+        }
+
+    /** 0..1: how strongly the glass bends what is behind its rim. */
+    var glassRefraction: Float = 0.6f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
+        }
+
+    private val glassSheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glassRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private var glassShaderHeight = -1f
+
+    /** Draws the glass backdrop plus tint, sheen and rim. Returns false to let the caller draw its plain fill. */
+    private fun drawGlassCard(canvas: Canvas): Boolean {
+        val host = glassHost ?: return false
+        if (!host.glassEnabled) return false
+        val density = resources.displayMetrics.density
+        val save = canvas.save()
+        canvas.clipPath(cardClipPath)
+        val drawn = host.drawBackdrop(
+                canvas, this, cardRect, buttonStripHeightPx, cornerRadiusPx,
+                blur = 14f * density, refraction = glassRefraction, depth = 18f * density)
+        canvas.restoreToCount(save)
+        if (!drawn) return false
+
+        // Tint: the theme color at a reduced opacity keeps text readable on top of the clear glass.
+        bgPaint.color = Color.argb((Color.alpha(cardColor) * glassTint).toInt(), Color.red(cardColor), Color.green(cardColor), Color.blue(cardColor))
+        canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, bgPaint)
+
+        // Specular sheen along the top and a rim light that fades toward the bottom, the cues that read as glass.
+        if (glassShaderHeight != cardRect.height()) {
+            glassShaderHeight = cardRect.height()
+            glassSheenPaint.shader = LinearGradient(0f, cardRect.top, 0f, cardRect.top + cardRect.height() * 0.65f,
+                                                    Color.argb(70, 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP)
+            glassRimPaint.shader = LinearGradient(0f, cardRect.top, 0f, cardRect.bottom,
+                                                  Color.argb(150, 255, 255, 255), Color.argb(30, 255, 255, 255), Shader.TileMode.CLAMP)
+            glassRimPaint.strokeWidth = density
+        }
+        canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, glassSheenPaint)
+        val rimInset = glassRimPaint.strokeWidth / 2f
+        strokeRect.set(cardRect.left + rimInset, cardRect.top + rimInset, cardRect.right - rimInset, cardRect.bottom - rimInset)
+        canvas.drawRoundRect(strokeRect, cornerRadiusPx - rimInset, cornerRadiusPx - rimInset, glassRimPaint)
+        return true
+    }
+
     private var titleColor: Int = ThemeManager.theme.textViewTheme.primaryTextColor
     private var artistColor: Int = ThemeManager.theme.textViewTheme.secondaryTextColor
     private var iconColor: Int = ThemeManager.theme.iconTheme.regularIconColor
@@ -2136,9 +2202,11 @@ class MiniPlayer @JvmOverloads constructor(
         canvas.translate(0f, buttonStripHeightPx)
 
         // 1. Card background (translucent while liquid glass is on)
-        bgPaint.color = if (glassAlpha >= 1f) cardColor else
-            Color.argb((Color.alpha(cardColor) * glassAlpha).toInt(), Color.red(cardColor), Color.green(cardColor), Color.blue(cardColor))
-        canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, bgPaint)
+        if (!drawGlassCard(canvas)) {
+            bgPaint.color = if (glassAlpha >= 1f) cardColor else
+                Color.argb((Color.alpha(cardColor) * glassAlpha).toInt(), Color.red(cardColor), Color.green(cardColor), Color.blue(cardColor))
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, bgPaint)
+        }
 
         // 2. Optional stroke border
         if (strokeEnabled && strokeWidthPx > 0f) {
