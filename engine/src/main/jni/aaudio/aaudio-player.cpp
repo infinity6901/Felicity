@@ -716,7 +716,7 @@ Java_app_simple_felicity_engine_processors_AaudioOutputProcessor_nativeAaudioDes
         std::lock_guard<std::mutex> guard(gRegistryMutex);
         gContexts.erase(ctx->id);
     }
-    for (int i = 0; i < 600 && ctx->pins.load() > 0; ++i) {
+    while (ctx->pins.load() > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 

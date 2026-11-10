@@ -22,6 +22,14 @@ class SilenceTrimmingProcessor : BaseAudioProcessor() {
         this.silenceThreshold = threshold
     }
 
+    fun isSilentBuffer(samples: FloatArray, sampleCount: Int): Boolean {
+        val threshold = silenceThreshold
+        for (i in 0 until sampleCount) {
+            if (abs(samples[i]) > threshold) return false
+        }
+        return true
+    }
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT ||
                 inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT) {

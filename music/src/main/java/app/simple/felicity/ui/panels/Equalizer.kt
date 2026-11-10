@@ -70,7 +70,7 @@ class Equalizer : MediaFragment() {
     private val peqFilePicker = registerForActivityResult(
             ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) throw NullPointerException("URI is null")
+        if (uri == null) return@registerForActivityResult
         val fileName = uri.lastPathSegment?.substringAfterLast("/") ?: "Imported Preset"
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {

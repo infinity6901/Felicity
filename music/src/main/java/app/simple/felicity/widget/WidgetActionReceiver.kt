@@ -125,8 +125,12 @@ class WidgetActionReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_OPEN_APP -> {
-                val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                context.startActivity(launchIntent)
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                if (launchIntent != null) {
+                    context.startActivity(launchIntent)
+                }
                 onDone()
             }
 

@@ -829,14 +829,16 @@ static void feedVisualizer(DspContext *ctx, const float *__restrict buf, int num
     if (!fft || !fft->setup || fft->bandCount <= 0 || !fft->bandEdges) return;
 
     const int fftSize = fft->size;
-    const bool isStereo = (ctx->channelCount == 2);
+    if (fftSize <= 0 || fftSize > ctx->vizMonoCapacity) return;
+
+    const int ch = (ctx->channelCount > 0) ? ctx->channelCount : 1;
     const int delaySamples = ctx->outputLatencySamples;
     const bool useDelay = (delaySamples > 0) && (ctx->vizDelayBuf != nullptr);
 
     for (int i = 0; i < numFrames; ++i) {
-        /** Mono downmix: average L and R, or copy the single channel for mono streams. */
-        const float mono = isStereo
-                           ? (buf[2 * i] + buf[2 * i + 1]) * 0.5f
+        /** Mono downmix: average L and R for >=2 channels, or copy the single channel for mono. */
+        const float mono = (ch >= 2)
+                           ? (buf[ch * i] + buf[ch * i + 1]) * 0.5f
                            : buf[i];
 
         float sample;
@@ -935,6 +937,7 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspCreate(
     ctx->fftFrameReady = false;
 
     ctx->vizMono = static_cast<float *>(calloc(fft->size, sizeof(float)));
+    ctx->vizMonoCapacity = fft->size;
     ctx->bandMagnitudes = (fft->bandCount > 0)
                           ? static_cast<float *>(calloc(fft->bandCount, sizeof(float)))
                           : nullptr;
@@ -957,7 +960,9 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspCreate(
 
     if (!ctx->vizMono) {
         DSP_LOGE("nativeDspCreate: vizMono allocation failed");
-        delete ctx;
+        free(ctx->bandMagnitudes);
+        free(ctx->vizDelayBuf);
+        free(ctx);
         return 0L;
     }
 
@@ -1417,7 +1422,7 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspProcessAudio(
                                   ctx->eqState[0][b],
                                   ctx->eqState[1][b]);
             }
-        } else {
+        } else if (ch == 1) {
             for (int b = 0; b < kDspEqBandCount; ++b) {
                 applyBiquadMono(buf, totalSamples,
                                 ctx->eqCoeffs[b],
@@ -1436,7 +1441,7 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspProcessAudio(
             applyBiquadStereo(buf, numFrames,
                               ctx->bassCoeffs,
                               ctx->bassState[0], ctx->bassState[1]);
-        } else {
+        } else if (ch == 1) {
             applyBiquadMono(buf, totalSamples, ctx->bassCoeffs, ctx->bassState[0]);
         }
     }
@@ -1446,7 +1451,7 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspProcessAudio(
             applyBiquadStereo(buf, numFrames,
                               ctx->trebleCoeffs,
                               ctx->trebleState[0], ctx->trebleState[1]);
-        } else {
+        } else if (ch == 1) {
             applyBiquadMono(buf, totalSamples, ctx->trebleCoeffs, ctx->trebleState[0]);
         }
     }
@@ -1490,7 +1495,7 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspProcessAudio(
     if (reverbActive) {
         if (ch == 2) {
             applyReverbStereo(buf, numFrames, ctx);
-        } else {
+        } else if (ch == 1) {
             applyReverbMono(buf, totalSamples, ctx);
         }
     }
@@ -1555,6 +1560,30 @@ Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspReadBandMagnitu
  * @param thiz   Calling Java/Kotlin object (unused).
  * @param handle Opaque pointer returned by [nativeDspCreate].
  */
+JNIEXPORT void JNICALL
+Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspSetFftHandle(
+        JNIEnv * /*env*/, jobject /*thiz*/, jlong handle, jlong fftHandle) {
+    auto *ctx = reinterpret_cast<DspContext *>(handle);
+    if (!ctx) return;
+    auto *fft = reinterpret_cast<FFTContext *>(fftHandle);
+    ctx->fftCtx = nullptr;
+    ctx->vizBufPos = 0;
+    ctx->fftFrameReady = false;
+    if (!fft || fft->size <= 0) {
+        return;
+    }
+    if (fft->size > ctx->vizMonoCapacity) {
+        auto *newMono = static_cast<float *>(calloc(fft->size, sizeof(float)));
+        if (!newMono) return;
+        free(ctx->vizMono);
+        ctx->vizMono = newMono;
+        ctx->vizMonoCapacity = fft->size;
+    } else if (ctx->vizMono) {
+        memset(ctx->vizMono, 0, static_cast<size_t>(ctx->vizMonoCapacity) * sizeof(float));
+    }
+    ctx->fftCtx = fft;
+}
+
 JNIEXPORT void JNICALL
 Java_app_simple_felicity_engine_processors_DspProcessor_nativeDspDestroy(
         JNIEnv * /*env*/, jobject /*thiz*/, jlong handle) {

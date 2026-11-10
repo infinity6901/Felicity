@@ -106,6 +106,39 @@ class NightModeProcessor : BaseAudioProcessor() {
         this.isEnabled = enabled
     }
 
+    /**
+     * In-place float processing for direct native output sinks (AAudio, Oboe, USB DAC)
+     * that bypass DefaultAudioSink's ByteBuffer AudioProcessor chain.
+     */
+    fun processInPlace(samples: FloatArray, sampleCount: Int, channelCount: Int) {
+        if (!isEnabled || channelCount <= 0) return
+        val frames = sampleCount / channelCount
+        var idx = 0
+        for (f in 0 until frames) {
+            var inputLevel = 0f
+            for (c in 0 until channelCount) {
+                val a = abs(samples[idx + c])
+                if (a > inputLevel) inputLevel = a
+            }
+            envelope = if (inputLevel > envelope) {
+                envelope + attackCoef * (inputLevel - envelope)
+            } else {
+                envelope + releaseCoef * (inputLevel - envelope)
+            }
+            val gain = if (envelope > threshold) {
+                val compressedAmplitude = threshold + (envelope - threshold) / ratio
+                (compressedAmplitude / envelope).coerceIn(0f, 1f)
+            } else {
+                1.0f
+            }
+            val totalGain = gain * makeupGain
+            for (c in 0 until channelCount) {
+                samples[idx + c] = (samples[idx + c] * totalGain).coerceIn(-1f, 1f)
+            }
+            idx += channelCount
+        }
+    }
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         // Resize the pre-allocated buffer to match the actual channel count.
         if (sampleBuffer.size != inputAudioFormat.channelCount) {

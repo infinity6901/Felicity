@@ -30,22 +30,22 @@ interface AudioDao {
     fun getAllAudioListAll(): MutableList<Audio>
 
     /**
-     * Deletes all duplicate rows that share the same path, keeping only the row whose
+     * Deletes all duplicate rows that share the same URI, keeping only the row whose
      * date_modified is the highest (most recently scanned). If two rows share the same
-     * date_modified, the one with the larger id wins (arbitrary but deterministic).
-     * This is a pure-SQL single-statement dedup that runs entirely inside SQLite.
+     * date_modified, the one with the larger id wins.
      */
     @Query("""
         DELETE FROM audio
-        WHERE id NOT IN (
-            SELECT id FROM audio
-            GROUP BY uri
-            HAVING id = MAX(id)
-        )
-        AND uri IN (
-            SELECT uri FROM audio
-            GROUP BY uri
-            HAVING COUNT(*) > 1
+        WHERE id IN (
+            SELECT a.id FROM audio a
+            WHERE EXISTS (
+                SELECT 1 FROM audio b
+                WHERE b.uri = a.uri
+                AND (
+                    b.date_modified > a.date_modified
+                    OR (b.date_modified = a.date_modified AND b.id > a.id)
+                )
+            )
         )
     """)
     suspend fun deleteStalePathDuplicates()
@@ -58,7 +58,7 @@ interface AudioDao {
     fun getFilteredAudioList(minDuration: Long, minSize: Long): MutableList<Audio>
 
     // Get unique artists
-    @Query("SELECT * FROM audio WHERE is_available = 1 GROUP BY artist  ORDER BY artist COLLATE NOCASE ASC")
+    @Query("SELECT * FROM audio WHERE is_available = 1 GROUP BY artist ORDER BY artist COLLATE NOCASE ASC")
     fun getAllArtists(): Flow<MutableList<Audio>>
 
     // Get unique artists with filtering
@@ -96,7 +96,8 @@ interface AudioDao {
     // Fetch only the tracks for the specific album
     @Query("""
         SELECT * FROM audio 
-        WHERE album = :albumName 
+        WHERE is_available = 1
+        AND album = :albumName 
         AND duration >= :minDuration 
         AND size >= :minSize
     """)
@@ -104,32 +105,32 @@ interface AudioDao {
 
     // Get global track and unique album counts for specific artists
     @Query("""
-        SELECT COUNT(id) FROM audio WHERE album_artist LIKE :artistName
+        SELECT COUNT(id) FROM audio WHERE is_available = 1 AND album_artist = :artistName COLLATE NOCASE
     """)
     fun getTrackCountForArtist(artistName: String): Int
 
     @Query("""
-        SELECT COUNT(DISTINCT album) FROM audio WHERE album_artist LIKE :artistName
+        SELECT COUNT(DISTINCT album) FROM audio WHERE is_available = 1 AND album_artist = :artistName COLLATE NOCASE
     """)
     fun getAlbumCountForArtist(artistName: String): Int
 
     // Get all track paths for an artist (for the Artist object map)
     @Query("""
-        SELECT uri FROM audio WHERE album_artist LIKE :artistName
+        SELECT uri FROM audio WHERE is_available = 1 AND album_artist = :artistName COLLATE NOCASE
     """)
     fun getTrackPathsForArtist(artistName: String): List<String>
 
     // Get global track paths for a specific genre
     @Query("""
-        SELECT uri FROM audio WHERE genre = :genreName
+        SELECT uri FROM audio WHERE is_available = 1 AND genre = :genreName
     """)
     fun getTrackPathsForGenre(genreName: String): List<String>
 
     // Fetches only tracks that contain the artist name somewhere in the field.
-    // This allows the DB to instantly discard 99% of the library before Kotlin touches it.
     @Query("""
     SELECT * FROM audio 
-    WHERE artist LIKE '%' || :artistName || '%' 
+    WHERE is_available = 1
+    AND artist LIKE '%' || :artistName || '%' 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -137,7 +138,8 @@ interface AudioDao {
 
     @Query("""
     SELECT * FROM audio 
-    WHERE album_artist LIKE '%' || :artistName || '%' 
+    WHERE is_available = 1
+    AND album_artist LIKE '%' || :artistName || '%' 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -145,7 +147,8 @@ interface AudioDao {
 
     @Query("""
     SELECT * FROM audio 
-    WHERE composer LIKE :composerName 
+    WHERE is_available = 1
+    AND composer = :composerName COLLATE NOCASE
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -153,7 +156,8 @@ interface AudioDao {
 
     @Query("""
     SELECT * FROM audio 
-    WHERE uri LIKE '%' || :folderPath || '%' 
+    WHERE is_available = 1
+    AND uri LIKE '%' || :folderPath || '%' 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -161,7 +165,8 @@ interface AudioDao {
 
     @Query("""
     SELECT * FROM audio 
-    WHERE genre = :genreName 
+    WHERE is_available = 1
+    AND genre = :genreName 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -170,7 +175,8 @@ interface AudioDao {
     // Query for a specific year
     @Query("""
     SELECT * FROM audio 
-    WHERE year = :year 
+    WHERE is_available = 1
+    AND year = :year 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -179,7 +185,8 @@ interface AudioDao {
     // 2. Query for tracks with missing year data
     @Query("""
     SELECT * FROM audio 
-    WHERE (year IS NULL OR year = '') 
+    WHERE is_available = 1
+    AND (year IS NULL OR year = '') 
     AND duration >= :minDuration 
     AND size >= :minSize
     """)
@@ -199,10 +206,6 @@ interface AudioDao {
     @Query("SELECT * FROM audio WHERE is_available = 1 AND album LIKE '%' || :query || '%' ORDER BY title COLLATE NOCASE ASC")
     fun searchByAlbum(query: String): Flow<MutableList<Audio>>
 
-    // Reactive search with filtering.
-    // The title search also falls back to the "name" column (raw file display name,
-    // e.g. "song.mp3") and the "path" column (full filesystem path) so that files with
-    // missing/blank metadata titles can still be found by their file name.
     @Query("""
         SELECT * FROM audio
         WHERE is_available = 1 AND duration >= :minDuration AND size >= :minSize
@@ -227,7 +230,6 @@ interface AudioDao {
     @Query("SELECT * FROM audio WHERE is_available = 1 AND duration >= :minDuration AND size >= :minSize AND composer LIKE '%' || :query || '%' ORDER BY title COLLATE NOCASE ASC")
     fun searchByComposerFiltered(query: String, minDuration: Long, minSize: Long): Flow<MutableList<Audio>>
 
-    // Reactive search by year – matches any year string containing the query (e.g. "19" matches "1998").
     @Query("SELECT * FROM audio WHERE is_available = 1 AND duration >= :minDuration AND size >= :minSize AND year LIKE '%' || :query || '%' ORDER BY title COLLATE NOCASE ASC")
     fun searchByYearFiltered(query: String, minDuration: Long, minSize: Long): Flow<MutableList<Audio>>
 
@@ -240,22 +242,12 @@ interface AudioDao {
     @Query("SELECT * FROM audio WHERE uri = :path LIMIT 1")
     fun getAudioByPath(path: String): Audio?
 
-    /**
-     * Looks up an audio row by its real POSIX filesystem path (the path column,
-     * which holds the MediaStore DATA value like /storage/emulated/0/Music/song.mp3).
-     * This is the right query to use when matching against M3U entry paths.
-     */
     @Query("SELECT * FROM audio WHERE path = :posixPath LIMIT 1")
     fun getAudioByPosixPath(posixPath: String): Audio?
 
-    // Favorite / always-skip flag queries
     @Query("SELECT * FROM audio WHERE is_favorite = 1 AND is_available = 1 ORDER BY title COLLATE NOCASE ASC")
     fun getFavoriteAudio(): Flow<MutableList<Audio>>
 
-    /**
-     * Returns every song that has been flagged as "always skip" as a live Flow.
-     * The list automatically updates whenever a song is added to or removed from the skip list.
-     */
     @Query("SELECT * FROM audio WHERE always_skip = 1 AND is_available = 1 ORDER BY title COLLATE NOCASE ASC")
     fun getAlwaysSkippedAudio(): Flow<MutableList<Audio>>
 
@@ -265,10 +257,6 @@ interface AudioDao {
     @Query("UPDATE audio SET always_skip = :alwaysSkip WHERE id = :id")
     suspend fun setAlwaysSkip(id: Long, alwaysSkip: Boolean)
 
-    /**
-     * Marks a whole batch of songs as always-skip (or clears the flag) in a single query.
-     * Much more efficient than calling [setAlwaysSkip] one song at a time.
-     */
     @Query("UPDATE audio SET always_skip = :alwaysSkip WHERE id IN (:ids)")
     suspend fun setAlwaysSkipBatch(ids: List<Long>, alwaysSkip: Boolean)
 
@@ -278,44 +266,18 @@ interface AudioDao {
     @RawQuery
     fun getAudioByIDs(query: SupportSQLiteQuery): MutableList<Audio>
 
-    /**
-     * Delete a [Audio] item
-     * from the table
-     */
     @Delete
     suspend fun delete(audio: Audio)
 
     @Delete
     suspend fun delete(audioList: List<Audio>)
 
-    /**
-     * Insert [Audio] item
-     * into the table
-     */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(audio: Audio)
 
-    /**
-     * Tries to insert an [Audio] item, but quietly gives up if a row with the
-     * same hash already exists — no drama, no exceptions, just a polite -1 return.
-     *
-     * <p>This is used when importing M3U playlists to create placeholder entries
-     * for tracks that are referenced in the file but not yet in the library.
-     * The [OnConflictStrategy.IGNORE] strategy means we never accidentally
-     * overwrite a real library entry with a placeholder.</p>
-     *
-     * @param audio The audio entry to insert.
-     * @return The new row ID on success, or {@code -1} if a hash conflict was ignored.
-     */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun insertOrIgnore(audio: Audio): Long
 
-    /**
-     * Insert multiple [Audio] items in a batch. Uses IGNORE on conflict so that
-     * if a hash somehow collides with an existing row (astronomically unlikely with
-     * path-aware hashes), we silently skip the offending item rather than deleting
-     * the row that's already safely in the library.
-     */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertBatch(audioList: List<Audio>)
 
@@ -325,9 +287,6 @@ interface AudioDao {
     @Update
     suspend fun update(audioList: List<Audio>)
 
-    /**
-     * Delete the entire table
-     */
     @Query("DELETE FROM audio")
     fun nukeTable()
 }

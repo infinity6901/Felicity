@@ -241,11 +241,29 @@ class MultiProviderLyricsEngine @Inject constructor(
                 val words = ArrayList<WordEntry>()
                 val syllables = line.optJSONArray("syllabus")
                 if (syllables != null) {
+                    var searchFrom = 0
                     for (wordIndex in 0 until syllables.length()) {
                         val word = syllables.optJSONObject(wordIndex) ?: continue
                         if (word.optBoolean("isBackground", false)) continue
-                        val wordText = word.optString("text")
-                        if (wordText.isBlank()) continue
+                        val rawWordText = word.optString("text")
+                        if (rawWordText.isEmpty()) continue
+                        if (rawWordText.isBlank()) {
+                            if (words.isNotEmpty() && !words.last().text.endsWith(" ")) {
+                                val last = words.removeAt(words.lastIndex)
+                                words += WordEntry(last.startMs, last.endMs, last.text + " ")
+                            }
+                            continue
+                        }
+                        val trimmedWord = rawWordText.trim()
+                        val matchIdx = text.indexOf(trimmedWord, searchFrom)
+                        val hasTrailingSpace = if (matchIdx >= 0) {
+                            val endIdx = matchIdx + trimmedWord.length
+                            searchFrom = endIdx
+                            endIdx < text.length && text[endIdx].isWhitespace()
+                        } else {
+                            rawWordText.endsWith(" ")
+                        }
+                        val wordText = if (hasTrailingSpace && !rawWordText.endsWith(" ")) "$trimmedWord " else rawWordText
                         val wordStart = word.optLong("time", ms).coerceAtLeast(0L)
                         val wordEnd = wordStart + word.optLong("duration", 0L).coerceAtLeast(45L)
                         words += WordEntry(wordStart, wordEnd, wordText)

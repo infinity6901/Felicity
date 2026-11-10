@@ -544,7 +544,7 @@ object MediaPlaybackManager {
                     newShuffledQueue = emptyList()
                 }
 
-                val clampedPosition = if (shuffleOn) 0 else position.coerceIn(0, activeQueue.size - 1)
+                val clampedPosition = if (shuffleOn && isRestore.not()) 0 else position.coerceIn(0, activeQueue.size - 1)
 
                 val mediaItems = activeQueue.map { it.toMediaItem() }
 
@@ -629,6 +629,9 @@ object MediaPlaybackManager {
      */
     fun updateQueueSilently(audios: List<Audio>, newPosition: Int) {
         this.songs = audios
+        if (!ShufflePreferences.isShuffleEnabled()) {
+            this.originalQueue = audios
+        }
         val clampedPosition = if (audios.isEmpty()) 0 else newPosition.coerceIn(0, audios.size - 1)
         currentSongPosition = clampedPosition
         scope.launch {
@@ -737,6 +740,9 @@ object MediaPlaybackManager {
         val newList = songs.toMutableList()
         newList.removeAt(index)
         this.songs = newList
+        if (originalQueue.isNotEmpty()) {
+            originalQueue = originalQueue.filterNot { it.id == removedSong.id }
+        }
 
         // Figure out where the currently playing song lands after removal
         val newCurrentPosition = if (wasPlayingRemovedSong) {
@@ -794,6 +800,7 @@ object MediaPlaybackManager {
         val currentIndex = currentSongPosition.coerceIn(0, songs.size - 1)
 
         this.songs = listOf(current)
+        this.originalQueue = listOf(current)
         currentSongPosition = 0
 
         // Surgically remove every item except the current one from ExoPlayer's queue —
@@ -1452,6 +1459,7 @@ object MediaPlaybackManager {
             setSongs(newList, 0)
         } else {
             songs = newList
+            originalQueue = originalQueue + audio
             // Guard the appended position against spurious ExoPlayer transition callbacks
             // that fire when addMediaItem triggers a state change (e.g. from STATE_ENDED).
             val addedAt = newList.size - 1
@@ -1510,6 +1518,9 @@ object MediaPlaybackManager {
         } else {
             newList.add(insertAt, audio)
             songs = newList
+            if (originalQueue.none { it.id == audio.id }) {
+                originalQueue = originalQueue + audio
+            }
             // Guard the inserted position against spurious ExoPlayer transition callbacks
             // that fire when addMediaItem triggers a state change (e.g. from STATE_ENDED).
             pendingSeekPositions.add(insertAt)
@@ -1575,6 +1586,9 @@ object MediaPlaybackManager {
             // New song — insert, seek, and play.
             newList.add(insertAt, audio)
             songs = newList
+            if (originalQueue.none { it.id == audio.id }) {
+                originalQueue = originalQueue + audio
+            }
             lastNavigationDirection = true
             currentSongPosition = insertAt
             pendingSeekPositions.add(insertAt)

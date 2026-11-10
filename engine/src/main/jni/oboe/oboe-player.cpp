@@ -32,6 +32,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 #include "oboe-player.h"
 
@@ -59,6 +60,23 @@ namespace {
 
 /** Longer timeout used only by the recovery thread itself and by destroy(). */
     constexpr auto kRecoveryLockTimeout = std::chrono::milliseconds(1000);
+
+    std::mutex gRegistryMutex;
+    std::unordered_map<uint64_t, OboeContext *> gContexts;
+    std::atomic<uint64_t> gNextContextId{1};
+
+    OboeContext *pinContext(uint64_t id) {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        auto it = gContexts.find(id);
+        if (it == gContexts.end()) return nullptr;
+        it->second->pins.fetch_add(1);
+        return it->second;
+    }
+
+    struct ContextPin {
+        OboeContext *ctx;
+        ~ContextPin() { if (ctx) ctx->pins.fetch_sub(1); }
+    };
 }  // namespace
 
 /**
@@ -138,7 +156,8 @@ namespace {
             OBOE_LOGW("onErrorAfterClose: stream closed due to error (%s) — scheduling recovery",
                       oboe::convertToText(error));
             mCtx->running.store(false);
-            std::thread(&FelicityOboeErrorCallback::recover, mCtx).detach();
+            const uint64_t contextId = mCtx->id;
+            std::thread(&FelicityOboeErrorCallback::recover, contextId).detach();
         }
 
         /**
@@ -204,7 +223,10 @@ namespace {
          * [OboeContext::destroyed] so a reopen racing against [nativeOboeDestroy] backs
          * off instead of resurrecting a stream nobody owns anymore.
          */
-        static void recover(OboeContext *ctx) {
+        static void recover(uint64_t contextId) {
+            OboeContext *ctx = pinContext(contextId);
+            if (!ctx) return;
+            ContextPin pin{ctx};
             if (ctx->destroyed.load()) return;
 
             bool expected = false;
@@ -305,6 +327,11 @@ Java_app_simple_felicity_engine_processors_OboeOutputProcessor_nativeOboeCreate(
         return 0L;
     }
     ctx->stream = stream;
+    ctx->id = gNextContextId.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        gContexts[ctx->id] = ctx;
+    }
 
     return reinterpret_cast<jlong>(ctx);
 }
@@ -662,6 +689,14 @@ Java_app_simple_felicity_engine_processors_OboeOutputProcessor_nativeOboeDestroy
 
     ctx->destroyed.store(true);
     ctx->running.store(false);
+
+    {
+        std::lock_guard<std::mutex> guard(gRegistryMutex);
+        gContexts.erase(ctx->id);
+    }
+    while (ctx->pins.load() > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 
     std::shared_ptr<oboe::AudioStream> stream;
     {

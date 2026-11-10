@@ -134,21 +134,20 @@ void UsbIsoStream::fillTransferBuffer(libusb_transfer *transfer) {
 
         // Determine how many audio frames belong in this packet based on the
         // negotiated sample rate and the physical bus speed (Full vs High).
-        const int framesInPkt = framesForCurrentPacket();
+        const int rawFramesInPkt = framesForCurrentPacket();
+        const int maxFramesPerPkt = (bytesPerFrame > 0)
+                                    ? (static_cast<int>(maxPacketSize_) / bytesPerFrame)
+                                    : 0;
+        const int framesInPkt = (rawFramesInPkt > maxFramesPerPkt) ? maxFramesPerPkt : rawFramesInPkt;
         const int packetBytes = framesInPkt * bytesPerFrame;
 
-        // Guard against exceeding the endpoint's hardware limit.
-        if (packetBytes > static_cast<int>(maxPacketSize_)) {
-            LOGW("Calculated packet size %d exceeds maxPacketSize %d — clamping",
-                 packetBytes, maxPacketSize_);
-            pkt.length = maxPacketSize_;
-        } else {
-            pkt.length = static_cast<unsigned int>(packetBytes);
+        if (rawFramesInPkt > maxFramesPerPkt) {
+            LOGW("Calculated frames %d (%d bytes) exceeds maxPacketSize %d — clamping to %d frames",
+                 rawFramesInPkt, rawFramesInPkt * bytesPerFrame, maxPacketSize_, framesInPkt);
         }
+        pkt.length = static_cast<unsigned int>(packetBytes);
 
         if (framesInPkt > 0 && packetBytes > 0) {
-            // Increased stack buffer. At Full Speed (1ms), 96kHz stereo requires 192 samples.
-            // 2048 provides massive headroom for 8-channel or exotic sample rates.
             const int MAX_SAMPLES = 2048;
             float scratch[MAX_SAMPLES]{};
 
@@ -351,9 +350,17 @@ UsbIsoStream::start(libusb_context *ctx, libusb_device_handle *handle, const Uac
     // Reset the accumulator
     packetFraction_ = 0;
 
-    // Cache the packet rate based on physical bus speed
-    // Full Speed = 1000 frames/sec | High Speed = 8000 microframes/sec
-    packetsPerSecond_ = (deviceSpeed == LIBUSB_SPEED_FULL) ? 1000 : 8000;
+    // Cache the packet rate based on physical bus speed and endpoint bInterval.
+    // Full Speed = 1000 frames/sec; High Speed = 8000 / 2^(bInterval - 1) packets/sec.
+    if (deviceSpeed == LIBUSB_SPEED_FULL) {
+        packetsPerSecond_ = 1000;
+    } else {
+        const int intervalShift = (alt.bInterval > 1)
+                                  ? ((alt.bInterval - 1 < 13) ? (alt.bInterval - 1) : 13)
+                                  : 0;
+        const int rate = 8000 >> intervalShift;
+        packetsPerSecond_ = (rate > 0) ? rate : 1000;
+    }
 
     const int baseFramesPerPacket = sampleRate_ / packetsPerSecond_;
 

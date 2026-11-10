@@ -21,8 +21,11 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import app.simple.felicity.engine.audio.FelicityAudioSink.Companion.requestImmediatePause
 import app.simple.felicity.engine.processors.AaudioOutputProcessor
+import app.simple.felicity.engine.processors.KaraokeProcessor
 import app.simple.felicity.engine.processors.NativeDspAudioProcessor
+import app.simple.felicity.engine.processors.NightModeProcessor
 import app.simple.felicity.engine.processors.OboeOutputProcessor
+import app.simple.felicity.engine.processors.SilenceTrimmingProcessor
 import app.simple.felicity.engine.processors.VisualizerProcessor
 import app.simple.felicity.engine.usb.UsbDacDriver
 import app.simple.felicity.engine.usb.UsbDacManager
@@ -76,7 +79,10 @@ class FelicityAudioSink(
         private val defaultSinkProvider: () -> DefaultAudioSink,
         private val context: Context,
         private val nativeDsp: NativeDspAudioProcessor,
-        private val visualizer: VisualizerProcessor
+        private val visualizer: VisualizerProcessor,
+        private val karaoke: KaraokeProcessor? = null,
+        private val nightMode: NightModeProcessor? = null,
+        private val silenceTrimmer: SilenceTrimmingProcessor? = null
 ) : AudioSink {
 
     // -----------------------------------------------------------------------------------------
@@ -245,30 +251,21 @@ class FelicityAudioSink(
                 audioSinkListener?.onPositionAdvancing(System.currentTimeMillis() + latencyMs)
             }
 
-            val snapshot = buffer.slice().order(buffer.order())
-            val sampleCount = snapshotToFloat(snapshot, currentEncoding)
-            if (sampleCount > 0) {
-                nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
-                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
-                visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
-                val samplesWritten = stream.write(floatScratchBuffer, sampleCount)
-
-                // The native write blocks for a short window (tens of milliseconds) waiting
-                // for hardware buffer room, which is what keeps playback gap-free without
-                // needing a separate writer thread. It only returns fewer samples than asked
-                // when that window expires with the hardware still full — in which case we
-                // advance past what was accepted and ask ExoPlayer to retry the remainder.
-                //
-                // pause() itself does not wait on this: see [muteImmediately], which is
-                // called straight from the app thread the instant pause is requested, so the
-                // hardware goes silent immediately even if this write is mid-flight.
-                if (!isPaused && samplesWritten < sampleCount) {
+            if (!prepareProcessedSamplesIfNeeded(buffer, channelCount)) {
+                buffer.position(buffer.limit())
+                return true
+            }
+            val remaining = pendingProcessedSamples - pendingWriteOffset
+            if (remaining > 0) {
+                val samplesWritten = stream.write(floatScratchBuffer, pendingWriteOffset, remaining)
+                if (samplesWritten < remaining) {
                     val accepted = samplesWritten.coerceAtLeast(0)
-                    val bytesPerSample = PcmUtils.bytesPerSample(currentEncoding)
-                    buffer.position(buffer.position() + accepted * bytesPerSample)
+                    pendingWriteOffset += accepted
                     return false
                 }
             }
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
             buffer.position(buffer.limit())
             return true
         }
@@ -291,8 +288,14 @@ class FelicityAudioSink(
         override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
             if (isFirstBuffer) return Long.MIN_VALUE
 
+            val hwPosUs = stream.getPlaybackPositionUs(sourceEnded)
+            if (hwPosUs >= 0L) {
+                return basePresentationTimeUs + hwPosUs
+            }
+
+            val speed = currentPlaybackParameters.speed.coerceAtLeast(0.1f)
             val currentElapsedUs = if (isClockRunning) {
-                (System.nanoTime() / 1000L) - startSystemTimeUs
+                (((System.nanoTime() / 1000L) - startSystemTimeUs) * speed).toLong()
             } else 0L
 
             val totalPlayedUs = accumulatedPlayedUs + currentElapsedUs
@@ -400,30 +403,21 @@ class FelicityAudioSink(
                 audioSinkListener?.onPositionAdvancing(System.currentTimeMillis() + latencyMs)
             }
 
-            val snapshot = buffer.slice().order(buffer.order())
-            val sampleCount = snapshotToFloat(snapshot, currentEncoding)
-            if (sampleCount > 0) {
-                nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
-                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
-                visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
-                val samplesWritten = stream.write(floatScratchBuffer, sampleCount)
-
-                // The native write blocks for a short window waiting for hardware buffer
-                // room, which is what keeps playback gap-free. It only returns fewer samples
-                // than asked when that window expires with the hardware still full — in
-                // which case we advance past what was accepted and ask ExoPlayer to retry
-                // the remainder.
-                //
-                // pause() itself does not wait on this: see [muteImmediately], called
-                // straight from the app thread the instant pause is requested, so the
-                // hardware goes silent immediately even if this write is mid-flight.
-                if (!isPaused && samplesWritten < sampleCount) {
+            if (!prepareProcessedSamplesIfNeeded(buffer, channelCount)) {
+                buffer.position(buffer.limit())
+                return true
+            }
+            val remaining = pendingProcessedSamples - pendingWriteOffset
+            if (remaining > 0) {
+                val samplesWritten = stream.write(floatScratchBuffer, pendingWriteOffset, remaining)
+                if (samplesWritten < remaining) {
                     val accepted = samplesWritten.coerceAtLeast(0)
-                    val bytesPerSample = PcmUtils.bytesPerSample(currentEncoding)
-                    buffer.position(buffer.position() + accepted * bytesPerSample)
+                    pendingWriteOffset += accepted
                     return false
                 }
             }
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
             buffer.position(buffer.limit())
             return true
         }
@@ -446,8 +440,14 @@ class FelicityAudioSink(
         override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
             if (isFirstBuffer) return Long.MIN_VALUE
 
+            val hwPosUs = stream.getPlaybackPositionUs(sourceEnded)
+            if (hwPosUs >= 0L) {
+                return basePresentationTimeUs + hwPosUs
+            }
+
+            val speed = currentPlaybackParameters.speed.coerceAtLeast(0.1f)
             val currentElapsedUs = if (isClockRunning) {
-                (System.nanoTime() / 1000L) - startSystemTimeUs
+                (((System.nanoTime() / 1000L) - startSystemTimeUs) * speed).toLong()
             } else 0L
 
             val totalPlayedUs = accumulatedPlayedUs + currentElapsedUs
@@ -542,14 +542,21 @@ class FelicityAudioSink(
                 audioSinkListener?.onPositionAdvancing(System.currentTimeMillis() + 50)
             }
 
-            val snapshot = buffer.slice().order(buffer.order())
-            val sampleCount = snapshotToFloat(snapshot, currentEncoding)
-            if (sampleCount > 0) {
-                nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
-                applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
-                visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
-                driver.nativePushPcm(floatScratchBuffer, 0, sampleCount)
+            if (!prepareProcessedSamplesIfNeeded(buffer, channelCount)) {
+                buffer.position(buffer.limit())
+                return true
             }
+            val remaining = pendingProcessedSamples - pendingWriteOffset
+            if (remaining > 0) {
+                val samplesWritten = driver.nativePushPcm(floatScratchBuffer, pendingWriteOffset, remaining)
+                if (samplesWritten < remaining) {
+                    val accepted = samplesWritten.coerceAtLeast(0)
+                    pendingWriteOffset += accepted
+                    return false
+                }
+            }
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
             buffer.position(buffer.limit())
             return true
         }
@@ -572,8 +579,14 @@ class FelicityAudioSink(
         override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
             if (isFirstBuffer) return Long.MIN_VALUE
 
+            val hwPosUs = driver.getPlaybackPositionUs(channelCount, sampleRate)
+            if (hwPosUs >= 0L) {
+                return basePresentationTimeUs + hwPosUs
+            }
+
+            val speed = currentPlaybackParameters.speed.coerceAtLeast(0.1f)
             val currentElapsedUs = if (isClockRunning) {
-                (System.nanoTime() / 1000L) - startSystemTimeUs
+                (((System.nanoTime() / 1000L) - startSystemTimeUs) * speed).toLong()
             } else 0L
 
             val totalPlayedUs = accumulatedPlayedUs + currentElapsedUs
@@ -686,6 +699,11 @@ class FelicityAudioSink(
      * It grows only when an incoming frame needs more capacity than before.
      */
     private var floatScratchBuffer: FloatArray = FloatArray(0)
+    private var pendingProcessedSamples: Int = 0
+    private var pendingWriteOffset: Int = 0
+    @Volatile
+    private var currentPlaybackParameters: PlaybackParameters = PlaybackParameters.DEFAULT
+    private val routeLock = Any()
 
     /**
      * Set to true by [audioDeviceCallback] when a Bluetooth device is added or removed.
@@ -693,6 +711,8 @@ class FelicityAudioSink(
      * that already owns all stream references — no extra locking needed.
      */
     private val rerouteNeeded = AtomicBoolean(false)
+    private val usbAttachPending = AtomicBoolean(false)
+    private val usbDetachPending = AtomicBoolean(false)
 
     /** Posts Bluetooth reroute requests to the main thread to avoid duplicate scheduling. */
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -747,31 +767,32 @@ class FelicityAudioSink(
      * Reacts to USB DAC connect/disconnect events so the active route can be
      * swapped immediately without waiting for a new ExoPlayer [configure] call.
      */
-    private val usbDacListener = object : UsbDacManager.Listener {
-        override fun onUsbDacAttached(sampleRate: Int, channelCount: Int) {
-            if (currentSampleRate > 0 && currentChannelCount > 0) {
-                val bitDepth = encodingToBitDepth(currentEncoding)
-                Log.i(TAG, "USB DAC attached mid-stream — switching to USB route " +
-                        "($currentSampleRate Hz / ${bitDepth}-bit / $currentChannelCount ch)")
-                activeSink.release()
-                val driver = UsbDacDriver.getInstance(context)
-                driver.negotiateFormat(currentSampleRate, bitDepth, currentChannelCount)
-                activeSink = UsbNativeSink(driver, currentSampleRate, currentChannelCount)
-                activeSinkType = SinkType.USB
-                isAAudioStreamActive = false
-                isOboeStreamActive = false
-                if (!isPaused) driver.startStream()
-            }
+    private fun applyPendingUsbAttach() {
+        synchronized(routeLock) {
+            if (isReleased || currentSampleRate <= 0 || currentChannelCount <= 0) return
+            val bitDepth = encodingToBitDepth(currentEncoding)
+            Log.i(TAG, "USB DAC attached mid-stream — switching to USB route " +
+                    "($currentSampleRate Hz / ${bitDepth}-bit / $currentChannelCount ch)")
+            activeSink.release()
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
+            val driver = UsbDacDriver.getInstance(context)
+            driver.negotiateFormat(currentSampleRate, bitDepth, currentChannelCount)
+            activeSink = UsbNativeSink(driver, currentSampleRate, currentChannelCount)
+            activeSinkType = SinkType.USB
+            isAAudioStreamActive = false
+            isOboeStreamActive = false
+            if (!isPaused) driver.startStream()
         }
+    }
 
-        override fun onUsbDacDetached() {
-            // If the sink is already being torn down, skip. The player's own release()
-            // call (which runs on the correct ExoPlayer playback thread) will clean
-            // everything up. Trying to do it here from whatever thread fired the detach
-            // event is what caused the IllegalStateException crash.
+    private fun applyPendingUsbDetach() {
+        synchronized(routeLock) {
             if (isReleased) return
             Log.i(TAG, "USB DAC detached — reverting to configured output sink")
             activeSink.release()
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
             if (currentSampleRate > 0 && currentChannelCount > 0) {
                 val targetType = targetSinkType()
                 activeSink = createSink(targetType, currentSampleRate, currentChannelCount)
@@ -780,6 +801,28 @@ class FelicityAudioSink(
             } else {
                 activeSink = DefaultSinkWrapper()
                 activeSinkType = SinkType.DEFAULT
+            }
+        }
+    }
+
+    private val usbDacListener = object : UsbDacManager.Listener {
+        override fun onUsbDacAttached(sampleRate: Int, channelCount: Int) {
+            if (isReleased) return
+            if (isPaused) {
+                applyPendingUsbAttach()
+            } else {
+                usbDetachPending.set(false)
+                usbAttachPending.set(true)
+            }
+        }
+
+        override fun onUsbDacDetached() {
+            if (isReleased) return
+            if (isPaused) {
+                applyPendingUsbDetach()
+            } else {
+                usbAttachPending.set(false)
+                usbDetachPending.set(true)
             }
         }
     }
@@ -852,10 +895,18 @@ class FelicityAudioSink(
     ): Boolean {
         // Pick up any pending Bluetooth reroute before writing audio, so the
         // stream objects are always in the right state before we touch them.
+        if (usbAttachPending.compareAndSet(true, false)) {
+            applyPendingUsbAttach()
+        }
+        if (usbDetachPending.compareAndSet(true, false)) {
+            applyPendingUsbDetach()
+        }
         if (rerouteNeeded.compareAndSet(true, false)) {
             rerouteStreamForDeviceChange()
         }
-        return activeSink.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        return synchronized(routeLock) {
+            activeSink.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
     }
 
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
@@ -875,8 +926,12 @@ class FelicityAudioSink(
     override fun flush() {
         nativeSourceEnded = false
         nativeEndDeadlineMs = 0L
+        pendingProcessedSamples = 0
+        pendingWriteOffset = 0
         appliedVolume = outputVolume
-        activeSink.flush()
+        synchronized(routeLock) {
+            activeSink.flush()
+        }
     }
 
     /**
@@ -1027,11 +1082,12 @@ class FelicityAudioSink(
     }
 
     override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
+        currentPlaybackParameters = playbackParameters
         defaultSink.playbackParameters = playbackParameters
     }
 
     override fun getPlaybackParameters(): PlaybackParameters {
-        return defaultSink.playbackParameters
+        return if (activeSinkType == SinkType.DEFAULT) defaultSink.playbackParameters else currentPlaybackParameters
     }
 
     override fun setSkipSilenceEnabled(skipSilenceEnabled: Boolean) {
@@ -1204,6 +1260,42 @@ class FelicityAudioSink(
      * @param encoding  The Media3 encoding constant describing the sample layout.
      * @return Number of valid samples written into [floatScratchBuffer], or 0 if empty.
      */
+    /**
+     * Decodes [buffer] into [floatScratchBuffer] and runs the full DSP + visualizer chain
+     * exactly once per buffer. If a previous native write accepted only part of the buffer,
+     * [pendingProcessedSamples] > [pendingWriteOffset] and this method returns true without
+     * re-running stateful DSP or double-feeding the visualizer.
+     *
+     * Returns false when the buffer is empty or trimmed as silence.
+     */
+    private fun prepareProcessedSamplesIfNeeded(buffer: ByteBuffer, channelCount: Int): Boolean {
+        if (pendingProcessedSamples > pendingWriteOffset) {
+            return true
+        }
+        val snapshot = buffer.slice().order(buffer.order())
+        val sampleCount = snapshotToFloat(snapshot, currentEncoding)
+        if (sampleCount <= 0) {
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
+            return false
+        }
+        if (AudioPreferences.isSkipSilenceEnabled() &&
+            silenceTrimmer?.isSilentBuffer(floatScratchBuffer, sampleCount) == true
+        ) {
+            pendingProcessedSamples = 0
+            pendingWriteOffset = 0
+            return false
+        }
+        karaoke?.processInPlace(floatScratchBuffer, sampleCount, channelCount)
+        nativeDsp.processInPlace(floatScratchBuffer, sampleCount)
+        nightMode?.processInPlace(floatScratchBuffer, sampleCount, channelCount)
+        applyOutputGain(floatScratchBuffer, sampleCount, channelCount)
+        visualizer.feedFloat(floatScratchBuffer, sampleCount, channelCount)
+        pendingProcessedSamples = sampleCount
+        pendingWriteOffset = 0
+        return true
+    }
+
     private fun snapshotToFloat(snapshot: ByteBuffer, encoding: Int): Int {
         val bps = PcmUtils.bytesPerSample(encoding)
         val totalSamples = snapshot.remaining() / bps

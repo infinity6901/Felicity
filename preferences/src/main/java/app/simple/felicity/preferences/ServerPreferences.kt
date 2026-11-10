@@ -14,6 +14,7 @@ import app.simple.felicity.manager.SharedPreferences
 object ServerPreferences {
 
     private const val SERVER_PORT = "server_mode_port"
+    private const val SERVER_ALLOW_REMOTE_DELETE = "server_mode_allow_remote_delete"
 
     /**
      * Returns the configured TCP port for the local HTTP server.
@@ -31,5 +32,16 @@ object ServerPreferences {
     fun setServerPort(port: Int) {
         SharedPreferences.getSharedPreferences().edit().putInt(SERVER_PORT, port).apply()
     }
-}
 
+    /**
+     * Returns whether remote file deletion via `DELETE /api/songs/{id}` is enabled.
+     * Defaults to `false` to prevent accidental or unauthorized LAN file deletion.
+     */
+    fun isAllowRemoteDelete(): Boolean {
+        return SharedPreferences.getSharedPreferences().getBoolean(SERVER_ALLOW_REMOTE_DELETE, false)
+    }
+
+    fun setAllowRemoteDelete(allow: Boolean) {
+        SharedPreferences.getSharedPreferences().edit().putBoolean(SERVER_ALLOW_REMOTE_DELETE, allow).apply()
+    }
+}

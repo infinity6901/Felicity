@@ -4,6 +4,9 @@
 #include "usb_iso_stream.h"
 
 #include <atomic>
+#include <mutex>
+
+static std::mutex g_stream_mutex;
 
 static const int audio_interfaces[] = {USB_AUDIO_CONTROL_INTERFACE, USB_AUDIO_STREAMING_INTERFACE};
 
@@ -350,11 +353,14 @@ Java_app_simple_felicity_engine_usb_UsbDacDriver_nativeReleaseUsb(
     g_iso_stream_ready.store(false, std::memory_order_release);
 
     // Phase 5 teardown: stop the ISO stream and cancel all pending transfers
-    if (g_iso_stream != nullptr) {
-        g_iso_stream->stop();
-        delete g_iso_stream;
-        g_iso_stream = nullptr;
-        LOGI("ISO stream torn down");
+    {
+        std::lock_guard<std::mutex> lock(g_stream_mutex);
+        if (g_iso_stream != nullptr) {
+            g_iso_stream->stop();
+            delete g_iso_stream;
+            g_iso_stream = nullptr;
+            LOGI("ISO stream torn down");
+        }
     }
 
     if (g_usb_handle != nullptr) {
@@ -405,6 +411,7 @@ Java_app_simple_felicity_engine_usb_UsbDacDriver_nativeStartStream(
         return JNI_FALSE;
     }
 
+    std::lock_guard<std::mutex> lock(g_stream_mutex);
     if (g_iso_stream != nullptr) {
         g_iso_stream_ready.store(false, std::memory_order_release);
         g_iso_stream->stop();
@@ -452,6 +459,7 @@ Java_app_simple_felicity_engine_usb_UsbDacDriver_nativeStopStream(
     // immediately instead of racing with the teardown below.
     g_iso_stream_ready.store(false, std::memory_order_release);
 
+    std::lock_guard<std::mutex> lock(g_stream_mutex);
     if (g_iso_stream == nullptr)
         return;
 
@@ -477,6 +485,11 @@ Java_app_simple_felicity_engine_usb_UsbDacDriver_nativePushPcm(
         return 0;
     }
 
+    std::lock_guard<std::mutex> lock(g_stream_mutex);
+    if (!g_iso_stream_ready.load(std::memory_order_acquire) || g_iso_stream == nullptr) {
+        return 0;
+    }
+
     jfloat *ptr = env->GetFloatArrayElements(samples, nullptr);
     if (ptr == nullptr) {
         LOGE("Failed to get float array elements");
@@ -492,6 +505,7 @@ JNIEXPORT void JNICALL
 Java_app_simple_felicity_engine_usb_UsbDacDriver_nativeFlushStream(
         JNIEnv * /*env*/, jobject /*thiz*/) {
 
+    std::lock_guard<std::mutex> lock(g_stream_mutex);
     if (!g_iso_stream_ready.load(std::memory_order_acquire) || g_iso_stream == nullptr) {
         LOGD("nativeFlushStream — stream not running, nothing to flush");
         return;
@@ -532,6 +546,7 @@ Java_app_simple_felicity_engine_usb_UsbDacDriver_nativeGetPlaybackPositionUs(
         JNIEnv * /*env*/, jobject /*thiz*/,
         jint channelCount, jint sampleRate) {
 
+    std::lock_guard<std::mutex> lock(g_stream_mutex);
     if (g_iso_stream == nullptr || !g_iso_stream->isRunning()) {
         return -1L;
     }

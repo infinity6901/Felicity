@@ -23,14 +23,20 @@ import app.simple.felicity.preferences.AudioPreferences
 @UnstableApi
 class DualPlayerStandbyRenderersFactory(
     context: Context,
-    private val processorManager: AudioProcessorManager,
+    private val processorManagerProvider: () -> AudioProcessorManager,
 ) : DefaultRenderersFactory(context) {
+
+    constructor(
+        context: Context,
+        processorManager: AudioProcessorManager,
+    ) : this(context, { processorManager })
 
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
         enableOffload: Boolean,
     ): AudioSink {
+        val processorManager = processorManagerProvider()
         processorManager.applyCurrentPreferences()
         val processors = buildList<AudioProcessor> {
             if (AudioPreferences.isSkipSilenceEnabled()) {

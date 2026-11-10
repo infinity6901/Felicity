@@ -369,14 +369,16 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // DefaultAudioSink via DualPlayerStandbyRenderersFactory so a second player cannot open
         // the service's singleton USB/AAudio/Oboe route while the primary player is audible.
         standbyRenderersFactory = app.simple.felicity.engine.playback.DualPlayerStandbyRenderersFactory(
-            this,
-            standbyAudioProcessorManager
-        )
+            this
+        ) { standbyAudioProcessorManager }
         VisualizerManager.processor = audioProcessorManager.visualizerProcessor
 
-        // Wire the native DSP processor into EqualizerManager so gain, preamp, and enable
-        // changes driven by the UI are forwarded to the live audio pipeline immediately.
-        EqualizerManager.attachProcessor(audioProcessorManager.nativeDspProcessor)
+        // Wire both native DSP processors into EqualizerManager so gain, preamp, and enable
+        // changes driven by the UI are forwarded to both active and standby pipelines.
+        EqualizerManager.attachProcessor(
+            audioProcessorManager.nativeDspProcessor,
+            standbyAudioProcessorManager.nativeDspProcessor
+        )
 
         // Initialize the RenderersFactory once.
         renderersFactory = object : DefaultRenderersFactory(this) {
@@ -451,7 +453,10 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                         defaultSinkProvider = { audioSink },
                         context = context,
                         nativeDsp = audioProcessorManager.nativeDspProcessor,
-                        visualizer = audioProcessorManager.visualizerProcessor)
+                        visualizer = audioProcessorManager.visualizerProcessor,
+                        karaoke = audioProcessorManager.karaokeProcessor,
+                        nightMode = audioProcessorManager.nightModeProcessor,
+                        silenceTrimmer = audioProcessorManager.silenceTrimmingProcessor)
             }
 
             override fun buildAudioRenderers(
@@ -710,8 +715,28 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // delivered synchronously; with the listener still attached the app announced
             // PLAYBACK_PAUSED, and since the incoming deck was already playing no later event
             // corrected it - the song kept playing while the UI showed a paused player.
+            previousItemEndPositionMs = outgoing.currentPosition
+            previousItemDurationMs = currentItemDurationMs.takeIf { it > 0L } ?: outgoing.duration.coerceAtLeast(0L)
+            wasPlayingBeforeTransition = true
+
             outgoing.removeListener(playerListener)
             outgoing.removeAnalyticsListener(analyticsListener)
+
+            val activeAudioAttributes = AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
+                .build()
+
+            // Transfer audio focus, becoming-noisy handling, and wake lock to the promoted player
+            // and disarm them on the demoted standby player so the standby never steals audio focus.
+            outgoing.setHandleAudioBecomingNoisy(false)
+            outgoing.setWakeMode(C.WAKE_MODE_NONE)
+            outgoing.setAudioAttributes(activeAudioAttributes, false)
+
+            incoming.setAudioAttributes(activeAudioAttributes, true)
+            incoming.setHandleAudioBecomingNoisy(true)
+            incoming.setWakeMode(C.WAKE_MODE_LOCAL)
 
             incoming.volume = 1f
             incoming.playWhenReady = true
@@ -726,12 +751,23 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             audioProcessorManager = incomingDsp
             standbyAudioProcessorManager = outgoingDsp
 
+            player.shuffleModeEnabled = outgoing.shuffleModeEnabled
+            configureGaplessPlayback()
+            applyRepeatMode(PlayerPreferences.getRepeatMode())
+
+            currentItemDurationMs = player.duration.coerceAtLeast(0L)
+            currentAudioInputFormat = player.audioFormat ?: currentAudioInputFormat
+
             VisualizerManager.processor = audioProcessorManager.visualizerProcessor
-            EqualizerManager.attachProcessor(audioProcessorManager.nativeDspProcessor)
+            EqualizerManager.attachProcessor(
+                audioProcessorManager.nativeDspProcessor,
+                standbyAudioProcessorManager.nativeDspProcessor
+            )
             mediaSession?.player = player
 
             // Match the outgoing standby to the new active player's current settings before
             // preparing the next queue target.
+            standbyPlayer?.repeatMode = Player.REPEAT_MODE_OFF
             standbyPlayer?.playbackParameters = player.playbackParameters
             standbyPlayer?.skipSilenceEnabled = player.skipSilenceEnabled
             standbyPlayer?.volume = 0f
@@ -768,7 +804,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             audioProcessorManager = outgoingDsp
             standbyAudioProcessorManager = incomingDsp
             runCatching { VisualizerManager.processor = audioProcessorManager.visualizerProcessor }
-            runCatching { EqualizerManager.attachProcessor(audioProcessorManager.nativeDspProcessor) }
+            runCatching {
+                EqualizerManager.attachProcessor(
+                    audioProcessorManager.nativeDspProcessor,
+                    standbyAudioProcessorManager.nativeDspProcessor
+                )
+            }
             runCatching { incoming.volume = 0f }
             runCatching { coordinator.abortTransition(token) }
             Log.e(TAG, "Dual-player promotion failed; active player restored", error)
@@ -1151,42 +1192,39 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private fun applyBalanceToProcessor(pan: Float) {
         audioProcessorManager.applyBalance(pan)
+        standbyAudioProcessorManager.applyBalance(pan)
     }
 
     /**
-     * Delegates stereo width to [audioProcessorManager].
-     *
-     * @param width Stereo width in the range [0.0, 2.0]. 1.0 = natural stereo (no change).
+     * Delegates stereo width to both active and standby [AudioProcessorManager] instances.
      */
     private fun applyStereoWidthToProcessor(width: Float) {
         audioProcessorManager.applyStereoWidth(width)
+        standbyAudioProcessorManager.applyStereoWidth(width)
     }
 
     /**
-     * Delegates tape saturation drive to [audioProcessorManager].
-     *
-     * @param drive Saturation drive in [0.0, 4.0]. 0.0 = off (clean bypass).
+     * Delegates tape saturation drive to both active and standby [AudioProcessorManager] instances.
      */
     private fun applyTapeSaturationDriveToProcessor(drive: Float) {
         audioProcessorManager.applyTapeSaturationDrive(drive)
+        standbyAudioProcessorManager.applyTapeSaturationDrive(drive)
     }
 
     /**
-     * Delegates karaoke mode toggle to [audioProcessorManager].
-     *
-     * @param enabled True to activate center-channel removal, false to bypass.
+     * Delegates karaoke mode toggle to both active and standby [AudioProcessorManager] instances.
      */
     private fun applyKaraokeModeToProcessor(enabled: Boolean) {
         audioProcessorManager.applyKaraokeMode(enabled)
+        standbyAudioProcessorManager.applyKaraokeMode(enabled)
     }
 
     /**
-     * Delegates night mode toggle to [audioProcessorManager].
-     *
-     * @param enabled True to activate the dynamic compressor, false to bypass.
+     * Delegates night mode toggle to both active and standby [AudioProcessorManager] instances.
      */
     private fun applyNightModeToProcessor(enabled: Boolean) {
         audioProcessorManager.applyNightMode(enabled)
+        standbyAudioProcessorManager.applyNightMode(enabled)
     }
 
     /**
@@ -1218,7 +1256,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     /** Applies a new pan value immediately to the processor and persists it. */
     fun setBalance(pan: Float) {
         EqualizerPreferences.setBalance(pan)
-        audioProcessorManager.applyBalance(pan)
+        applyBalanceToProcessor(pan)
     }
 
     /**
@@ -1627,6 +1665,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                             0f
                         }
                         audioProcessorManager.applyTagReplayGain(db)
+                        standbyAudioProcessorManager.applyTagReplayGain(db)
                         if (db != 0f) {
                             Log.d(TAG, "Auto-RG applied: ${db}dB for track: ${audio?.title}")
                         }
@@ -2443,6 +2482,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 val newFftSize = AudioPreferences.getFftResolution()
                 Log.d(TAG, "FFT resolution changed to: $newFftSize")
                 audioProcessorManager.visualizerProcessor.updateFftResolution(newFftSize)
+                standbyAudioProcessorManager.visualizerProcessor.updateFftResolution(newFftSize)
             }
             AudioPreferences.HIRES_OUTPUT -> {
                 val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
@@ -2531,6 +2571,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     EqualizerManager.applyPeqBandsFromPreference()
                 } else {
                     audioProcessorManager.applyEqualizerState()
+                    standbyAudioProcessorManager.applyEqualizerState()
                 }
             }
             EqualizerPreferences.PEQ_BANDS_RAW -> {
@@ -2545,16 +2586,19 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 val db = EqualizerPreferences.getBassDb()
                 Log.d(TAG, "Bass gain preference changed to: ${db}dB")
                 audioProcessorManager.applyBass(db)
+                standbyAudioProcessorManager.applyBass(db)
             }
             EqualizerPreferences.TREBLE_DB -> {
                 val db = EqualizerPreferences.getTrebleDb()
                 Log.d(TAG, "Treble gain preference changed to: ${db}dB")
                 audioProcessorManager.applyTreble(db)
+                standbyAudioProcessorManager.applyTreble(db)
             }
             EqualizerPreferences.REPLAY_GAIN_DB -> {
                 val db = EqualizerPreferences.getReplayGainDb()
                 Log.d(TAG, "Replay gain preference changed to: ${db}dB")
                 audioProcessorManager.applyReplayGain(db)
+                standbyAudioProcessorManager.applyReplayGain(db)
             }
             EqualizerPreferences.REVERB_MIX,
             EqualizerPreferences.REVERB_DECAY,
@@ -2566,6 +2610,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 val size = EqualizerPreferences.getReverbSize()
                 Log.d(TAG, "Reverb preference changed — mix=$mix, decay=$decay, damp=$damp, size=$size")
                 audioProcessorManager.applyReverb(mix, decay, damp, size)
+                standbyAudioProcessorManager.applyReverb(mix, decay, damp, size)
             }
             EqualizerPreferences.PITCH,
             EqualizerPreferences.PLAYBACK_SPEED -> {
@@ -2596,6 +2641,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     }
 
     override fun onDestroy() {
+        app.simple.felicity.engine.managers.BluetoothProfileManager.unregister(this)
         unregisterPlaybackExtras()
         savePlaybackStateToDatabase(immediate = true)
         unregisterSharedPreferenceChangeListener()
@@ -2651,6 +2697,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Now it is safe to tear down the USB driver. The sink listener is already gone,
         // so notifyDetached() won't cascade into DefaultAudioSink.release().
         UsbDacDriver.getInstance(applicationContext).detach()
+        serviceScope.cancel()
 
         super.onDestroy()
     }

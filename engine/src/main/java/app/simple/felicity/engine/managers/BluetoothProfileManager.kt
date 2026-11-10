@@ -1,12 +1,22 @@
 package app.simple.felicity.engine.managers
 
+import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import app.simple.felicity.preferences.EqualizerPreferences
+import app.simple.felicity.repository.database.instances.EqualizerDatabase
+import app.simple.felicity.shared.models.ParsedBand
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Listens for Bluetooth ACL connection events and automatically applies
@@ -16,6 +26,8 @@ object BluetoothProfileManager {
 
     private const val TAG = "BluetoothProfileManager"
     private var isRegistered = false
+    private var registeredContext: Context? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val receiver = object : BroadcastReceiver() {
         @Suppress("MissingPermission")
@@ -25,7 +37,16 @@ object BluetoothProfileManager {
                     @Suppress("DEPRECATION")
                     val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
                     if (device != null) {
-                        val deviceName = runCatching { device.name }.getOrNull() ?: device.address ?: "Bluetooth Device"
+                        val hasBtPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                                ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.BLUETOOTH_CONNECT
+                                ) == PackageManager.PERMISSION_GRANTED
+                        val deviceName = if (hasBtPermission) {
+                            runCatching { device.name }.getOrNull() ?: device.address ?: "Bluetooth Device"
+                        } else {
+                            runCatching { device.address }.getOrNull() ?: "Bluetooth Device"
+                        }
                         Log.d(TAG, "Bluetooth device connected: $deviceName")
                         applyProfileForDevice(context, deviceName)
                     }
@@ -37,8 +58,10 @@ object BluetoothProfileManager {
     fun register(context: Context) {
         if (isRegistered) return
         try {
+            val appContext = context.applicationContext
             val filter = IntentFilter(BluetoothDevice.ACTION_ACL_CONNECTED)
-            context.registerReceiver(receiver, filter)
+            appContext.registerReceiver(receiver, filter)
+            registeredContext = appContext
             isRegistered = true
             Log.d(TAG, "BluetoothProfileManager registered successfully")
         } catch (e: Exception) {
@@ -49,10 +72,12 @@ object BluetoothProfileManager {
     fun unregister(context: Context) {
         if (!isRegistered) return
         try {
-            context.unregisterReceiver(receiver)
-            isRegistered = false
+            (registeredContext ?: context.applicationContext).unregisterReceiver(receiver)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to unregister BluetoothProfileManager receiver", e)
+        } finally {
+            registeredContext = null
+            isRegistered = false
         }
     }
 
@@ -64,9 +89,30 @@ object BluetoothProfileManager {
 
     private fun applyProfileForDevice(context: Context, deviceName: String) {
         val prefs = context.getSharedPreferences("bt_dsp_profiles", Context.MODE_PRIVATE)
-        val savedPreset = prefs.getString(deviceName, null) ?: return
-        Log.d(TAG, "Auto-applying EQ preset '$savedPreset' for connected device '$deviceName'")
-        EqualizerPreferences.setEqEnabled(true)
-        EqualizerManager.setEnabled(true)
+        val savedPresetName = prefs.getString(deviceName, null) ?: return
+        Log.d(TAG, "Auto-applying EQ preset '$savedPresetName' for connected device '$deviceName'")
+        scope.launch {
+            val preset = EqualizerDatabase.getInstance(context)
+                ?.equalizerPresetDao()
+                ?.getPresetByName(savedPresetName)
+
+            EqualizerPreferences.setEqEnabled(true)
+            EqualizerManager.setEnabled(true)
+            EqualizerPreferences.setActivePresetName(savedPresetName)
+
+            if (preset != null) {
+                EqualizerManager.setPreamp(preset.preampDb)
+                if (preset.isPeq()) {
+                    EqualizerManager.setEqMode(EqualizerPreferences.EQ_MODE_PARAMETRIC)
+                    val parsed = preset.getPeqBands()
+                    if (parsed.isNotEmpty()) {
+                        EqualizerManager.setPeqBands(parsed)
+                    }
+                } else {
+                    EqualizerManager.setEqMode(EqualizerPreferences.EQ_MODE_GRAPHIC)
+                    EqualizerManager.setAllBands(preset.getBandGains())
+                }
+            }
+        }
     }
 }

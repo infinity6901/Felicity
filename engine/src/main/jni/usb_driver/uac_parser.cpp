@@ -305,7 +305,10 @@ static void parse_as_alt_setting(const libusb_interface_descriptor *alt,
         if (isIsochronous && isOut) {
             as.endpointAddress = ep.bEndpointAddress;
             as.endpointAttributes = ep.bmAttributes;
-            as.wMaxPacketSize = ep.wMaxPacketSize;
+            const uint16_t rawMaxPkt = ep.wMaxPacketSize;
+            const uint16_t baseMaxPkt = rawMaxPkt & 0x07FFu;
+            const uint16_t hsMult = 1u + ((rawMaxPkt >> 11) & 0x03u);
+            as.wMaxPacketSize = static_cast<uint16_t>(baseMaxPkt * hsMult);
             as.bInterval = ep.bInterval;
             LOGI("Alt %d: ISO OUT endpoint 0x%02X maxPkt=%d interval=%d",
                  as.bAlternateSetting, as.endpointAddress, as.wMaxPacketSize, as.bInterval);

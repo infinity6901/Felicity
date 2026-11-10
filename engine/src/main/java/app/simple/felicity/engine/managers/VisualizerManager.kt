@@ -18,11 +18,6 @@ import kotlinx.coroutines.launch
  * direct twin-buffer wiring and relays real-time spectrum data via a [SharedFlow] for
  * any remaining legacy consumers.
  *
- * The primary path is the direct twin-buffer connection established by calling
- * [processor].[VisualizerProcessor.setDirectOutput] from the player fragment.
- * The [SharedFlow] path ([spectrumFlow] / [emit]) is retained for backward-compatibility
- * and may be used by secondary consumers that cannot participate in the direct path.
- *
  * @author Hamza417
  */
 object VisualizerManager {
@@ -35,11 +30,6 @@ object VisualizerManager {
 
     /**
      * Live reference to the [VisualizerProcessor] managed by the player service.
-     *
-     * Set by [app.simple.felicity.engine.services.FelicityPlayerService] in [onCreate]
-     * and cleared on service destruction. UI components — typically the player fragment —
-     * use this reference to call [VisualizerProcessor.setDirectOutput] so the audio
-     * thread can write directly into the view's twin buffers without any intermediate hop.
      */
     @Volatile
     var processor: VisualizerProcessor? = null
@@ -47,10 +37,14 @@ object VisualizerManager {
             val old = field
             field = value
             if (old !== value) {
-                // A new processor appears after a crossfade handoff or a service restart. The
-                // view-side wiring is remembered here and re-applied, otherwise the visualizer
-                // keeps listening to a processor that no longer receives audio and freezes.
+                // Re-apply both direct-output twin-buffer wiring and any active Milkdrop
+                // PCM window callback when the active processor swaps on crossfade promotion.
+                val pcmCb = old?.getPcmWindowCallback()
+                old?.setPcmWindowCallback(null)
                 old?.clearDirectOutput()
+                if (pcmCb != null) {
+                    value?.setPcmWindowCallback(pcmCb)
+                }
                 val wiring = directWiring
                 if (wiring != null) {
                     val view = wiring.view.get()
@@ -86,27 +80,10 @@ object VisualizerManager {
         processor?.clearDirectOutput()
     }
 
-    /**
-     * Backing mutable flow. Replay = 1 ensures a cold subscriber always gets
-     * the latest spectrum snapshot right away.
-     */
     private val _spectrumFlow = MutableSharedFlow<FloatArray>(replay = 1)
 
-    /**
-     * Public read-only spectrum flow (legacy path).
-     * Each emission is a [BAND_COUNT]-element [FloatArray] with raw FFT-derived band
-     * magnitudes, ordered from bass (index 0) to treble (last index).
-     */
     val spectrumFlow: SharedFlow<FloatArray> = _spectrumFlow.asSharedFlow()
 
-    /**
-     * Emits a new set of frequency band magnitudes on the legacy [SharedFlow] path.
-     *
-     * Safe to call from any thread. Only needed when the direct twin-buffer path is
-     * not connected (e.g., no player fragment is currently active).
-     *
-     * @param bands [BAND_COUNT]-element array of raw FFT band magnitudes.
-     */
     fun emit(bands: FloatArray) {
         scope.launch {
             _spectrumFlow.emit(bands)

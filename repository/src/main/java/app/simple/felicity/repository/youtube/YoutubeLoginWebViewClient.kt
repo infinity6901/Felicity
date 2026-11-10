@@ -1,6 +1,7 @@
 package app.simple.felicity.repository.youtube
 
 import android.content.Context
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -33,8 +34,10 @@ class YoutubeLoginWebViewClient(
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
 
-        if (alreadyReported) return
-        if (url == null || !url.contains("music.youtube.com")) return
+        if (alreadyReported || url.isNullOrBlank()) return
+        val parsedUri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+        val host = parsedUri.host?.lowercase() ?: return
+        if (parsedUri.scheme?.lowercase() != "https" || host != "music.youtube.com") return
 
         val cookieString = CookieManager.getInstance().getCookie("https://music.youtube.com")
             ?: return

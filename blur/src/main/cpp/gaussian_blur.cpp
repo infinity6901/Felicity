@@ -14,36 +14,9 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/**
- * Maximum number of texture samples on each side of the center pixel for a
- * single shader pass. Radius values larger than this are handled by
- * downscaling the image before blurring, then upscaling the result, which
- * keeps the shader fast regardless of how big the requested radius is.
- */
 static constexpr int MAX_HALF_KERNEL = 64;
-
-// The uniform array in the shader is sized MAX_HALF_KERNEL + 1 (center slot
-// + one slot per side sample). Must stay in sync with the GLSL declarations.
 static constexpr int WEIGHT_ARRAY_SIZE = MAX_HALF_KERNEL + 1; // 65
 
-// ---------------------------------------------------------------------------
-// GLSL shader sources
-// ---------------------------------------------------------------------------
-
-/**
- * Shared vertex shader. Attribute layout locations are hard-coded so we can
- * set up a single VAO and reuse it across all three programs.
- *
- * The fullscreen quad maps clip-space (−1,−1)→(1,1) to texcoords (0,0)→(1,1).
- * This means GL texcoord Y=0 (bottom of texture in OpenGL convention) lands on
- * the bottom of the screen. Because glReadPixels starts reading from Y=0 as
- * well, the readback naturally comes out in the top-to-bottom order that
- * Android bitmaps expect — no manual row flip is needed.
- */
 static const char *VERT_SRC = R"glsl(#version 300 es
 layout(location = 0) in vec2 aPosition;
 layout(location = 1) in vec2 aTexCoord;
@@ -54,13 +27,6 @@ void main() {
 }
 )glsl";
 
-/**
- * Horizontal Gaussian blur pass.
- *
- * Walks along the X axis collecting weighted color samples. The loop bound is
- * kept as a compile-time constant (65) with an early break so drivers that
- * struggle with non-constant loop bounds still behave correctly.
- */
 static const char *HBLUR_FRAG_SRC = R"glsl(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
@@ -81,10 +47,6 @@ void main() {
 }
 )glsl";
 
-/**
- * Vertical Gaussian blur pass — same logic as horizontal, but sampling
- * along the Y axis instead.
- */
 static const char *VBLUR_FRAG_SRC = R"glsl(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
@@ -105,11 +67,6 @@ void main() {
 }
 )glsl";
 
-/**
- * Passthrough shader used for the optional downsample / upsample steps when
- * the requested radius exceeds MAX_HALF_KERNEL. GL_LINEAR filtering on the
- * source texture handles the bilinear interpolation automatically.
- */
 static const char *COPY_FRAG_SRC = R"glsl(#version 300 es
 precision mediump float;
 uniform sampler2D uTexture;
@@ -120,9 +77,6 @@ void main() {
 }
 )glsl";
 
-// The six vertices of the fullscreen quad (two triangles).
-// Position (X, Y) and texcoord (U, V) are interleaved per vertex.
-// Texcoord Y=0 is at the bottom of the screen per the OpenGL convention.
 static const float QUAD_VERTS[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
         1.0f, -1.0f, 1.0f, 0.0f,
@@ -132,16 +86,6 @@ static const float QUAD_VERTS[] = {
         -1.0f, 1.0f, 0.0f, 1.0f,
 };
 
-// ---------------------------------------------------------------------------
-// RAII guards — keep GL and EGL state tidy on every exit path
-// ---------------------------------------------------------------------------
-
-/**
- * Owns all the GL objects allocated during one blur call. Everything is
- * destroyed in the destructor so early returns do not cause leaks.
- * The destructor must run while the EGL context is still current, which is
- * guaranteed because GlResources is declared after EglGuard in the caller.
- */
 struct GlResources {
     GLuint hblurProg = 0, vblurProg = 0, copyProg = 0;
     GLuint vao = 0, vbo = 0;
@@ -180,17 +124,17 @@ struct GlResources {
 };
 
 /**
- * Owns the EGL display, context, and pbuffer surface for one blur call.
- * Also saves and restores any context that was current on the calling thread
- * so we do not accidentally clobber an existing rendering setup.
+ * Owns the per-call EGL context and pbuffer surface.
+ * Note: We intentionally do NOT call eglTerminate(EGL_DEFAULT_DISPLAY) on teardown because
+ * EGL_DEFAULT_DISPLAY is shared across the entire Android process (including HardwareRenderer,
+ * MilkdropSurfaceView, and concurrent BlurImageView workers), and eglInitialize() always returns
+ * EGL_TRUE even when the display was already initialized by another thread.
  */
 struct EglGuard {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
-    bool didInitEgl = false;
 
-    // Previous thread-local EGL state to restore on teardown
     EGLDisplay prevDisplay = EGL_NO_DISPLAY;
     EGLContext prevContext = EGL_NO_CONTEXT;
     EGLSurface prevDrawSurf = EGL_NO_SURFACE;
@@ -199,29 +143,17 @@ struct EglGuard {
     ~EglGuard() {
         if (display == EGL_NO_DISPLAY) return;
 
-        // Release our context from this thread before destroying it
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 
         if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context);
         if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
 
-        // Only terminate the display if we were the one who initialized it.
-        // Calling eglTerminate on a display that another part of the app is
-        // still using would silently destroy all its contexts and surfaces.
-        if (didInitEgl) eglTerminate(display);
-
-        // Restore whatever context was current before we started
         if (prevContext != EGL_NO_CONTEXT && prevDisplay != EGL_NO_DISPLAY) {
             eglMakeCurrent(prevDisplay, prevDrawSurf, prevReadSurf, prevContext);
         }
     }
 };
 
-// ---------------------------------------------------------------------------
-// Helper functions
-// ---------------------------------------------------------------------------
-
-/** Compiles a single shader stage and returns its handle, or 0 on failure. */
 static GLuint compileShader(GLenum type, const char *src) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &src, nullptr);
@@ -239,7 +171,6 @@ static GLuint compileShader(GLenum type, const char *src) {
     return shader;
 }
 
-/** Links a vertex + fragment shader into a program. Returns 0 on failure. */
 static GLuint createProgram(const char *vertSrc, const char *fragSrc) {
     GLuint vert = compileShader(GL_VERTEX_SHADER, vertSrc);
     if (!vert) return 0;
@@ -268,19 +199,9 @@ static GLuint createProgram(const char *vertSrc, const char *fragSrc) {
     return prog;
 }
 
-/**
- * Computes the normalized half-Gaussian kernel for a given radius.
- *
- * Only the center weight and one side of the symmetric kernel are stored
- * (weights[0] = center, weights[i] = weight for samples i pixels away).
- * The returned kernel radius is capped at MAX_HALF_KERNEL — callers are
- * expected to downsample the image when the requested radius is larger.
- */
 static void computeGaussianWeights(float radius,
                                    float weights[WEIGHT_ARRAY_SIZE],
                                    int *outKernelRadius) {
-    // sigma = radius / 3 means 99.7% of the Gaussian distribution fits
-    // within the kernel, so edge weights are negligible.
     float sigma = radius / 3.0f;
     if (sigma < 0.001f) sigma = 0.001f;
 
@@ -294,15 +215,9 @@ static void computeGaussianWeights(float radius,
         weights[i] = std::exp(-(x * x) / (2.0f * sigma * sigma));
         sum += (i == 0) ? weights[i] : 2.0f * weights[i];
     }
-    // Normalize so all weights sum to 1, keeping brightness unchanged
     for (int i = 0; i <= kr; i++) weights[i] /= sum;
 }
 
-/**
- * Creates an RGBA8 texture of the given size and a framebuffer that renders
- * into it. Returns false if the framebuffer turns out to be incomplete, which
- * usually means the GPU ran out of memory.
- */
 static bool makeTexFbo(int w, int h, GLuint *tex, GLuint *fbo) {
     glGenTextures(1, tex);
     glBindTexture(GL_TEXTURE_2D, *tex);
@@ -324,22 +239,13 @@ static bool makeTexFbo(int w, int h, GLuint *tex, GLuint *fbo) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
 uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float radius) {
+    if (!pixels || width <= 0 || height <= 0) return nullptr;
     if (radius < 1.0f) radius = 1.0f;
 
-    // EglGuard must be declared before GlResources so that its destructor
-    // fires AFTER the GL objects have already been cleaned up. Destructors
-    // run in reverse declaration order, which is exactly what we want here.
     EglGuard egl;
     GlResources gl;
 
-    // --- EGL setup ---
-
-    // Save whatever context this thread had so we can put it back afterward.
     egl.prevDisplay = eglGetCurrentDisplay();
     egl.prevContext = eglGetCurrentContext();
     egl.prevDrawSurf = eglGetCurrentSurface(EGL_DRAW);
@@ -351,12 +257,10 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         return nullptr;
     }
 
-    // eglInitialize is safe to call even when another part of the app has
-    // already done so — we track whether we were the first caller so we only
-    // call eglTerminate if we truly owned the initialization.
     EGLint major = 0, minor = 0;
-    if (eglInitialize(egl.display, &major, &minor)) {
-        egl.didInitEgl = true;
+    if (!eglInitialize(egl.display, &major, &minor)) {
+        LOGE("eglInitialize failed: 0x%x", eglGetError());
+        return nullptr;
     }
 
 #ifndef EGL_OPENGL_ES3_BIT
@@ -381,7 +285,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         return nullptr;
     }
 
-    // A 1×1 pbuffer is enough because all actual rendering goes to FBOs.
     EGLint pbufAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
     egl.surface = eglCreatePbufferSurface(egl.display, config, pbufAttribs);
     if (egl.surface == EGL_NO_SURFACE) {
@@ -402,8 +305,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         return nullptr;
     }
 
-    // --- Build shader programs ---
-
     gl.hblurProg = createProgram(VERT_SRC, HBLUR_FRAG_SRC);
     gl.vblurProg = createProgram(VERT_SRC, VBLUR_FRAG_SRC);
     gl.copyProg = createProgram(VERT_SRC, COPY_FRAG_SRC);
@@ -412,14 +313,11 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         return nullptr;
     }
 
-    // --- Fullscreen quad (shared VAO for all passes) ---
-
     glGenVertexArrays(1, &gl.vao);
     glGenBuffers(1, &gl.vbo);
     glBindVertexArray(gl.vao);
     glBindBuffer(GL_ARRAY_BUFFER, gl.vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(QUAD_VERTS), QUAD_VERTS, GL_STATIC_DRAW);
-    // location 0 = aPosition (2 floats), location 1 = aTexCoord (2 floats)
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
                           4 * sizeof(float), reinterpret_cast<void *>(0));
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
@@ -427,8 +325,7 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
 
-    // --- Upload source pixels to a GL texture ---
-
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glGenTextures(1, &gl.srcTex);
     glBindTexture(GL_TEXTURE_2D, gl.srcTex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height,
@@ -438,13 +335,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    // --- Decide working resolution ---
-    //
-    // When the caller asks for a radius larger than MAX_HALF_KERNEL we cannot
-    // satisfy it in a single shader pass without reading hundreds of texels per
-    // fragment. Instead we scale the image down so the same effective blur can
-    // be achieved with a kernel of exactly MAX_HALF_KERNEL, then scale back up.
-    // The bilinear filtering during up/downscale is handled for free by the GPU.
     float effectiveRadius = radius;
     int workW = width;
     int workH = height;
@@ -458,7 +348,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
 
     GLuint blurInputTex = gl.srcTex;
 
-    // Downsample pass (only when the radius demands it)
     if (workW != width || workH != height) {
         if (!makeTexFbo(workW, workH, &gl.downTex, &gl.downFbo)) return nullptr;
         glViewport(0, 0, workW, workH);
@@ -470,13 +359,9 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         blurInputTex = gl.downTex;
     }
 
-    // --- Compute Gaussian weights ---
-
     float weights[WEIGHT_ARRAY_SIZE] = {};
     int kernelRadius = 0;
     computeGaussianWeights(effectiveRadius, weights, &kernelRadius);
-
-    // --- Horizontal blur pass ---
 
     if (!makeTexFbo(workW, workH, &gl.tmpTex, &gl.tmpFbo)) return nullptr;
     glBindFramebuffer(GL_FRAMEBUFFER, gl.tmpFbo);
@@ -491,8 +376,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
     glBindTexture(GL_TEXTURE_2D, blurInputTex);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // --- Vertical blur pass ---
-
     if (!makeTexFbo(workW, workH, &gl.blurTex, &gl.blurFbo)) return nullptr;
     glBindFramebuffer(GL_FRAMEBUFFER, gl.blurFbo);
     glUseProgram(gl.vblurProg);
@@ -504,8 +387,6 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, gl.tmpTex);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // --- Upsample pass (only when we downscaled earlier) ---
 
     GLuint readFbo = gl.blurFbo;
     int readW = workW;
@@ -525,20 +406,10 @@ uint8_t *gaussianBlurGpu(const uint8_t *pixels, int width, int height, float rad
         readH = height;
     }
 
-    // --- Read the result back to CPU memory ---
-    //
-    // glReadPixels delivers rows from Y=0 (bottom of the framebuffer) upward.
-    // Because we uploaded the Android bitmap so that its first row landed at
-    // GL texture Y=0 (which the quad maps to screen Y=−1, i.e., the bottom),
-    // the bottom of the framebuffer holds the first row of the original image.
-    // That means the readback order already matches Android's top-to-bottom
-    // layout, so we do not need to flip rows afterward.
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
     auto *result = new uint8_t[static_cast<size_t>(readW) * readH * 4];
     glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
     glReadPixels(0, 0, readW, readH, GL_RGBA, GL_UNSIGNED_BYTE, result);
 
-    // GlResources destructor fires here (while EGL context is still current),
-    // then EglGuard destructor tears down the EGL state.
     return result;
 }
-

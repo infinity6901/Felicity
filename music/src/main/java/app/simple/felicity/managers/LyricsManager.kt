@@ -474,6 +474,7 @@ class LyricsManager @Inject constructor(
     /** Adds generated romanization only where the lyric source did not provide one. */
     private fun addAutomaticRomanization(data: LrcData): LrcData {
         val enriched = LrcData()
+        data.metadata.forEach { (key, value) -> enriched.addMetadata(key, value) }
         // One pass over the whole song: decides Japanese vs Chinese from all lines and, when a
         // dictionary for that language has been downloaded, loads just the words this song uses.
         val romanizer = LyricsRomanizer.prepare(context, data.entries.map { it.text })
@@ -626,8 +627,12 @@ class LyricsManager @Inject constructor(
                 val extrasByTime = candidate.lineExtras.associateBy { it.timeMs }
                 val enriched = LrcData()
                 parsed.metadata.forEach { (key, value) -> enriched.addMetadata(key, value) }
-                parsed.entries.forEach { entry ->
-                    val extra = extrasByTime[entry.timeInMillis]
+                parsed.entries.forEachIndexed { index, entry ->
+                    val extra = if (entry.timeInMillis >= 0L) {
+                        extrasByTime[entry.timeInMillis]
+                    } else {
+                        candidate.lineExtras.getOrNull(index)
+                    }
                     enriched.addEntry(LrcEntry(
                         entry.timeInMillis, entry.text,
                         extra?.romanization?.takeIf { it.isNotBlank() } ?: entry.romanization,
@@ -640,6 +645,7 @@ class LyricsManager @Inject constructor(
             // Persist word timings too, otherwise the cached .lrc silently degrades to line-by-line.
             val toSave = if (candidate.synced && parsed.entries.any { it.hasWordSync() }) {
                 val wordsOnly = LrcData()
+                parsed.metadata.forEach { (key, value) -> wordsOnly.addMetadata(key, value) }
                 parsed.entries.forEach { e -> wordsOnly.addEntry(LrcEntry(e.timeInMillis, e.text, null, null, e.words)) }
                 wordsOnly.toLrcString()
             } else raw

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
@@ -11,6 +12,7 @@ import app.simple.felicity.R
 import app.simple.felicity.core.constants.ThemeConstants
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.preferences.AppearancePreferences
+import app.simple.felicity.preferences.ServerPreferences
 import app.simple.felicity.repository.covers.AudioCover
 import app.simple.felicity.repository.database.instances.AudioDatabase
 import app.simple.felicity.repository.models.Audio
@@ -21,37 +23,17 @@ import app.simple.felicity.repository.youtube.YoutubeSessionStore
 import app.simple.felicity.theme.managers.ThemeManager
 import com.google.gson.GsonBuilder
 import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.security.SecureRandom
 
 /**
  * Local WiFi HTTP server that exposes the device music library as a fully-featured
  * single-page web application with Artists, Albums, Genres, and Songs browsing.
- *
- * Routes served:
- *
- * - `GET /`                            — Serves the bundled `index.html` web player.
- * - `GET /style.css`                   — Serves the bundled stylesheet.
- * - `GET /player.js`                   — Serves the bundled JavaScript.
- * - `GET /app-icon`                    — Serves the round launcher icon as PNG.
- * - `GET /api/theme`                   — Current accent color + dark/light mode as JSON.
- * - `GET /api/songs`                   — JSON array of all available songs.
- * - `GET /api/songs/{id}/stream`       — Byte-range-aware audio streaming.
- * - `GET /api/songs/{id}/art`          — Album art for a song, as JPEG.
- * - `GET /api/albums`                  — JSON array of all albums.
- * - `GET /api/albums/songs?name=X`     — Songs in the named album.
- * - `GET /api/artists`                 — JSON array of all artists.
- * - `GET /api/artists/songs?name=X`    — Songs by the named artist.
- * - `GET /api/genres`                  — JSON array of all genres.
- * - `GET /api/genres/songs?name=X`     — Songs in the named genre.
- * - `POST /api/songs/{id}/played`      — Records a play event in the app database.
- *
- * @param context             Application context for asset/resource access.
- * @param port                TCP port the server binds to.
- * @param songStatRepository  Repository used to persist web-initiated play events.
  *
  * @author Hamza417
  */
@@ -67,14 +49,29 @@ class MusicHttpServer(
         AudioDatabase.getInstance(context)
     }
 
+    /** Per-instance random session token used to prevent cross-site / unauthenticated API abuse. */
+    private val sessionToken: String = ByteArray(24).let { bytes ->
+        SecureRandom().nextBytes(bytes)
+        bytes.joinToString("") { "%02x".format(it) }
+    }
+
     /** ID → Audio map, rebuilt whenever the songs endpoint is queried. */
+    @Volatile
     private var audioCache: Map<Long, Audio> = emptyMap()
 
     /** Cached round launcher icon PNG bytes, generated once on first request. */
+    @Volatile
     private var iconBytes: ByteArray? = null
 
     override fun serve(session: IHTTPSession): Response {
         return try {
+            if (!isSameOriginRequest(session)) {
+                return newFixedLengthResponse(
+                        Response.Status.FORBIDDEN,
+                        MIME_PLAINTEXT,
+                        "Cross-origin requests are not allowed"
+                )
+            }
             when (session.method) {
                 Method.POST -> handlePost(session)
                 Method.DELETE -> handleDelete(session)
@@ -90,11 +87,47 @@ class MusicHttpServer(
         }
     }
 
+    /**
+     * Rejects cross-origin browser requests (`Origin` / `Referer` mismatch) and requires the
+     * session cookie initialized by `/` on mutating requests (`POST`, `DELETE`).
+     */
+    private fun isSameOriginRequest(session: IHTTPSession): Boolean {
+        val host = session.headers["host"]?.lowercase()?.trim()
+        val origin = session.headers["origin"]?.lowercase()?.trim()
+        if (!origin.isNullOrBlank() && origin != "null" && host != null) {
+            val originHost = runCatching { Uri.parse(origin).authority?.lowercase() }.getOrNull()
+            if (originHost != null && originHost != host) {
+                return false
+            }
+        }
+        val referer = session.headers["referer"]?.lowercase()?.trim()
+        if (!referer.isNullOrBlank() && host != null) {
+            val refererHost = runCatching { Uri.parse(referer).authority?.lowercase() }.getOrNull()
+            if (refererHost != null && refererHost != host) {
+                return false
+            }
+        }
+        if (session.method == Method.POST || session.method == Method.DELETE) {
+            val cookieToken = session.cookies?.read(SESSION_COOKIE_NAME)
+            if (cookieToken != sessionToken) {
+                return false
+            }
+        }
+        return true
+    }
+
     @Suppress("DEPRECATION")
     private fun handleGet(session: IHTTPSession): Response {
         val uri = session.uri
         return when {
-            uri == "/" || uri == "/index.html" -> serveAsset("server/index.html", MIME_HTML)
+            uri == "/" || uri == "/index.html" -> {
+                serveAsset("server/index.html", MIME_HTML).apply {
+                    addHeader(
+                            "Set-Cookie",
+                            "$SESSION_COOKIE_NAME=$sessionToken; Path=/; HttpOnly; SameSite=Strict"
+                    )
+                }
+            }
             uri == "/app-icon" -> serveAppIcon()
             uri == "/api/theme" -> serveTheme()
             uri == "/api/player/now-playing" -> serveNowPlaying()
@@ -107,11 +140,13 @@ class MusicHttpServer(
             uri == "/api/genres" -> serveGenres()
             uri == "/api/genres/songs" -> serveGenreSongs(session.parms["name"] ?: "")
             STREAM_REGEX.matches(uri) -> {
-                val id = STREAM_REGEX.find(uri)!!.groupValues[1].toLong()
+                val id = STREAM_REGEX.find(uri)!!.groupValues[1].toLongOrNull()
+                    ?: return badRequest("Invalid song ID")
                 streamAudio(id, session)
             }
             ART_REGEX.matches(uri) -> {
-                val id = ART_REGEX.find(uri)!!.groupValues[1].toLong()
+                val id = ART_REGEX.find(uri)!!.groupValues[1].toLongOrNull()
+                    ?: return badRequest("Invalid song ID")
                 serveAlbumArt(id)
             }
             STATIC_REGEX.matches(uri) -> {
@@ -135,7 +170,7 @@ class MusicHttpServer(
                 val id = PLAYED_REGEX.find(uri)!!.groupValues[1].toLongOrNull()
                     ?: return badRequest("Invalid song ID")
                 val audio = findAudio(id) ?: return notFound("Song not found")
-                runBlocking { songStatRepository.recordPlay(audio.hash) }
+                runBlocking(Dispatchers.IO) { songStatRepository.recordPlay(audio.hash) }
                 newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
             }
             else -> {
@@ -147,35 +182,37 @@ class MusicHttpServer(
     }
 
     private fun serveNowPlaying(): Response {
-        val song = MediaPlaybackManager.getCurrentSong()
-        val onlineTrack = MediaPlaybackManager.getCurrentOnlineTrack()
-        val isPlaying = MediaPlaybackManager.isPlaying()
-        val position = MediaPlaybackManager.getSeekPosition()
-        val duration = MediaPlaybackManager.getDuration()
+        val json = runBlocking(Dispatchers.Main.immediate) {
+            val song = MediaPlaybackManager.getCurrentSong()
+            val onlineTrack = MediaPlaybackManager.getCurrentOnlineTrack()
+            val isPlaying = MediaPlaybackManager.isPlaying()
+            val position = MediaPlaybackManager.getSeekPosition()
+            val duration = MediaPlaybackManager.getDuration()
 
-        val json = mapOf(
-            "title" to (onlineTrack?.title ?: song?.title ?: "Not Playing"),
-            "artist" to (onlineTrack?.subtitle ?: song?.artist ?: ""),
-            "album" to (song?.album ?: ""),
-            "isPlaying" to isPlaying,
-            "positionMs" to position,
-            "durationMs" to duration,
-            "isOnline" to (onlineTrack != null)
-        )
+            mapOf(
+                    "title" to (onlineTrack?.title ?: song?.title ?: "Not Playing"),
+                    "artist" to (onlineTrack?.subtitle ?: song?.artist ?: ""),
+                    "album" to (song?.album ?: ""),
+                    "isPlaying" to isPlaying,
+                    "positionMs" to position,
+                    "durationMs" to duration,
+                    "isOnline" to (onlineTrack != null)
+            )
+        }
         return jsonResponse(json)
     }
 
     private fun handlePlayerControl(session: IHTTPSession): Response {
         val action = session.parms["action"] ?: ""
-        when (action) {
-            "play" -> MediaPlaybackManager.play()
-            "pause" -> MediaPlaybackManager.pause()
-            "toggle" -> MediaPlaybackManager.flipState()
-            "next" -> MediaPlaybackManager.next()
-            "previous" -> MediaPlaybackManager.previous()
-            "seek" -> {
-                val pos = session.parms["pos"]?.toLongOrNull() ?: 0L
-                MediaPlaybackManager.seekTo(pos)
+        val seekPos = session.parms["pos"]?.toLongOrNull() ?: 0L
+        runBlocking(Dispatchers.Main.immediate) {
+            when (action) {
+                "play" -> MediaPlaybackManager.play()
+                "pause" -> MediaPlaybackManager.pause()
+                "toggle" -> MediaPlaybackManager.flipState()
+                "next" -> MediaPlaybackManager.next()
+                "previous" -> MediaPlaybackManager.previous()
+                "seek" -> MediaPlaybackManager.seekTo(seekPos)
             }
         }
         return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
@@ -192,17 +229,21 @@ class MusicHttpServer(
 
     private fun jsonResponse(data: Any): Response {
         val json = gson.toJson(data)
-        return newFixedLengthResponse(Response.Status.OK, "application/json", json)
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
     }
 
     /**
      * Handles `DELETE /api/songs/{id}` by permanently removing the audio file from disk
-     * and evicting it from the in-memory cache.
-     *
-     * This is a destructive, irreversible operation. The Android MediaStore will reflect
-     * the change on its next scan.
+     * and evicting it from the database and in-memory cache when remote deletion is enabled.
      */
     private fun handleDelete(session: IHTTPSession): Response {
+        if (!ServerPreferences.isAllowRemoteDelete()) {
+            return newFixedLengthResponse(
+                    Response.Status.FORBIDDEN,
+                    MIME_PLAINTEXT,
+                    "Remote file deletion is disabled in Server settings"
+            )
+        }
         val uri = session.uri
         if (!DELETE_REGEX.matches(uri)) {
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
@@ -212,10 +253,11 @@ class MusicHttpServer(
         val audio = findAudio(id) ?: return notFound("Song not found")
         val audioUri = audio.uri.toUri()
         return try {
-            // Ask the system to delete the file through its own content provider.
-            // This works for both MediaStore and SAF URIs, so no raw File tricks needed.
             val deleted = context.contentResolver.delete(audioUri, null, null)
             if (deleted > 0) {
+                runBlocking(Dispatchers.IO) {
+                    audioDatabase.audioDao()?.delete(audio)
+                }
                 audioCache = audioCache - id
                 Log.i(TAG, "Deleted audio with URI: ${audio.uri}")
                 newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Deleted")
@@ -238,13 +280,6 @@ class MusicHttpServer(
         return newFixedLengthResponse(Response.Status.OK, mimeType, text)
     }
 
-    /**
-     * Serves the app icon as a PNG image.
-     *
-     * Prefers the bundled `server/app_icon.png` asset (if the user has placed one), and
-     * falls back to decoding the round launcher icon from mipmap resources when the asset
-     * is not present. Result is cached after the first request.
-     */
     private fun serveAppIcon(): Response {
         if (iconBytes == null) {
             iconBytes = try {
@@ -252,7 +287,7 @@ class MusicHttpServer(
             } catch (_: Exception) {
                 val src = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher_round)
                 val out = ByteArrayOutputStream()
-                src.scale(128, 128) /* scale to 128×128 */
+                src.scale(128, 128)
                     .compress(Bitmap.CompressFormat.PNG, 100, out)
                 out.toByteArray()
             }
@@ -335,23 +370,31 @@ class MusicHttpServer(
         return jsonOk(songs)
     }
 
+    private fun skipFully(stream: InputStream, bytesToSkip: Long) {
+        var remaining = bytesToSkip
+        val discardBuffer = ByteArray(8192)
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+            } else {
+                val read = stream.read(discardBuffer, 0, minOf(remaining, discardBuffer.size.toLong()).toInt())
+                if (read < 0) break
+                remaining -= read
+            }
+        }
+    }
+
     /**
-     * Streams the audio file through the SAF ContentResolver with HTTP Range support,
-     * so the browser `<audio>` element can seek to any position without downloading
-     * the whole track first. Think of it as a responsible librarian — you can ask for
-     * just the chapter you want instead of borrowing the whole book.
+     * Streams the audio file through the SAF ContentResolver with HTTP Range support.
      */
     private fun streamAudio(id: Long, session: IHTTPSession): Response {
         val audio = findAudio(id) ?: return notFound("Song not found")
 
-        // Parse the stored SAF URI string back into an Android Uri so we can ask
-        // the ContentResolver to open it for us — no raw file path needed.
         val audioUri = audio.uri.toUri()
         val mimeType = audio.mimeType?.takeIf { it.isNotBlank() } ?: "audio/*"
         val range = session.headers["range"]
 
-        // Ask the system how large the file is without fully opening it.
-        // openFileDescriptor gives us a handle we can query for the size.
         val fileLength = try {
             context.contentResolver.openFileDescriptor(audioUri, "r")?.use { it.statSize } ?: -1L
         } catch (e: Exception) {
@@ -361,42 +404,43 @@ class MusicHttpServer(
 
         return if (range != null && range.startsWith("bytes=")) {
             val parts = range.removePrefix("bytes=").split("-")
-            val start = parts[0].toLongOrNull() ?: 0L
-            val end = if (fileLength > 0 && parts.size > 1 && parts[1].isNotBlank()) {
-                parts[1].toLong()
-            } else if (fileLength > 0) {
-                fileLength - 1
-            } else {
-                // File size unknown — just skip and stream the remainder blindly.
-                Long.MAX_VALUE / 2
+            val rawStart = parts[0].toLongOrNull() ?: 0L
+            val start = if (fileLength > 0) rawStart.coerceIn(0L, fileLength - 1) else maxOf(0L, rawStart)
+            val parsedEnd = if (parts.size > 1 && parts[1].isNotBlank()) parts[1].toLongOrNull() else null
+            val end = when {
+                fileLength > 0 && parsedEnd != null -> parsedEnd.coerceIn(start, fileLength - 1)
+                fileLength > 0 -> fileLength - 1
+                parsedEnd != null && parsedEnd >= start -> parsedEnd
+                else -> Long.MAX_VALUE / 2
             }
-            val length = end - start + 1
+            val length = (end - start + 1).coerceAtLeast(0L)
 
-            // Open a fresh stream and skip ahead to where the browser wants to start.
             val stream: InputStream = context.contentResolver.openInputStream(audioUri)
                 ?: return notFound("Could not open audio stream")
-            stream.skip(start)
+            skipFully(stream, start)
 
             newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, stream, length).apply {
-                addHeader("Content-Range", "bytes $start-$end/$fileLength")
+                if (fileLength > 0) {
+                    addHeader("Content-Range", "bytes $start-$end/$fileLength")
+                }
                 addHeader("Accept-Ranges", "bytes")
-                if (fileLength > 0) addHeader("Content-Length", length.toString())
             }
         } else {
             val stream: InputStream = context.contentResolver.openInputStream(audioUri)
                 ?: return notFound("Could not open audio stream")
 
-            newFixedLengthResponse(Response.Status.OK, mimeType, stream, fileLength).apply {
-                addHeader("Accept-Ranges", "bytes")
-                if (fileLength > 0) addHeader("Content-Length", fileLength.toString())
+            if (fileLength > 0) {
+                newFixedLengthResponse(Response.Status.OK, mimeType, stream, fileLength).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                }
+            } else {
+                newChunkedResponse(Response.Status.OK, mimeType, stream).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                }
             }
         }
     }
 
-    /**
-     * Resolves and serves album art for the requested song as a JPEG image.
-     * Returns 404 when no artwork can be found.
-     */
     private fun serveAlbumArt(id: Long): Response {
         val audio = findAudio(id) ?: return notFound("Song not found")
         val bitmap = try {
@@ -420,17 +464,9 @@ class MusicHttpServer(
 
     private fun jsonOk(data: Any): Response {
         val json = gson.toJson(data)
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json).apply {
-            addHeader("Access-Control-Allow-Origin", "*")
-        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
     }
 
-    /**
-     * Serves the current app accent color and theme mode so the web page can
-     * style itself to match the Android app exactly — no more generic blue defaults.
-     *
-     * Returns: `{ "accent": "#2980B9", "accentSecondary": "#5499C7", "isDark": true }`
-     */
     private fun serveTheme(): Response {
         val accent = ThemeManager.accent
         val primaryHex = String.format("#%06X", 0xFFFFFF and accent.primaryAccentColor)
@@ -449,14 +485,9 @@ class MusicHttpServer(
         }
 
         val json = """{"accent":"$primaryHex","accentSecondary":"$secondaryHex","isDark":$isDark}"""
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json).apply {
-            addHeader("Access-Control-Allow-Origin", "*")
-        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json)
     }
 
-    /**
-     * Returns the current audio cache as a list, fetching from the database if empty.
-     */
     private fun cachedSongs(): List<Audio> {
         if (audioCache.isEmpty()) {
             audioCache = (audioDatabase.audioDao()?.getAllAudioList() ?: emptyList())
@@ -473,9 +504,6 @@ class MusicHttpServer(
         return audioCache[id]
     }
 
-    /**
-     * Converts an [Audio] record to a plain map suitable for JSON serialization.
-     */
     private fun Audio.toMap(): Map<String, Any?> = mapOf(
             "id" to id,
             "title" to (title?.takeIf { it.isNotBlank() } ?: name),
@@ -493,11 +521,6 @@ class MusicHttpServer(
     private fun notFound(message: String): Response =
         newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, message)
 
-    /**
-     * Starts the server in non-daemon mode.
-     *
-     * @throws IOException if the server cannot bind to the configured port.
-     */
     @Throws(IOException::class)
     fun startServer() {
         start(SOCKET_READ_TIMEOUT, false)
@@ -505,6 +528,7 @@ class MusicHttpServer(
 
     companion object {
         private const val TAG = "MusicHttpServer"
+        private const val SESSION_COOKIE_NAME = "felicity_session"
         private const val MIME_HTML = "text/html; charset=utf-8"
         private const val MIME_CSS = "text/css; charset=utf-8"
         private const val MIME_JS = "application/javascript; charset=utf-8"

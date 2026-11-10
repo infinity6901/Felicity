@@ -171,6 +171,11 @@ class VisualizerProcessor : BaseAudioProcessor() {
         pcmWindowCallback = callback
     }
 
+    fun getPcmWindowCallback(): PcmWindowCallback? = pcmWindowCallback
+
+    @Volatile
+    var fftHandleChangeListener: ((Long) -> Unit)? = null
+
     // Direct twin-buffer output
 
     /**
@@ -218,6 +223,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
 
             val oldHandle = nativeHandle
             nativeHandle = 0L
+            fftHandleChangeListener?.invoke(0L)
 
             sampleBuffer = FloatArray(newSize)
             bufferIndex = 0
@@ -234,6 +240,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
                 nativeSetBandEdges(newHandle, bandEdges, BAND_COUNT)
             }
             nativeHandle = newHandle
+            fftHandleChangeListener?.invoke(newHandle)
         }
     }
 
@@ -511,10 +518,17 @@ class VisualizerProcessor : BaseAudioProcessor() {
         vizDelayBuf.fill(0f)
         vizDelayWritePos = 0
 
+        fftHandleChangeListener?.invoke(0L)
         if (nativeHandle != 0L) {
             nativeDestroy(nativeHandle)
             nativeHandle = 0L
         }
+        val recreated = nativeCreate(fftSize)
+        if (recreated != 0L) {
+            nativeSetBandEdges(recreated, bandEdges, BAND_COUNT)
+        }
+        nativeHandle = recreated
+        fftHandleChangeListener?.invoke(recreated)
     }
 
     // Core FFT dispatch

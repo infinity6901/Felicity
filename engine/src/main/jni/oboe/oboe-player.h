@@ -57,6 +57,12 @@
  * @author Hamza417
  */
 struct OboeContext {
+    /** Unique id of this context in gContexts registry. */
+    uint64_t id = 0;
+
+    /** Number of background recovery threads currently pinning this context. */
+    std::atomic<int> pins{0};
+
     /** The underlying Oboe audio output stream. Null when not open. */
     std::shared_ptr<oboe::AudioStream> stream;
 

@@ -4,8 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:clipChildren="false"
-    android:clipToPadding="false"
-    android:orientation="vertical">
+    android:clipToPadding="false">
 
     <app.simple.felicity.decorations.views.FelicityVisualizer
         android:id="@+id/visualizer"
@@ -199,10 +198,6 @@
                 android:textSize="@dimen/text_size_18"
                 android:transitionName="album_name"
                 app:appFontStyle="black"
-                app:layout_constraintBottom_toTopOf="@+id/mime_artist"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/album_art_mime"
                 app:textColorStyle="primary" />
 
             <app.simple.felicity.decorations.ripple.DynamicRippleTextView
@@ -219,10 +214,6 @@
                 android:singleLine="true"
                 android:textSize="@dimen/text_size_14"
                 app:appFontStyle="regular"
-                app:layout_constraintBottom_toTopOf="@+id/mime_album"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/mime_title"
                 app:textColorStyle="secondary" />
 
             <app.simple.felicity.decorations.ripple.DynamicRippleTextView
@@ -239,10 +230,6 @@
                 android:singleLine="true"
                 android:textSize="@dimen/text_size_14"
                 app:appFontStyle="regular"
-                app:layout_constraintBottom_toTopOf="@+id/mime_info"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/mime_artist"
                 app:textColorStyle="secondary" />
 
             <app.simple.felicity.decorations.views.FlexStackLayout

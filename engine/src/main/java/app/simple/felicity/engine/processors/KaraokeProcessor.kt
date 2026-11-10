@@ -51,6 +51,23 @@ class KaraokeProcessor : BaseAudioProcessor() {
         this.isEnabled = enabled
     }
 
+    /**
+     * In-place float processing for direct native output sinks (AAudio, Oboe, USB DAC)
+     * that bypass DefaultAudioSink's ByteBuffer AudioProcessor chain.
+     */
+    fun processInPlace(samples: FloatArray, sampleCount: Int, channelCount: Int) {
+        if (!isEnabled || channelCount != 2) return
+        var i = 0
+        while (i + 1 < sampleCount) {
+            val leftIn = samples[i]
+            val rightIn = samples[i + 1]
+            val center = (leftIn + rightIn) * 0.5f
+            samples[i] = leftIn - center
+            samples[i + 1] = rightIn - center
+            i += 2
+        }
+    }
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         // L−R subtraction is meaningless on a mono track.
         if (inputAudioFormat.channelCount != 2) {

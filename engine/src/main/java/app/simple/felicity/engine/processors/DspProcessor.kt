@@ -241,6 +241,11 @@ class DspProcessor(
      * remains owned by [VisualizerProcessor] and must be destroyed via its own lifecycle.
      * After [release] any subsequent call to [processAudio] or any setter is a safe no-op.
      */
+    fun updateFftHandle(fftHandle: Long) {
+        if (nativeHandle == 0L) return
+        nativeDspSetFftHandle(nativeHandle, fftHandle)
+    }
+
     fun release() {
         if (nativeHandle == 0L) return
         nativeDspDestroy(nativeHandle)
@@ -449,6 +454,7 @@ class DspProcessor(
      *
      * @param handle Opaque pointer from [nativeDspCreate].
      */
+    private external fun nativeDspSetFftHandle(handle: Long, fftHandle: Long)
     private external fun nativeDspDestroy(handle: Long)
 
     companion object {

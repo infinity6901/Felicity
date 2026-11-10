@@ -4,9 +4,12 @@ import android.app.SearchManager
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.UriMatcher
+import android.content.pm.ApplicationInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
+import android.os.Binder
+import android.os.Process
 import app.simple.felicity.BuildConfig
 import app.simple.felicity.repository.repositories.AudioRepository
 import dagger.hilt.EntryPoint
@@ -23,22 +26,6 @@ import kotlinx.coroutines.runBlocking
  * <p>Only [SearchManager.SUGGEST_URI_PATH_QUERY] is handled — this provider exists purely
  * to serve suggestion rows, never to expose the library as general-purpose queryable data,
  * so every other URI and every non-`query()` operation is a deliberate no-op.</p>
- *
- * <p>Each suggestion's [SearchManager.SUGGEST_COLUMN_INTENT_DATA] points at a
- * `felicity://audio/<id>` URI rather than the song's real content:// URI — [Uri]s from
- * `SearchManager` suggestions are handed back to the app as plain [android.content.Intent]
- * data with no guarantee of persisted URI-permission grants, so re-resolving through our
- * own stable numeric id via [AudioRepository.getAudioById] is far more robust than trying
- * to reuse a SAF content:// URI that may no longer be readable outside its original grant.
- * See `MainActivity.handleSearchIntent()` for where that URI is parsed back out.</p>
- *
- * <p>Note: Hilt's `@AndroidEntryPoint` does NOT support [ContentProvider] — only Activity,
- * Fragment, View, Service, and BroadcastReceiver. Injection here instead goes through
- * [FelicitySearchProviderEntryPoint] via [EntryPoints.get], Hilt's documented mechanism for
- * every other kind of class. [audioRepository] resolves it lazily on first use — a
- * ContentProvider's [onCreate] runs before [android.app.Application.onCreate] completes on
- * some Android versions, before Hilt's `SingletonComponent` is guaranteed ready, so
- * resolving eagerly there would risk crashing on app cold start.</p>
  *
  * @author Hamza417
  */
@@ -57,6 +44,21 @@ class FelicitySearchProvider : ContentProvider() {
 
     override fun onCreate(): Boolean = true
 
+    private fun isTrustedCaller(): Boolean {
+        val callingUid = Binder.getCallingUid()
+        if (callingUid == Process.myUid() || callingUid == Process.SYSTEM_UID) {
+            return true
+        }
+        val ctx = context ?: return false
+        val packages = ctx.packageManager.getPackagesForUid(callingUid) ?: return false
+        return packages.any { pkg ->
+            runCatching {
+                val appInfo = ctx.packageManager.getApplicationInfo(pkg, 0)
+                (appInfo.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+            }.getOrDefault(false)
+        }
+    }
+
     override fun query(
             uri: Uri,
             projection: Array<out String>?,
@@ -68,16 +70,17 @@ class FelicitySearchProvider : ContentProvider() {
             return null
         }
 
-        val query = uri.lastPathSegment?.trim().orEmpty()
         val cursor = MatrixCursor(COLUMNS)
+        if (!isTrustedCaller()) {
+            return cursor
+        }
+
+        val query = uri.lastPathSegment?.trim().orEmpty()
 
         if (query.length < MIN_QUERY_LENGTH) {
             return cursor
         }
 
-        // ContentProvider#query() is always called off the main thread (a Binder thread
-        // from whatever process invoked us — typically the Assistant / system search UI),
-        // so a blocking call into the suspend repository function is safe here.
         val matches = runBlocking { audioRepository.searchByTitle(query) }
             .take(MAX_SUGGESTIONS)
 

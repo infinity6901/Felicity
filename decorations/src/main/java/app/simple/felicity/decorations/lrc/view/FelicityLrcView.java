@@ -2783,12 +2783,20 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 paint.setColor(originalColor);
             }
             if (activeWord && progressiveWordFill) {
+                int baseColor = normalTextColor;
+                if (cAlpha != null) {
+                    int a = Math.round(Color.alpha(baseColor) * cAlpha);
+                    baseColor = Color.argb(a, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor));
+                }
+                paint.setColor(baseColor);
+                canvas.drawText(text, start, end, drawX, y, paint);
+
                 WordEntry active = displayWords(lrcData.getEntries().get(lineIndex)).get(wordIndex);
                 long duration = Math.max(1L, active.getEndMs() - active.getStartMs());
                 float progress = Math.max(0f, Math.min(1f, (float) (currentPlaybackTimeMs - active.getStartMs()) / (float) duration));
                 int save = canvas.save();
                 canvas.clipRect(drawX, top, drawX + wordWidth * progress, bottom);
-                paint.setColor(currentTextColor);
+                paint.setColor(targetColor);
                 canvas.drawText(text, start, end, drawX, y, paint);
                 canvas.restoreToCount(save);
             } else {

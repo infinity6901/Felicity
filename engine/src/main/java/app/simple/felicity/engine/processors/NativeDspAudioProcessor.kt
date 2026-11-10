@@ -246,6 +246,9 @@ class NativeDspAudioProcessor(
                     inputAudioFormat.channelCount
             )
             dspProcessor = if (newDsp.isReady) newDsp else null
+            visualizerProcessor.fftHandleChangeListener = { newFftHandle ->
+                dspProcessor?.updateFftHandle(newFftHandle)
+            }
         } else {
             /**
              * The native engine reconfigures its biquad filter delay states during this call,
@@ -473,7 +476,7 @@ class NativeDspAudioProcessor(
      */
     fun processInPlace(samples: FloatArray, length: Int) {
         val dsp = dspProcessor ?: return
-        val preamp = preampLinearGain * replayGainLinearGain * tagReplayGainLinearGain
+        val preamp = preampLinearGain * replayGainLinearGain * tagReplayGainLinearGain * externalLinearGain
 
         if (samples.size == length) {
             if (preamp != 1f) {
@@ -538,6 +541,10 @@ class NativeDspAudioProcessor(
      */
     fun setEqBands(gains: FloatArray, bassDb: Float = this.bassDb, trebleDb: Float = this.trebleDb) {
         bandGains = gains.copyOf()
+        peqGains = FloatArray(0)
+        peqFreqs = FloatArray(0)
+        peqQValues = FloatArray(0)
+        peqTypes = IntArray(0)
         this.bassDb = bassDb
         this.trebleDb = trebleDb
         dspProcessor?.setEqBands(bandGains, bassDb, trebleDb)
@@ -552,6 +559,10 @@ class NativeDspAudioProcessor(
      */
     fun setBandGain(band: Int, gainDb: Float) {
         if (band !in 0 until BAND_COUNT) return
+        peqGains = FloatArray(0)
+        peqFreqs = FloatArray(0)
+        peqQValues = FloatArray(0)
+        peqTypes = IntArray(0)
         bandGains[band] = gainDb.coerceIn(-15f, 15f)
         dspProcessor?.setEqBands(bandGains, bassDb, trebleDb)
     }
@@ -571,18 +582,21 @@ class NativeDspAudioProcessor(
      */
     fun resetEqBands() {
         bandGains = FloatArray(BAND_COUNT)
+        peqGains = FloatArray(0)
+        peqFreqs = FloatArray(0)
+        peqQValues = FloatArray(0)
+        peqTypes = IntArray(0)
         dspProcessor?.setEqBands(bandGains, bassDb, trebleDb)
     }
 
     /**
-     * Sets the bass low-shelf gain. Internally passes the full band state so the
-     * native engine always has a consistent coefficient set.
+     * Sets the bass low-shelf gain without overwriting active graphic or parametric EQ bands.
      *
      * @param db Gain in dB, clamped to [-12, +12].
      */
     fun setBassDb(db: Float) {
         bassDb = db.coerceIn(-12f, 12f)
-        dspProcessor?.setEqBands(bandGains, bassDb, trebleDb)
+        dspProcessor?.setBassAndTreble(bassDb, trebleDb)
     }
 
     /**
@@ -613,7 +627,7 @@ class NativeDspAudioProcessor(
      */
     fun setTrebleDb(db: Float) {
         trebleDb = db.coerceIn(-12f, 12f)
-        dspProcessor?.setEqBands(bandGains, bassDb, trebleDb)
+        dspProcessor?.setBassAndTreble(bassDb, trebleDb)
     }
 
     /**
@@ -690,6 +704,7 @@ class NativeDspAudioProcessor(
         // push the standard 10-band graphic EQ so the two modes don't step on each other.
         if (peqGains.isNotEmpty()) {
             dsp.setPeqBands(peqGains, peqFreqs, peqQValues, peqTypes)
+            dsp.setBassAndTreble(bassDb, trebleDb)
         } else {
             dsp.setEqBands(bandGains, bassDb, trebleDb)
         }

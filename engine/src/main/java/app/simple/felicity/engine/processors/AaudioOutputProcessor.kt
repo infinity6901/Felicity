@@ -117,8 +117,16 @@ class AaudioOutputProcessor(
      * @return Number of samples actually accepted by the hardware, or -1 on error.
      */
     fun write(pcmBuffer: FloatArray, length: Int): Int {
-        if (nativeHandle == 0L) return 0
-        val buf = if (pcmBuffer.size == length) pcmBuffer else pcmBuffer.copyOf(length)
+        return write(pcmBuffer, 0, length)
+    }
+
+    fun write(pcmBuffer: FloatArray, offset: Int, length: Int): Int {
+        if (nativeHandle == 0L || length <= 0) return 0
+        val buf = if (offset == 0 && pcmBuffer.size == length) {
+            pcmBuffer
+        } else {
+            pcmBuffer.copyOfRange(offset, offset + length)
+        }
         return nativeAaudioWrite(nativeHandle, buf)
     }
 

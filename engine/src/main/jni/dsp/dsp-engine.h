@@ -289,6 +289,9 @@ struct DspContext {
      */
     float *vizMono;
 
+    /** Capacity in floats of [vizMono] allocated for [fftCtx]. */
+    int vizMonoCapacity;
+
     /** Current write position in [vizMono]. Resets to 0 after each completed FFT frame. */
     int vizBufPos;
 
