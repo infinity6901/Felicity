@@ -1347,7 +1347,14 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 }
             }
 
-            if (AudioPreferences.isGaplessPlaybackEnabled().not()) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
+                    MediaPlaybackManager.isOnlineQueueActive()) {
+                // With gapless off the player pauses at the end of the item instead of reaching
+                // STATE_ENDED, so the online queue would never advance. Move on explicitly.
+                gapJob?.cancel()
+                gapJob = null
+                MediaPlaybackManager.handleQueueEnded()
+            } else if (AudioPreferences.isGaplessPlaybackEnabled().not()) {
                 if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
                     // The track ended and the player paused itself automatically.
                     // Now we introduce our artificial gap.
@@ -1759,10 +1766,67 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         return null
     }
 
+    private var onlineFadeTriggeredFor: String? = null
+    private var onlineFadeInJob: Job? = null
+
+    /**
+     * Online (YouTube) queues hold one ExoPlayer item at a time and their stream URLs are
+     * resolved on demand, so a true two-deck overlap isn't possible. This is a "dip" transition
+     * instead: the outgoing track fades out, the queue advances a little before the end, and the
+     * next track fades in over the same total time.
+     */
+    private fun maybeOnlineFade() {
+        if (!MediaPlaybackManager.isOnlineQueueActive() || !MediaPlaybackManager.hasNextInOnlineQueue()) return
+        if (player.repeatMode == Player.REPEAT_MODE_ONE) return
+        if (SleepTimerManager.currentMode() is SleepTimerManager.Mode.EndOfTrack) return
+        val duration = player.duration
+        if (duration <= 0 || duration == C.TIME_UNSET) return
+        val fadeMs = CrossfadePreferences.getCrossfadeDurationMs().coerceAtLeast(1000L)
+        val half = fadeMs / 2
+        val id = player.currentMediaItem?.mediaId
+        val remaining = duration - player.currentPosition
+        if (onlineFadeInJob?.isActive == true) return
+        if (remaining > fadeMs) {
+            onlineFadeTriggeredFor = null
+            if (player.volume < 1f) player.volume = 1f
+            return
+        }
+        if (remaining > half) {
+            player.volume = ((remaining - half).toFloat() / half).coerceIn(0f, 1f)
+            return
+        }
+        if (onlineFadeTriggeredFor == id) return
+        onlineFadeTriggeredFor = id
+        player.volume = 0f
+        MediaPlaybackManager.nextInOnlineQueue()
+        onlineFadeInJob = serviceScope.launch(Dispatchers.Main) {
+            try {
+                val deadline = SystemClock.elapsedRealtime() + 10_000L
+                while (isActive && player.currentMediaItem?.mediaId == id && SystemClock.elapsedRealtime() < deadline) {
+                    delay(50L)
+                }
+                while (isActive && !player.isPlaying && SystemClock.elapsedRealtime() < deadline) delay(50L)
+                val start = SystemClock.elapsedRealtime()
+                while (isActive) {
+                    val p = ((SystemClock.elapsedRealtime() - start).toFloat() / half).coerceIn(0f, 1f)
+                    player.volume = p
+                    if (p >= 1f) break
+                    delay(40L)
+                }
+            } finally {
+                player.volume = 1f
+            }
+        }
+    }
+
     private fun maybeStartCrossfade() {
         if (!CrossfadePreferences.isCrossfadeEnabled()) return
         if (isCrossfading) return
         if (!player.isPlaying) return
+        if (MediaPlaybackManager.getCurrentOnlineTrack() != null) {
+            maybeOnlineFade()
+            return
+        }
         if (!player.hasNextMediaItem()) return
         // An exclusive USB DAC stream cannot be shared by two decks, so no overlap there. AAudio and
         // Oboe are shared-mode streams: the deck that owns the native route is faded in software
@@ -1771,8 +1835,6 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // Crossfading resolved, short-lived YouTube stream URLs adds a lot of fragility
         // (a second resolve, in the middle of a fade, for a URL that might already be
         // close to expiring) for comparatively little benefit — local-queue tracks only.
-        if (MediaPlaybackManager.getCurrentOnlineTrack() != null) return
-
         // Repeat-one must repeat THIS track. hasNextMediaItem()/nextMediaItemIndex use
         // getRepeatModeForNavigation(), which maps REPEAT_MODE_ONE to OFF — so ExoPlayer
         // happily reports "there is a next item" mid-queue and the handoff would advance
