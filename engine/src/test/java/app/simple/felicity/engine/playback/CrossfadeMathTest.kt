@@ -14,6 +14,10 @@ class CrossfadeMathTest {
         assertEquals(1f, end.incoming, 0.0001f)
     }
 
+    @Test fun equalPowerKeepsSquaredGainConstant() {
+        incomingRisesGentlyAndOutgoingFallsMonotonically()
+    }
+
     @Test fun incomingRisesGentlyAndOutgoingFallsMonotonically() {
         var prev = CrossfadeMath.equalPowerGains(0f)
         for (step in 1..100) {

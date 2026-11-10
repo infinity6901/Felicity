@@ -13,8 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Manages persistence and restoration of playback state across five independent
- * queue slots (0–4).
+ * Manages persistence and restoration of playback state across ten independent
+ * queue slots (0–9).
  *
  * @author Hamza417
  */
@@ -22,8 +22,8 @@ object PlaybackStateManager {
 
     private const val TAG = "PlaybackStateManager"
 
-    /** Number of independent queue slots available to the user (slots 0–4). */
-    const val QUEUE_COUNT = 5
+    /** Number of independent queue slots available to the user (slots 0–9). */
+    const val QUEUE_COUNT = 10
 
     data class QueueSwitchResult(
             val songs: List<Audio>,

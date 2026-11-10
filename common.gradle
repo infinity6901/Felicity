@@ -1,8 +1,6 @@
 // common.gradle
 // Use 'apply from: rootProject.file('common.gradle')' in your library build.gradle file
 
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 // Only Project and Settings build scripts can contain plugins {} blocks
 apply plugin: 'com.google.devtools.ksp'
 
@@ -43,7 +41,7 @@ android {
 
     kotlin {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_21)
+            jvmTarget = "JVM_21"
         }
     }
 }

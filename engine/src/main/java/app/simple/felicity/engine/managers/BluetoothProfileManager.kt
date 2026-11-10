@@ -12,7 +12,6 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import app.simple.felicity.preferences.EqualizerPreferences
 import app.simple.felicity.repository.database.instances.EqualizerDatabase
-import app.simple.felicity.shared.models.ParsedBand
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -93,17 +92,17 @@ object BluetoothProfileManager {
         Log.d(TAG, "Auto-applying EQ preset '$savedPresetName' for connected device '$deviceName'")
         scope.launch {
             val preset = EqualizerDatabase.getInstance(context)
-                ?.equalizerPresetDao()
-                ?.getPresetByName(savedPresetName)
+                .equalizerPresetDao()
+                .getPresetByName(savedPresetName)
 
             EqualizerPreferences.setEqEnabled(true)
             EqualizerManager.setEnabled(true)
-            EqualizerPreferences.setActivePresetName(savedPresetName)
 
             if (preset != null) {
                 EqualizerManager.setPreamp(preset.preampDb)
                 if (preset.isPeq()) {
                     EqualizerManager.setEqMode(EqualizerPreferences.EQ_MODE_PARAMETRIC)
+                    EqualizerPreferences.setPeqBandsRaw(preset.peqBandsRaw)
                     val parsed = preset.getPeqBands()
                     if (parsed.isNotEmpty()) {
                         EqualizerManager.setPeqBands(parsed)

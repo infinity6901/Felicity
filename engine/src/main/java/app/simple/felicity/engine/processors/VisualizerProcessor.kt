@@ -59,7 +59,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
     val bandCount: Int = BAND_COUNT
 
     @Volatile
-    private var fftSize = AudioPreferences.getFftResolution()
+    private var fftSize = runCatching { AudioPreferences.getFftResolution() }.getOrDefault(FFT_SIZE)
 
     /** Circular buffer that accumulates mono PCM samples before each FFT window. */
     private var sampleBuffer = FloatArray(fftSize)
@@ -646,7 +646,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
 
     companion object {
         init {
-            System.loadLibrary("felicity_audio_engine")
+            runCatching { System.loadLibrary("felicity_audio_engine") }
         }
 
         const val FFT_SIZE = 1024
