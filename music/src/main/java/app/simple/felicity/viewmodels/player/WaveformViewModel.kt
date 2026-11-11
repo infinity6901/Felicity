@@ -155,8 +155,17 @@ class WaveformViewModel @Inject constructor(
 
         // 2. Try ContentResolver InputStream
         val fromStream = runCatching<List<Int>?> {
-            getApplication<Application>().contentResolver.openInputStream(audio.uri.toUri())?.use { stream ->
-                amplituda.processAudio(stream, compress, cache)?.get()?.amplitudesAsList()
+            // This Amplituda version only reads paths and file descriptors, so the stream is
+            // copied to a temporary file first.
+            val temp = File(getApplication<Application>().cacheDir, "waveform_${audio.hash}.tmp")
+            try {
+                val copied = getApplication<Application>().contentResolver.openInputStream(audio.uri.toUri())?.use { stream ->
+                    temp.outputStream().use { out -> stream.copyTo(out) }
+                    true
+                } ?: false
+                if (copied) amplituda.processAudio(temp.absolutePath, compress, cache)?.get()?.amplitudesAsList() else null
+            } finally {
+                temp.delete()
             }
         }.getOrNull()
         if (!fromStream.isNullOrEmpty()) return@synchronized fromStream
