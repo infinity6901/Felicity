@@ -97,13 +97,37 @@ class GlassPanelLayout @JvmOverloads constructor(
         invalidate()
     }
 
+    override fun invalidate() {
+        super.invalidate()
+        host?.invalidate()
+    }
+
+    override fun onDescendantInvalidated(child: View, target: View) {
+        super.onDescendantInvalidated(child, target)
+        host?.invalidate()
+    }
+
+    override fun draw(canvas: Canvas) {
+        val h = host
+        if (h != null && h.glassEnabled && h.isSupported && canvas.isHardwareAccelerated) {
+            if (h.recording || !h.drawingTargets) return
+        }
+        super.draw(canvas)
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
-        if (host?.recording == true) return
+        val h = host
+        if (h != null && h.glassEnabled && h.isSupported && canvas.isHardwareAccelerated) {
+            if (h.recording || !h.drawingTargets) return
+        }
         super.dispatchDraw(canvas)
     }
 
     override fun onDraw(canvas: Canvas) {
-        if (host?.recording == true) return
+        val h = host
+        if (h != null && h.glassEnabled && h.isSupported && canvas.isHardwareAccelerated) {
+            if (h.recording || !h.drawingTargets) return
+        }
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return

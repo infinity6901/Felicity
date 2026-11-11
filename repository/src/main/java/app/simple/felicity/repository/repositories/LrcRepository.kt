@@ -245,6 +245,8 @@ class LrcRepository @Inject constructor(
             .replace(Regex("(?i)\\((?:full\\s+|lyrical\\s+|video\\s+|audio\\s+|lyric\\s+).*?\\)"), "")
             .replace(Regex("(?i)\\[(?:full\\s+|lyrical\\s+|video\\s+|audio\\s+|lyric\\s+).*?\\]"), "")
             .replace(Regex("(?i)\\b(official\\s+)?(music\\s+)?(video\\s+song|video|audio|lyric\\s+video|lyrical\\s+video|lyrical|lyrics|hd|4k|full\\s+song|full\\s+video|full\\s+audio)\\b"), "")
+            .replace(Regex("(?i)\\b(?:male|female|unplugged|acoustic|reprise|lofi|lo-fi|slowed|reverb)\\s+version\\b"), "")
+            .replace(Regex("(?i)\\b(?:latest\\s+)?(?:hindi|english|bollywood)?\\s*cover(?:\\s+\\d{4})?\\b"), "")
             .replace(Regex("(?i)\\(from\\s+[\"'].*?[\"']\\)"), "")
             .replace(Regex("(?i)\\(from\\s+.*?\\)"), "")
             .replace(Regex("(?i)\\[from\\s+.*?\\]"), "")
@@ -257,7 +259,7 @@ class LrcRepository @Inject constructor(
             .replace(Regex("(?i)vevo$"), "")
             .replace(Regex("\\(\\s*\\)|\\[\\s*\\]"), "")
             .replace(Regex("\\s+"), " ")
-            .replace(Regex("^[-–—|/\\s]+|[-–—|/\\s]+$"), "")
+            .replace(Regex("^[-–—|/｜⧸／•·\\s]+|[-–—|/｜⧸／•·\\s]+$"), "")
             .trim()
     }
 
@@ -268,9 +270,9 @@ class LrcRepository @Inject constructor(
             candidates.add(cleaned)
         }
 
-        // Split on explicit separators (" - ", "|", "/") first so "Artist - Song Title"
+        // Split on explicit separators (" - ", "|", "｜", "/", "⧸", "•") first so "Artist - Song Title"
         // tries "Song Title" before "Artist", while keeping hyphenated words intact.
-        val spacedParts = cleaned.split(Regex("\\s+[-–—|/]+\\s+|\\s*[|/]\\s*"))
+        val spacedParts = cleaned.split(Regex("\\s+[-–—|/｜⧸／•·]+\\s+|\\s*[|/｜⧸／•·]\\s*"))
             .map { cleanTitleOrArtist(it).trim() }
             .filter { it.length >= 2 }
         if (spacedParts.size >= 2) {
@@ -281,7 +283,7 @@ class LrcRepository @Inject constructor(
             }
         }
 
-        val parts = cleaned.split(Regex("[|\\-/]"))
+        val parts = cleaned.split(Regex("[|\\-/｜⧸／•·]"))
         for (part in parts) {
             val partCleaned = cleanTitleOrArtist(part).trim()
             if (partCleaned.length >= 2 && !candidates.contains(partCleaned)) {
@@ -295,6 +297,13 @@ class LrcRepository @Inject constructor(
         return candidates
     }
 
+    private fun primaryArtist(artistStr: String): String {
+        return artistStr.split(Regex("\\s*(?:,|&|\\band\\b|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*", RegexOption.IGNORE_CASE))
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            .orEmpty()
+    }
+
     /**
      * Generates ordered `(title, artist)` query pairs from potentially messy metadata
      * such as `"Artist - Song Title (Official Video)"` with an uploader channel in [artistName].
@@ -306,27 +315,20 @@ class LrcRepository @Inject constructor(
             .takeUnless { it.equals("unknown", ignoreCase = true) || it.equals("<unknown>", ignoreCase = true) }
             .orEmpty()
 
-        fun primaryArtist(artistStr: String): String {
-            return artistStr.split(Regex("\\s*(?:,|&|\\band\\b|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*", RegexOption.IGNORE_CASE))
-                .firstOrNull { it.isNotBlank() }
-                ?.trim()
-                .orEmpty()
-        }
-
-        val spacedParts = cleanedTitle.split(Regex("\\s+[-–—|/]+\\s+|\\s*[|/]\\s*"))
+        val spacedParts = cleanedTitle.split(Regex("\\s+[-–—|/｜⧸／•·]+\\s+|\\s*[|/｜⧸／•·]\\s*"))
             .map { cleanTitleOrArtist(it).trim() }
             .filter { it.length >= 2 }
 
         // 1. Direct cleaned metadata when the title is not a compound "Artist - Title" string.
         if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && spacedParts.size < 2) {
-            pairs.add(cleanedTitle to cleanedArtist)
             val primary = primaryArtist(cleanedArtist)
             if (primary.isNotBlank() && primary != cleanedArtist) {
                 pairs.add(cleanedTitle to primary)
             }
+            pairs.add(cleanedTitle to cleanedArtist)
         }
 
-        // 2. When the title contains " - " / "|" / "/", try ("Title", "Artist") and ("Artist", "Title").
+        // 2. When the title contains " - " / "|" / "｜" / "/", try ("Title", "Artist") and ("Artist", "Title").
         if (spacedParts.size >= 2) {
             val first = spacedParts[0]
             val second = spacedParts[1]
@@ -341,19 +343,25 @@ class LrcRepository @Inject constructor(
                 pairs.add(first to secondPrimary)
             }
             if (cleanedArtist.isNotBlank()) {
+                val primary = primaryArtist(cleanedArtist)
+                if (primary.isNotBlank() && primary != cleanedArtist) {
+                    pairs.add(second to primary)
+                    pairs.add(first to primary)
+                }
                 pairs.add(second to cleanedArtist)
                 pairs.add(first to cleanedArtist)
             }
             pairs.add(second to "")
+            pairs.add(first to "")
         }
 
         // 3. Compound title with original artist tag (if not already added).
         if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank()) {
-            pairs.add(cleanedTitle to cleanedArtist)
             val primary = primaryArtist(cleanedArtist)
             if (primary.isNotBlank() && primary != cleanedArtist) {
                 pairs.add(cleanedTitle to primary)
             }
+            pairs.add(cleanedTitle to cleanedArtist)
         }
 
         // 4. Title-only fallbacks.
@@ -380,15 +388,20 @@ class LrcRepository @Inject constructor(
                 val cleanedArtist = cleanTitleOrArtist(artistName)
                     .takeUnless { it.equals("unknown", ignoreCase = true) || it.equals("<unknown>", ignoreCase = true) }
                     .orEmpty()
+                val primaryArt = primaryArtist(cleanedArtist)
+                val artistCandidates = buildList {
+                    if (primaryArt.isNotBlank() && primaryArt != cleanedArtist) add(primaryArt)
+                    if (cleanedArtist.isNotBlank()) add(cleanedArtist)
+                }
                 val candidateTitles = extractCandidateTitles(trackName)
 
                 val testedKeys = mutableSetOf<String>()
 
-                // Strategy 1: Try candidate titles with track_name & artist_name params
+                // Strategy 1: Try candidate titles with track_name & artist_name params (primary artist first)
                 for (candTitle in candidateTitles) {
-                    if (cleanedArtist.isNotBlank()) {
-                        val params = mapOf("track_name" to candTitle, "artist_name" to cleanedArtist)
-                        val key = "params:$candTitle|$cleanedArtist"
+                    for (candArtist in artistCandidates) {
+                        val params = mapOf("track_name" to candTitle, "artist_name" to candArtist)
+                        val key = "params:$candTitle|$candArtist"
                         if (testedKeys.add(key)) {
                             val res = fetchLrcLibSearch(params)
                             if (res.isSuccess && res.getOrNull()?.isNotEmpty() == true) {
@@ -400,16 +413,18 @@ class LrcRepository @Inject constructor(
 
                 // Strategy 2: Try candidate titles with q query ("Title Artist")
                 for (candTitle in candidateTitles) {
-                    val qQuery = if (cleanedArtist.isNotBlank() && !candTitle.contains(cleanedArtist, ignoreCase = true)) {
-                        "$candTitle $cleanedArtist"
-                    } else {
-                        candTitle
-                    }
-                    val key = "q:$qQuery"
-                    if (testedKeys.add(key)) {
-                        val res = fetchLrcLibSearch(mapOf("q" to qQuery))
-                        if (res.isSuccess && res.getOrNull()?.isNotEmpty() == true) {
-                            return@withContext res
+                    for (candArtist in artistCandidates) {
+                        val qQuery = if (!candTitle.contains(candArtist, ignoreCase = true)) {
+                            "$candTitle $candArtist"
+                        } else {
+                            candTitle
+                        }
+                        val key = "q:$qQuery"
+                        if (testedKeys.add(key)) {
+                            val res = fetchLrcLibSearch(mapOf("q" to qQuery))
+                            if (res.isSuccess && res.getOrNull()?.isNotEmpty() == true) {
+                                return@withContext res
+                            }
                         }
                     }
                 }

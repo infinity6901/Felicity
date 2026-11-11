@@ -99,8 +99,10 @@ class GenericPreferencesAdapter(
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
 
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
                 holder.binding.popup.setOnClickListener {
@@ -118,8 +120,10 @@ class GenericPreferencesAdapter(
                 val preference = preferences[position]
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
                 holder.binding.root.parent?.requestLayout()
 
@@ -139,8 +143,10 @@ class GenericPreferencesAdapter(
 
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
                 // setMax()/setMin() MUST run before setProgress(): setProgress() clamps the
                 // given value against whatever range the view (possibly a recycled
@@ -150,6 +156,7 @@ class GenericPreferencesAdapter(
                 // afterwards would "correct" that already-wrong value by snapping it down to
                 // the new minimum — so the displayed value silently collapsed to whatever the
                 // slider's minimum was, no matter what was actually stored in preferences.
+                holder.binding.slider.setOnSeekChangeListener(null)
                 holder.binding.slider.setDefaultProgress(seekbarState.default)
                 holder.binding.slider.setMax(seekbarState.max)
                 holder.binding.slider.setMin(seekbarState.min)
@@ -186,8 +193,10 @@ class GenericPreferencesAdapter(
                 val preference = preferences[position]
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
                 holder.binding.container.setOnClickListener {
@@ -203,15 +212,22 @@ class GenericPreferencesAdapter(
                 val preference = preferences[position]
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
+                holder.binding.switchToggle.setOnCheckedChangeListener(null)
                 holder.binding.switchToggle.setChecked(preference.valueAsBooleanProvider ?: false, false)
 
-                holder.binding.switchToggle.setOnCheckedChangeListener { switch, isChecked ->
+                holder.binding.switchToggle.setOnCheckedChangeListener { switch, _ ->
                     preference.onPreferenceAction?.invoke(switch) {
                         /* no-op */
                     }
+                }
+
+                holder.binding.container.setOnClickListener {
+                    holder.binding.switchToggle.toggle()
                 }
 
                 holder.binding.title.highlight()
@@ -227,13 +243,16 @@ class GenericPreferencesAdapter(
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
 
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
                 val state = preference.valueAsButtonGroupStateProvider
                     ?: throw IllegalStateException("ButtonGroupState cannot be null for button_group preference")
 
+                holder.binding.buttonGroup.setOnButtonSelectedListener(null)
                 holder.binding.buttonGroup.setButtons(state.buttons)
                 holder.binding.buttonGroup.setSelectedIndex(state.selectedIndex, animate = false, notifyListener = false)
 
@@ -248,8 +267,10 @@ class GenericPreferencesAdapter(
                 val preference = preferences[position]
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
                 holder.binding.container.setOnClickListener {
@@ -265,8 +286,10 @@ class GenericPreferencesAdapter(
                 val preference = preferences[position]
                 holder.binding.title.setText(preference.title)
                 holder.binding.summary.setSummary(preference)
-                if (preference.icon != -1) {
+                if (preference.icon != -1 && preference.icon != 0) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
                 holder.binding.container.setOnClickListener {

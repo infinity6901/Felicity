@@ -15,6 +15,7 @@ import com.linc.amplituda.Amplituda
 import com.linc.amplituda.Cache
 import com.linc.amplituda.Compress
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -56,8 +57,8 @@ class WaveformViewModel @Inject constructor(
     fun getWaveformData(): LiveData<FloatArray> = waveformData
 
     fun loadWaveform(audio: Audio) {
-        // Prevent redundant loading
-        if (audio.uri == currentUri && waveformData.value?.isNotEmpty() == true) return
+        // Prevent redundant loading or cancelling an in-flight decode for the same track
+        if (audio.uri == currentUri && (loadJob?.isActive == true || waveformData.value?.isNotEmpty() == true)) return
 
         // Track the current request and cancel any superseded decode job
         currentUri = audio.uri
@@ -128,8 +129,9 @@ class WaveformViewModel @Inject constructor(
                 if (currentUri == audio.uri) {
                     waveformData.postValue(sampled)
                 }
-            }.getOrElse {
-                Log.e(TAG, "Unexpected error in loadWaveform for ${audio.getProperTitle()}", it)
+            }.getOrElse { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Unexpected error in loadWaveform for ${audio.getProperTitle()}", e)
                 if (currentUri == audio.uri) {
                     waveformData.postValue(getRandomGhostData(audio.duration))
                 }

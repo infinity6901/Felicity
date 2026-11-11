@@ -660,10 +660,15 @@ Java_app_simple_felicity_engine_processors_OboeOutputProcessor_nativeOboeStop(
     std::unique_lock<std::timed_mutex> lock(ctx->streamMutex, kLockTimeout);
     if (!lock.owns_lock() || !ctx->stream) return;
 
-    const oboe::Result result = ctx->stream->requestStop();
-    if (result != oboe::Result::OK) {
-        OBOE_LOGW("nativeOboeStop: requestStop returned (%s)",
-                  oboe::convertToText(result));
+    const oboe::StreamState state = ctx->stream->getState();
+    if (state == oboe::StreamState::Starting || state == oboe::StreamState::Started) {
+        const oboe::Result result = ctx->stream->requestStop();
+        if (result != oboe::Result::OK && result != oboe::Result::ErrorInvalidState) {
+            OBOE_LOGW("nativeOboeStop: requestStop returned (%s)",
+                      oboe::convertToText(result));
+        }
+    } else if (state == oboe::StreamState::Paused) {
+        ctx->stream->requestFlush();
     }
     OBOE_LOGI("Oboe stream stopped");
 }

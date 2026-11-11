@@ -60,13 +60,16 @@ class AdapterPanelVisibility(
             is Switch -> {
                 holder.binding.title.setText(preference.title)
 
-                // Icons are optional — skip setting one if the preference didn't supply it.
-                if (preference.icon != 0) {
+                // Icons are optional — clear recycled icon if the preference didn't supply one.
+                if (preference.icon != 0 && preference.icon != -1) {
                     holder.binding.icon.setImageResource(preference.icon)
+                } else {
+                    holder.binding.icon.setImageDrawable(null)
                 }
 
-                // Restore the saved state without triggering the listener — otherwise
-                // we'd accidentally write back the same value on every bind, which is wasteful.
+                // Clear any previous recycled listener BEFORE restoring saved state so binding
+                // a recycled ViewHolder never overwrites the previous row's preference.
+                holder.binding.switchToggle.setOnCheckedChangeListener(null)
                 holder.binding.switchToggle.setChecked(
                         preference.valueAsBooleanProvider ?: false,
                         animateThumb = false
@@ -74,6 +77,10 @@ class AdapterPanelVisibility(
 
                 holder.binding.switchToggle.setOnCheckedChangeListener { switch, _ ->
                     preference.onPreferenceAction?.invoke(switch) { /* no-op */ }
+                }
+
+                holder.binding.container.setOnClickListener {
+                    holder.binding.switchToggle.toggle()
                 }
             }
         }

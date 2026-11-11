@@ -682,9 +682,14 @@ Java_app_simple_felicity_engine_processors_AaudioOutputProcessor_nativeAaudioSto
     std::unique_lock<std::timed_mutex> lock(ctx->streamMutex, kLockTimeout);
     if (!lock.owns_lock() || !ctx->stream) return;
 
-    const aaudio_result_t result = AAudioStream_requestStop(ctx->stream);
-    if (result != AAUDIO_OK) {
-        AAUDIO_LOGW("nativeAaudioStop: requestStop returned (%d)", result);
+    const aaudio_stream_state_t state = AAudioStream_getState(ctx->stream);
+    if (state == AAUDIO_STREAM_STATE_STARTING || state == AAUDIO_STREAM_STATE_STARTED) {
+        const aaudio_result_t result = AAudioStream_requestStop(ctx->stream);
+        if (result != AAUDIO_OK && result != AAUDIO_ERROR_INVALID_STATE) {
+            AAUDIO_LOGW("nativeAaudioStop: requestStop returned (%d)", result);
+        }
+    } else if (state == AAUDIO_STREAM_STATE_PAUSED) {
+        AAudioStream_requestFlush(ctx->stream);
     }
     AAUDIO_LOGI("AAudio stream stopped");
 }

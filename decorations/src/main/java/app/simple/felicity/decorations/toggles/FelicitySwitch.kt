@@ -19,6 +19,7 @@ import android.os.Parcelable
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
 import android.view.animation.DecelerateInterpolator
@@ -133,7 +134,7 @@ class FelicitySwitch @JvmOverloads constructor(
     // Touch/drag
     private var downX: Float = 0f
     private var dragging = false
-    private val touchSlopPx: Float = dp(3f)
+    private val touchSlopPx: Float = max(dp(8f), ViewConfiguration.get(context).scaledTouchSlop.toFloat())
 
     // Listeners
     private var onCheckedChange: ((FelicitySwitch, Boolean) -> Unit)? = null
@@ -336,9 +337,10 @@ class FelicitySwitch @JvmOverloads constructor(
 
                 if (event.actionMasked == MotionEvent.ACTION_UP) {
                     val effectivePos = if (layoutDirection == LAYOUT_DIRECTION_RTL) 1f - thumbPos else thumbPos
-                    val newChecked = if (wasDragging) effectivePos >= 0.5f else !checked
-                    skipElasticThisToggle = wasDragging
-                    setCheckedInternal(newChecked, animateThumb = true)
+                    val significantDrag = wasDragging && abs(event.x - downX) > width * 0.25f
+                    val newChecked = if (significantDrag) effectivePos >= 0.5f else !checked
+                    skipElasticThisToggle = significantDrag
+                    setCheckedInternal(newChecked, animateThumb = true, notifyListener = true)
                     performClick()
                 } else {
                     // Cancel -> animate back to current state
@@ -372,34 +374,62 @@ class FelicitySwitch @JvmOverloads constructor(
     }
 
     override fun setChecked(checked: Boolean) {
-        setCheckedInternal(checked, animateThumb = true)
+        setCheckedInternal(checked, animateThumb = true, notifyListener = true)
     }
 
     fun setChecked(checked: Boolean, animateThumb: Boolean) {
-        setCheckedInternal(checked, animateThumb)
+        setCheckedInternal(checked, animateThumb, notifyListener = animateThumb)
     }
 
-    private fun setCheckedInternal(newChecked: Boolean, animateThumb: Boolean) {
+    private fun snapVisualState() {
+        thumbAnimator?.cancel()
+        colorAnimator?.cancel()
+        elevationAnimator?.cancel()
+        squashAnimator?.cancel()
+        scaleAnimator?.cancel()
+        thumbPos = if (checked) 1f else 0f
+        currentTrackColor = if (checked) trackOnColor else trackOffColor
+        trackPaint.color = currentTrackColor
+        animatedShadowRadiusPx = if (checked) shadowRadiusTargetPx else 0f
+        animatedShadowAlpha = if (checked) 1f else 0f
+        thumbScaleX = 1f
+        thumbScaleY = 1f
+        pressScale = 1f
+        updateElevation()
+    }
+
+    private fun setCheckedInternal(newChecked: Boolean, animateThumb: Boolean, notifyListener: Boolean = animateThumb) {
         if (checked == newChecked) {
-            if (animateThumb) animateThumbTo(if (checked) 1f else 0f)
+            if (animateThumb) {
+                animateThumbTo(if (checked) 1f else 0f)
+            } else {
+                snapVisualState()
+            }
             return
         }
         checked = newChecked
         refreshDrawableState()
         contentDescription = if (checked) "On" else "Off"
-        // animate shadow radius along with state change for smooth elevation
-        animateElevation(checked)
-        // animate track color towards new state color
-        animateTrackColorTo(if (checked) trackOnColor else trackOffColor)
-        if (animateThumb) animateThumbTo(if (checked) 1f else 0f) else run { thumbPos = if (checked) 1f else 0f; invalidate() }
-        // trigger elastic squash on toggle only if not from drag
-        if (!skipElasticThisToggle) {
-            animateThumbSquash()
+        if (animateThumb) {
+            // animate shadow radius along with state change for smooth elevation
+            animateElevation(checked)
+            // animate track color towards new state color
+            animateTrackColorTo(if (checked) trackOnColor else trackOffColor)
+            animateThumbTo(if (checked) 1f else 0f)
+            // trigger elastic squash on toggle only if not from drag
+            if (!skipElasticThisToggle) {
+                animateThumbSquash()
+            } else {
+                thumbScaleX = 1f
+                thumbScaleY = 1f
+            }
         } else {
-            thumbScaleX = 1f; thumbScaleY = 1f
+            snapVisualState()
         }
         skipElasticThisToggle = false
-        onCheckedChange?.invoke(this, checked)
+        if (notifyListener) {
+            onCheckedChange?.invoke(this, checked)
+        }
         invalidate()
     }
 

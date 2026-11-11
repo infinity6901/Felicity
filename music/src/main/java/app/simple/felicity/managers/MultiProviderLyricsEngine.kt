@@ -141,7 +141,7 @@ class MultiProviderLyricsEngine @Inject constructor(
         if (q.isBlank()) return@supervisorScope emptyList()
         val attempts = buildList {
             add(q to "")
-            val parts = q.split(Regex("\\s+[-–—|/]+\\s+"), limit = 2).map { it.trim() }
+            val parts = q.split(Regex("\\s+[-–—|/｜⧸／•·]+\\s+|\\s*[|/｜⧸／•·]\\s*"), limit = 2).map { it.trim() }
             if (parts.size == 2 && parts.all { it.isNotBlank() }) {
                 add(parts[1] to parts[0])
                 add(parts[0] to parts[1])
@@ -237,7 +237,7 @@ class MultiProviderLyricsEngine @Inject constructor(
     private suspend fun searchLyricsPlus(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {
         val queryPairs = repository.extractQueryPairs(title, artist).ifEmpty { listOf(title to artist) }.take(4)
         for ((qTitle, qArtist) in queryPairs) {
-            val found = searchLyricsPlusSingle(qTitle, qArtist)
+            val found = withTimeoutOrNull(4_500L) { searchLyricsPlusSingle(qTitle, qArtist) }.orEmpty()
             if (found.isNotEmpty()) return@withContext found
         }
         emptyList()
@@ -250,7 +250,7 @@ class MultiProviderLyricsEngine @Inject constructor(
             "https://lyricsplus.prjktla.my.id",
             "https://lyricsplus-seven.vercel.app"
         )
-        // Race every mirror; a dead or slow one must not hold up the others.
+        // Race every mirror; return as soon as the first non-empty response arrives.
         val results = kotlinx.coroutines.channels.Channel<List<Candidate>>(servers.size)
         val jobs = servers.map { server ->
             launch {
@@ -270,8 +270,12 @@ class MultiProviderLyricsEngine @Inject constructor(
             }
         }
         var found: List<Candidate> = emptyList()
-        repeat(servers.size) {
-            if (found.isEmpty()) found = results.receive()
+        for (i in servers.indices) {
+            val r = results.receive()
+            if (r.isNotEmpty()) {
+                found = r
+                break
+            }
         }
         jobs.forEach { it.cancel() }
         found

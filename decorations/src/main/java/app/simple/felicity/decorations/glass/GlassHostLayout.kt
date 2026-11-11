@@ -9,13 +9,14 @@ import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
 import android.util.AttributeSet
-import androidx.annotation.RequiresApi
 import android.view.View
+import androidx.annotation.RequiresApi
 import androidx.coordinatorlayout.widget.CoordinatorLayout
+import java.util.WeakHashMap
 import kotlin.math.ceil
 
 /**
- * A container that lets sibling views be real glass over whatever it shows.
+ * A container that lets sibling or descendant views be real glass over whatever it shows.
  *
  * While [glassEnabled] is on, the host records everything it draws (the screens, lists, artwork) into a
  * [RenderNode]. A glass surface then asks [drawBackdrop] for that picture: the host replays the part
@@ -33,7 +34,14 @@ class GlassHostLayout @JvmOverloads constructor(
         defStyleAttr: Int = 0
 ) : CoordinatorLayout(context, attrs, defStyleAttr) {
 
+    private class BlurState {
+        var node: RenderNode? = null
+        var appliedKey: String? = null
+        var shader: Any? = null
+    }
+
     private val targets = ArrayList<View>(2)
+    private val blurStates = WeakHashMap<View, BlurState>()
 
     /** True when the host can actually produce glass on this device. */
     val isSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -44,7 +52,7 @@ class GlassHostLayout @JvmOverloads constructor(
             field = value
             if (!value) {
                 contentNode = null
-                blurNode = null
+                blurStates.clear()
             }
             invalidate()
             targets.forEach { it.invalidate() }
@@ -56,12 +64,19 @@ class GlassHostLayout @JvmOverloads constructor(
 
     fun removeGlassTarget(view: View) {
         targets.remove(view)
+        blurStates.remove(view)
     }
 
     private var contentNode: RenderNode? = null
-    private var blurNode: RenderNode? = null
-    private var appliedKey: String? = null
-    private var shader: Any? = null
+
+    internal fun isDescendant(view: View): Boolean {
+        var current = view.parent
+        while (current != null) {
+            if (current === this) return true
+            current = (current as? View)?.parent
+        }
+        return false
+    }
 
     override fun dispatchDraw(canvas: Canvas) {
         if (!glassEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !canvas.isHardwareAccelerated) {
@@ -79,19 +94,27 @@ class GlassHostLayout @JvmOverloads constructor(
             node.endRecording()
         }
         canvas.drawRenderNode(node)
-        // Glass targets are drawn here, over the recording, so they never sample themselves.
+        // Descendant glass targets are drawn here, over the recording, under [drawingTargets] = true
+        // so their own RenderNodes never record [contentNode] (which would create a RenderNode cycle).
+        // Sibling targets (such as MiniPlayer) are drawn by their own parent after this host.
         val time = drawingTime
-        for (target in targets) {
-            if (target.visibility != VISIBLE) continue
-            if (target.parent === this) {
-                drawChild(canvas, target, time)
-            } else {
-                val (hx, hy) = offsetInHost(target)
-                val save = canvas.save()
-                canvas.translate(hx, hy)
-                target.draw(canvas)
-                canvas.restoreToCount(save)
+        drawingTargets = true
+        try {
+            for (target in targets) {
+                if (target.visibility != VISIBLE || !target.isAttachedToWindow) continue
+                if (!isDescendant(target)) continue
+                if (target.parent === this) {
+                    drawChild(canvas, target, time)
+                } else {
+                    val (hx, hy) = offsetInHost(target)
+                    val save = canvas.save()
+                    canvas.translate(hx, hy)
+                    target.draw(canvas)
+                    canvas.restoreToCount(save)
+                }
             }
+        } finally {
+            drawingTargets = false
         }
     }
 
@@ -113,15 +136,22 @@ class GlassHostLayout @JvmOverloads constructor(
     }
 
     internal var recording = false
+    internal var drawingTargets = false
     private var invalidatingTargets = false
 
     override fun onDescendantInvalidated(child: View, target: View) {
         super.onDescendantInvalidated(child, target)
         if (!glassEnabled || invalidatingTargets) return
-        // A glass child's own invalidation lands back here, so it must not trigger another round.
+        // Re-record the host backdrop and refresh any sibling targets without recursing.
         invalidatingTargets = true
         try {
-            for (i in targets.indices) if (targets[i] !== child) targets[i].invalidate()
+            invalidate()
+            for (i in targets.indices) {
+                val t = targets[i]
+                if (t !== child && t !== target && !isDescendant(t)) {
+                    t.invalidate()
+                }
+            }
         } finally {
             invalidatingTargets = false
         }
@@ -145,7 +175,9 @@ class GlassHostLayout @JvmOverloads constructor(
             cornerRadius: Float, blur: Float, refraction: Float, depth: Float
     ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
-        if (!glassEnabled || !canvas.isHardwareAccelerated) return false
+        if (!glassEnabled || recording || !canvas.isHardwareAccelerated) return false
+        // Never allow a descendant target's own RenderNode update pass to record contentNode.
+        if (isDescendant(target) && !drawingTargets) return false
         val content = contentNode ?: return false
         if (card.width() <= 0f || card.height() <= 0f) return false
 
@@ -155,24 +187,33 @@ class GlassHostLayout @JvmOverloads constructor(
         val nodeW = w + margin * 2
         val nodeH = h + margin * 2
 
-        // Where the glass sits inside this host (supports both direct children and nested views).
-        val (targetHostX, targetHostY) = offsetInHost(target)
+        // Where the glass sits inside this host (supports both direct children, nested views, and siblings).
+        val (targetHostX, targetHostY) = if (isDescendant(target)) {
+            offsetInHost(target)
+        } else {
+            val hostLoc = IntArray(2)
+            val targetLoc = IntArray(2)
+            getLocationInWindow(hostLoc)
+            target.getLocationInWindow(targetLoc)
+            (targetLoc[0] - hostLoc[0]).toFloat() to (targetLoc[1] - hostLoc[1]).toFloat()
+        }
         val hostX = targetHostX + card.left
         val hostY = targetHostY + originY + card.top
 
-        val node = blurNode ?: RenderNode("felicity-glass-blur").also { blurNode = it }
+        val state = blurStates.getOrPut(target) { BlurState() }
+        val node = state.node ?: RenderNode("felicity-glass-blur").also { state.node = it }
         node.setPosition(0, 0, nodeW, nodeH)
 
         val key = "$nodeW/$nodeH/$margin/$blur/$refraction/$depth/$cornerRadius"
-        if (key != appliedKey) {
-            appliedKey = key
-            node.setRenderEffect(buildEffect(blur, refraction, depth, cornerRadius, margin.toFloat(), w.toFloat(), h.toFloat()))
+        if (key != state.appliedKey) {
+            state.appliedKey = key
+            node.setRenderEffect(buildEffect(state, blur, refraction, depth, cornerRadius, margin.toFloat(), w.toFloat(), h.toFloat()))
         }
 
-        val recording = node.beginRecording(nodeW, nodeH)
+        val rec = node.beginRecording(nodeW, nodeH)
         try {
-            recording.translate(margin - hostX, margin - hostY)
-            recording.drawRenderNode(content)
+            rec.translate(margin - hostX, margin - hostY)
+            rec.drawRenderNode(content)
         } finally {
             node.endRecording()
         }
@@ -186,12 +227,12 @@ class GlassHostLayout @JvmOverloads constructor(
 
     @RequiresApi(Build.VERSION_CODES.S)
     private fun buildEffect(
-            blur: Float, refraction: Float, depth: Float, radius: Float,
+            state: BlurState, blur: Float, refraction: Float, depth: Float, radius: Float,
             margin: Float, w: Float, h: Float
     ): RenderEffect {
         val blurEffect = RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.CLAMP)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || refraction <= 0.01f) return blurEffect
-        val s = (shader as? RuntimeShader) ?: RuntimeShader(REFRACTION_AGSL).also { shader = it }
+        val s = (state.shader as? RuntimeShader) ?: RuntimeShader(REFRACTION_AGSL).also { state.shader = it }
         s.setFloatUniform("box", margin, margin, margin + w, margin + h)
         s.setFloatUniform("radius", radius.coerceAtMost(minOf(w, h) / 2f))
         s.setFloatUniform("depth", depth)

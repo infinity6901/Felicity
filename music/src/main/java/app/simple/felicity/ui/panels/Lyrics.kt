@@ -91,6 +91,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
     /** While the Studio is open it previews changes itself, so the screen behind it must not restyle on every tick. */
     private var studioOpen = false
     private var appliedBackgroundMode = Int.MIN_VALUE
+    private var appliedArtworkColor: Int? = null
     private val textSizeRunnable = Runnable { applyTextSize() }
 
     /** ViewModel that decodes and exposes the per-second waveform amplitude data. */
@@ -465,12 +466,19 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
      */
     private fun applyStudioBackground() {
         val mode = LyricsPreferences.getStudioBackground()
-        if (mode == appliedBackgroundMode) return
+        val artColor = LyricsStyle.artworkColor
+        if (mode == appliedBackgroundMode && artColor == appliedArtworkColor) return
+        val modeChanged = mode != appliedBackgroundMode
         appliedBackgroundMode = mode
+        appliedArtworkColor = artColor
         val flat = LyricsStyle.isFlatBackground(mode)
         binding.coverContainer.background = if (flat) LyricsStyle.backgroundDrawable(mode) else null
         val artAlpha = if (flat) 0f else 1f
         binding.coverFront.alpha = artAlpha
+        if (flat) {
+            binding.coverBack.alpha = 0f
+            binding.coverBack.setImageDrawable(null)
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             val effect = if (mode == LyricsPreferences.BACKGROUND_BLURRED_ARTWORK) {
                 android.graphics.RenderEffect.createBlurEffect(
@@ -478,7 +486,9 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             } else null
             binding.coverFront.setRenderEffect(effect)
         }
-        setAlbumArtBackground(animate = false)
+        if (modeChanged) {
+            setAlbumArtBackground(animate = false)
+        }
     }
 
     /**
@@ -627,6 +637,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
 
     override fun onDestroyView() {
         appliedBackgroundMode = Int.MIN_VALUE
+        appliedArtworkColor = null
         super.onDestroyView()
         textSizeHandler.removeCallbacks(textSizeRunnable)
     }
@@ -750,22 +761,35 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                     LyricsStyle.artworkColor = LyricsStyle.sampleArtworkColor(resource)
                     textSizeHandler.removeCallbacks(textSizeRunnable)
                     textSizeHandler.post(textSizeRunnable)
-                    binding.coverBack.setImageBitmap(resource)
-                    binding.coverBack.alpha = 1f
 
-                    binding.coverFront.animate()
-                        .alpha(0f)
-                        .setDuration(300)
-                        .withEndAction {
-                            binding.coverFront.setImageBitmap(resource)
-                            binding.coverFront.alpha =
-                                if (LyricsStyle.isFlatBackground(LyricsPreferences.getStudioBackground())) 0f else 1f
-                            binding.coverBack.setImageDrawable(null)
-                        }
-                        .start()
+                    val isFlat = LyricsStyle.isFlatBackground(LyricsPreferences.getStudioBackground())
+                    if (isFlat) {
+                        binding.coverFront.animate().cancel()
+                        binding.coverFront.setImageBitmap(resource)
+                        binding.coverFront.alpha = 0f
+                        binding.coverBack.setImageDrawable(null)
+                        binding.coverBack.alpha = 0f
+                    } else {
+                        binding.coverBack.setImageBitmap(resource)
+                        binding.coverBack.alpha = 1f
+
+                        binding.coverFront.animate()
+                            .alpha(0f)
+                            .setDuration(300)
+                            .withEndAction {
+                                binding.coverFront.setImageBitmap(resource)
+                                binding.coverFront.alpha =
+                                    if (LyricsStyle.isFlatBackground(LyricsPreferences.getStudioBackground())) 0f else 1f
+                                binding.coverBack.setImageDrawable(null)
+                            }
+                            .start()
+                    }
                 }
 
                 override fun onLoadFailed(errorDrawable: Drawable?) {
+                    LyricsStyle.artworkColor = null
+                    textSizeHandler.removeCallbacks(textSizeRunnable)
+                    textSizeHandler.post(textSizeRunnable)
                     binding.coverFront.setImageResource(R.drawable.ic_felicity)
                 }
 

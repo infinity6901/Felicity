@@ -250,11 +250,11 @@ class LyricsManager @Inject constructor(
         // Already loaded (or loading) this exact song — nothing to do.
         if (currentSongPath != null && currentSongPath == lastLoadedPath) {
             if (loadingJob?.isActive == true) {
-                Log.d(TAG, "loadLrcData() skipped – already loading '${onlineTrack?.title ?: currentSong?.title}'.")
+                Log.d(TAG, "loadLrcData() skipped – already loading '${onlineTrack?.title ?: currentSong?.getProperTitle()}'.")
                 return
             }
             if (_lrcData.value != null && !_lrcData.value!!.isEmpty) {
-                Log.d(TAG, "loadLrcData() skipped – lyrics already ready for '${onlineTrack?.title ?: currentSong?.title}'.")
+                Log.d(TAG, "loadLrcData() skipped – lyrics already ready for '${onlineTrack?.title ?: currentSong?.getProperTitle()}'.")
                 return
             }
         }

@@ -308,6 +308,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * Defaults to "Unknown" until [AnalyticsListener.onAudioDecoderInitialized] fires.
      */
     private var currentDecoderName: String = "Unknown"
+    private var standbyDecoderName: String = "Unknown"
 
     /**
      * The compressed source [Format] most recently delivered to the audio renderer.
@@ -315,6 +316,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      * first track is decoded.
      */
     private var currentAudioInputFormat: Format? = null
+    private var standbyAudioInputFormat: Format? = null
 
     /**
      * The currently active audio output device, or `null` if detection has not yet
@@ -554,6 +556,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
 
         renderersFactory?.setExtensionRendererMode(extensionMode)
+        standbyRenderersFactory?.setExtensionRendererMode(extensionMode)
 
         // Configure LoadControl with optimized buffer settings based on hi-res mode
         val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
@@ -663,6 +666,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         standby.volume = 0f
         standby.repeatMode = Player.REPEAT_MODE_OFF
         standby.playWhenReady = false
+        standby.addAnalyticsListener(standbyAnalyticsListener)
         standbyPlayer = standby
         dualPlayerCoordinator = app.simple.felicity.engine.playback.DualPlayerCoordinator(player, standby)
         syncStandbyToNextQueueItem()
@@ -725,6 +729,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
             outgoing.removeListener(playerListener)
             outgoing.removeAnalyticsListener(analyticsListener)
+            incoming.removeAnalyticsListener(standbyAnalyticsListener)
 
             val activeAudioAttributes = AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -749,18 +754,27 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
             incoming.addListener(playerListener)
             incoming.addAnalyticsListener(analyticsListener)
+            outgoing.addAnalyticsListener(standbyAnalyticsListener)
 
             player = incoming
             standbyPlayer = outgoing
             audioProcessorManager = incomingDsp
             standbyAudioProcessorManager = outgoingDsp
 
+            val promotedDecoder = standbyDecoderName
+            val promotedFormat = standbyAudioInputFormat ?: player.audioFormat
+            standbyDecoderName = currentDecoderName
+            standbyAudioInputFormat = currentAudioInputFormat
+            if (promotedDecoder != "Unknown") {
+                currentDecoderName = promotedDecoder
+            }
+            currentAudioInputFormat = promotedFormat ?: currentAudioInputFormat
+
             player.shuffleModeEnabled = outgoing.shuffleModeEnabled
             configureGaplessPlayback()
             applyRepeatMode(PlayerPreferences.getRepeatMode())
 
             currentItemDurationMs = player.duration.coerceAtLeast(0L)
-            currentAudioInputFormat = player.audioFormat ?: currentAudioInputFormat
 
             VisualizerManager.processor = audioProcessorManager.visualizerProcessor
             EqualizerManager.attachProcessor(
@@ -801,6 +815,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             runCatching { mediaSession?.player = outgoing }
             runCatching { incoming.removeListener(playerListener) }
             runCatching { incoming.removeAnalyticsListener(analyticsListener) }
+            runCatching { outgoing.removeAnalyticsListener(standbyAnalyticsListener) }
+            runCatching { incoming.addAnalyticsListener(standbyAnalyticsListener) }
             runCatching { outgoing.addListener(playerListener) }
             runCatching { outgoing.addAnalyticsListener(analyticsListener) }
             player = outgoing
@@ -881,6 +897,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         dualPlayerCoordinator?.resetTransitions()
         dualPlayerCoordinator = null
         standbyPlayer?.run {
+            removeAnalyticsListener(standbyAnalyticsListener)
             playWhenReady = false
             stop()
             clearMediaItems()
@@ -904,7 +921,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // The temp crossfade player was built against the OLD player's state; finishing it
         // onto a freshly built player would seek the wrong item. Abort it first.
         cancelCrossfadeIfActive()
+        releaseStandbyPlayer()
         player.removeListener(playerListener)
+        player.removeAnalyticsListener(analyticsListener)
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
         player.release()
 
         // Build the new player with updated Factory settings
@@ -939,7 +961,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // The temp crossfade player was built against the OLD player's state; finishing it
         // onto a freshly built player would seek the wrong item. Abort it first.
         cancelCrossfadeIfActive()
+        releaseStandbyPlayer()
         player.removeListener(playerListener)
+        player.removeAnalyticsListener(analyticsListener)
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
         player.release()
 
         // Build the new player with updated audio sink and buffer settings
@@ -1069,7 +1096,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // The temp crossfade player was built against the OLD player's state; finishing it
         // onto a freshly built player would seek the wrong item. Abort it first.
         cancelCrossfadeIfActive()
+        releaseStandbyPlayer()
         player.removeListener(playerListener)
+        player.removeAnalyticsListener(analyticsListener)
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
         player.release()
 
         buildPlayerWithExtensionMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
@@ -1106,7 +1138,12 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         // The temp crossfade player was built against the OLD player's state; finishing it
         // onto a freshly built player would seek the wrong item. Abort it first.
         cancelCrossfadeIfActive()
+        releaseStandbyPlayer()
         player.removeListener(playerListener)
+        player.removeAnalyticsListener(analyticsListener)
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
         player.release()
 
         buildPlayerWithExtensionMode(extensionMode)
@@ -1156,6 +1193,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private fun buildPlayerWithExtensionMode(extensionMode: Int) {
         renderersFactory?.setExtensionRendererMode(extensionMode)
+        standbyRenderersFactory?.setExtensionRendererMode(extensionMode)
 
         val hiresEnabled = AudioPreferences.isHiresOutputEnabled()
         val loadControl = if (hiresEnabled) {
@@ -1317,16 +1355,23 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             val format = player.audioFormat
-            if (format != null && format.pcmEncoding != C.ENCODING_INVALID) {
-                val encodingName = when (format.pcmEncoding) {
-                    C.ENCODING_PCM_16BIT -> "16-bit"
+            if (format != null) {
+                val dspEncoding = audioProcessorManager.nativeDspProcessor.currentInputFormat.encoding
+                val effectiveEncoding = when {
+                    format.pcmEncoding != C.ENCODING_INVALID && format.pcmEncoding != Format.NO_VALUE -> format.pcmEncoding
+                    dspEncoding != C.ENCODING_INVALID && dspEncoding != Format.NO_VALUE -> dspEncoding
+                    AudioPreferences.isHiresOutputEnabled() -> C.ENCODING_PCM_FLOAT
+                    else -> C.ENCODING_PCM_16BIT
+                }
+                val encodingName = when (effectiveEncoding) {
+                    C.ENCODING_PCM_16BIT -> "16-bit PCM"
                     C.ENCODING_PCM_FLOAT -> "32-bit Float"
-                    C.ENCODING_PCM_24BIT -> "24-bit"
-                    C.ENCODING_PCM_32BIT -> "32-bit"
-                    else -> "Other (${format.pcmEncoding})"
+                    C.ENCODING_PCM_24BIT -> "24-bit PCM"
+                    C.ENCODING_PCM_32BIT -> "32-bit PCM"
+                    else -> mimeTypeToFormatString(format.sampleMimeType)
                 }
                 Log.i(TAG, "Audio Engine: ${format.sampleRate}Hz | Output: $encodingName")
-                Log.i(TAG, "Song Info: Channels: ${format.channelCount}, Encoding: ${format.pcmEncoding}, Sample Rate: ${format.sampleRate}")
+                Log.i(TAG, "Song Info: Channels: ${format.channelCount}, Format: ${mimeTypeToFormatString(format.sampleMimeType)} ($encodingName), Sample Rate: ${format.sampleRate}")
             }
 
             if (isPlaying) {
@@ -2232,6 +2277,27 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             currentAudioInputFormat = format
             Log.d(TAG, "Audio input format changed: ${format.sampleMimeType} @ ${format.sampleRate}Hz")
             buildAndPushSnapshot()
+        }
+    }
+
+    private val standbyAnalyticsListener = object : AnalyticsListener {
+        override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long
+        ) {
+            standbyDecoderName = decoderName
+            Log.d(TAG, "Standby audio decoder initialized: $decoderName")
+        }
+
+        override fun onAudioInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?
+        ) {
+            standbyAudioInputFormat = format
+            Log.d(TAG, "Standby audio input format changed: ${format.sampleMimeType} @ ${format.sampleRate}Hz")
         }
     }
 

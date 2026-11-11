@@ -1598,7 +1598,7 @@ abstract class PreferenceFragment : MediaFragment() {
         val scannerOnResumeToggle = Preference(
                 title = R.string.scan_on_resume,
                 summary = R.string.scan_on_resume_summary,
-                icon = -1,
+                icon = R.drawable.ic_refresh,
                 type = PreferenceType.SWITCH,
                 onPreferenceAction = { view, callback ->
                     LibraryPreferences.setScannerOnResumeEnabled((view as FelicitySwitch).isChecked)
@@ -1626,7 +1626,7 @@ abstract class PreferenceFragment : MediaFragment() {
         val clearPlaybackStats = Preference(
                 title = R.string.clear_playback_stats,
                 summary = R.string.clear_playback_stats_summary,
-                icon = -1,
+                icon = R.drawable.ic_delete,
                 type = PreferenceType.NORMAL,
                 onPreferenceAction = { view, callback ->
                     withSureDialog {

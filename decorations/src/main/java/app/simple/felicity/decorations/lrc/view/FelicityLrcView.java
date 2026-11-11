@@ -659,7 +659,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             // Apply curtain reveal scale (centered on the line's mid-point)
             Float cScale = curtainScale.get(i);
             if (cScale != null && Math.abs(cScale - 1f) > 0.001f) {
-                float halfW = lrcLayout.mainLayout.getWidth() / 2f;
+                float halfW = calculateXPositionForLayout(lrcLayout.mainLayout, normalPaint, i)
+                        + layoutContentPivotX(lrcLayout.mainLayout);
                 float halfH = lineHeight / 2f;
                 canvas.scale(cScale, cScale, halfW, halfH);
             }
@@ -707,6 +708,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
             
             canvas.save();
             float mainX = calculateXPositionForLayout(lrcLayout.mainLayout, normalPaint, i);
+            float contentPivotX = layoutContentPivotX(lrcLayout.mainLayout);
             canvas.translate(mainX, currentY);
             if (inactiveTextScale < 0.999f) {
                 // Ease back to full size as a line becomes (or stops being) the highlight.
@@ -714,13 +716,13 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                 float lineScale = inactiveTextScale + (1f - inactiveTextScale) * emphasis;
                 if (lineScale < 0.999f) {
                     canvas.scale(lineScale, lineScale,
-                            lrcLayout.mainLayout.getWidth() * alignmentFraction, lrcLayout.mainLayout.getHeight() / 2f);
+                            contentPivotX, lrcLayout.mainLayout.getHeight() / 2f);
                 }
             }
             float activeScaleNow = isCurrentHighlight ? effectiveActiveScale(lrcLayout.mainLayout) : 1f;
             if (activeScaleNow > 1f) {
                 canvas.scale(activeScaleNow, activeScaleNow,
-                        lrcLayout.mainLayout.getWidth() / 2f, lrcLayout.mainLayout.getHeight() / 2f);
+                        contentPivotX, lrcLayout.mainLayout.getHeight() / 2f);
             }
             if (isCurrentHighlight && !usesWordSync(entry)) {
                 drawGlowPass(canvas, lrcLayout.mainLayout, normalPaint);
@@ -1085,9 +1087,29 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
     }
     
     /**
+     * Horizontal pivot inside [layout] anchored to the actual rendered text bounds and alignment,
+     * so scaling works identically for single-line and multi-line layouts without drifting off-edge.
+     */
+    private float layoutContentPivotX(StaticLayout layout) {
+        if (layout == null || layout.getLineCount() == 0) {
+            return 0f;
+        }
+        float left = Float.MAX_VALUE;
+        float right = Float.MIN_VALUE;
+        for (int i = 0; i < layout.getLineCount(); i++) {
+            left = Math.min(left, layout.getLineLeft(i));
+            right = Math.max(right, layout.getLineRight(i));
+        }
+        if (left > right) {
+            return layout.getWidth() * alignmentFraction;
+        }
+        return left + (right - left) * alignmentFraction;
+    }
+
+    /**
      * The magnification actually used for the highlighted line. [activeLineScale] is capped so the
-     * enlarged line never grows wider than the space the layout was built for; otherwise a long
-     * line that nearly fills the panel is scaled past its edges (and past the frosted glass).
+     * enlarged line and its highlight box padding never grow wider than the space the layout was
+     * built for; otherwise a long line that nearly fills the panel is scaled past its edges.
      */
     private float effectiveActiveScale(StaticLayout layout) {
         if (activeLineScale <= 1f || layout == null) {
@@ -1100,7 +1122,8 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         if (widest <= 0f) {
             return activeLineScale;
         }
-        return Math.max(1f, Math.min(activeLineScale, layout.getWidth() / widest));
+        float maxAllowedWidth = Math.max(1f, layout.getWidth() - dp2px(getContext(), 16f));
+        return Math.max(1f, Math.min(activeLineScale, maxAllowedWidth / widest));
     }
     
     /**
@@ -1179,7 +1202,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         // The highlighted line is drawn magnified; make the box follow the same transform.
         float boxScale = effectiveActiveScale(layout);
         if (boxScale > 1f) {
-            float cx = layoutX + layout.getWidth() / 2f;
+            float cx = layoutX + layoutContentPivotX(layout);
             float cy = layoutY + layout.getHeight() / 2f;
             actualLeft = cx + (actualLeft - cx) * boxScale;
             actualRight = cx + (actualRight - cx) * boxScale;
@@ -1189,8 +1212,12 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         
         float paddingX = dp2px(getContext(), 8f);
         float paddingY = dp2px(getContext(), 4f);
+        float minBoxX = glassBackgroundEnabled ? dp2px(getContext(), 10f) : dp2px(getContext(), 2f);
+        float maxBoxX = Math.max(minBoxX, getWidth() - minBoxX);
+        float clampedLeft = Math.max(minBoxX, actualLeft - paddingX);
+        float clampedRight = Math.min(maxBoxX, actualRight + paddingX);
         
-        targetBoxBounds.set(actualLeft - paddingX, top - paddingY, actualRight + paddingX, bottom + paddingY);
+        targetBoxBounds.set(clampedLeft, top - paddingY, clampedRight, bottom + paddingY);
         
         initBoxSprings();
         
@@ -1403,7 +1430,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         // The highlighted line is drawn magnified; make the box follow the same transform.
         float boxScale = effectiveActiveScale(layout);
         if (boxScale > 1f) {
-            float cx = layoutX + layout.getWidth() / 2f;
+            float cx = layoutX + layoutContentPivotX(layout);
             float cy = layoutY + layout.getHeight() / 2f;
             actualLeft = cx + (actualLeft - cx) * boxScale;
             actualRight = cx + (actualRight - cx) * boxScale;
@@ -1413,8 +1440,12 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         
         float paddingX = dp2px(getContext(), 3f);
         float paddingY = dp2px(getContext(), 1f);
+        float minBoxX = glassBackgroundEnabled ? dp2px(getContext(), 10f) : dp2px(getContext(), 2f);
+        float maxBoxX = Math.max(minBoxX, getWidth() - minBoxX);
+        float clampedLeft = Math.max(minBoxX, actualLeft - paddingX);
+        float clampedRight = Math.min(maxBoxX, actualRight + paddingX);
         
-        targetBoxBounds.set(actualLeft - paddingX, top - paddingY, actualRight + paddingX, bottom + paddingY);
+        targetBoxBounds.set(clampedLeft, top - paddingY, clampedRight, bottom + paddingY);
         
         initBoxSprings();
         
@@ -2679,9 +2710,11 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
         invalidate();
     }
 
-    /** Extra horizontal text inset so lyrics stay inside the frosted glass panel. */
+    /** Extra horizontal text inset so lyrics and their highlight box stay inside the view and frosted glass panel. */
     private int contentInset() {
-        return glassBackgroundEnabled ? Math.round(dp2px(getContext(), 22f)) : 0;
+        return glassBackgroundEnabled
+                ? Math.round(dp2px(getContext(), 22f))
+                : Math.round(dp2px(getContext(), 12f));
     }
 
     private class DynamicMarginSpan extends android.text.style.ReplacementSpan {
@@ -2735,7 +2768,7 @@ public class FelicityLrcView extends View implements ThemeChangedListener {
                     if (isCurrentLine) {
                         float lineScale = effectiveActiveScale(layoutForThisLine.mainLayout);
                         if (lineScale > 1f) {
-                            float lineCx = layoutX + layoutForThisLine.mainLayout.getWidth() / 2f;
+                            float lineCx = layoutX + layoutContentPivotX(layoutForThisLine.mainLayout);
                             float lineCy = layoutY + layoutForThisLine.mainLayout.getHeight() / 2f;
                             cx = lineCx + (cx - lineCx) * lineScale;
                             cy = lineCy + (cy - lineCy) * lineScale;

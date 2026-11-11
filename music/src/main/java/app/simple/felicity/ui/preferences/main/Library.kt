@@ -47,6 +47,6 @@ class Library : PreferenceFragment() {
             return fragment
         }
 
-        const val TAG = "Appearance"
+        const val TAG = "Library"
     }
 }
