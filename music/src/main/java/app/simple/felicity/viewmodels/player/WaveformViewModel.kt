@@ -137,7 +137,7 @@ class WaveformViewModel @Inject constructor(
         }
     }
 
-    private fun extractRawAmplitudes(audio: Audio): List<Int>? = synchronized(amplitudaLock) {
+    private fun extractRawAmplitudes(audio: Audio): List<Int>? = synchronized<List<Int>?>(amplitudaLock) {
         val amplituda = amplitudaInstance ?: Amplituda(getApplication()).also {
             amplitudaInstance = it
         }
@@ -147,14 +147,14 @@ class WaveformViewModel @Inject constructor(
         // 1. Prefer direct filesystem path when available (most reliable for native FFmpeg probing)
         val directPath = audio.path?.takeIf { it.isNotBlank() && File(it).canRead() }
         if (directPath != null) {
-            val fromPath = runCatching {
+            val fromPath = runCatching<List<Int>?> {
                 amplituda.processAudio(directPath, compress, cache)?.get()?.amplitudesAsList()
             }.getOrNull()
             if (!fromPath.isNullOrEmpty()) return@synchronized fromPath
         }
 
         // 2. Try ContentResolver InputStream
-        val fromStream = runCatching {
+        val fromStream = runCatching<List<Int>?> {
             getApplication<Application>().contentResolver.openInputStream(audio.uri.toUri())?.use { stream ->
                 amplituda.processAudio(stream, compress, cache)?.get()?.amplitudesAsList()
             }
@@ -162,7 +162,7 @@ class WaveformViewModel @Inject constructor(
         if (!fromStream.isNullOrEmpty()) return@synchronized fromStream
 
         // 3. Fallback to ParcelFileDescriptor with null-safe result unwrapping
-        return@synchronized runCatching {
+        return@synchronized runCatching<List<Int>?> {
             getApplication<Application>().contentResolver.openFileDescriptor(audio.uri.toUri(), "r")?.use { pfd ->
                 amplituda.processAudio(pfd, compress, cache)?.get()?.amplitudesAsList()
             }
