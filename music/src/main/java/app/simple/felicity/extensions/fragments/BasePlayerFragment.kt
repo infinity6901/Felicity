@@ -40,6 +40,7 @@ import app.simple.felicity.glide.util.AudioCoverUtils.loadArtCoverWithPayload
 import app.simple.felicity.preferences.AlbumArtPreferences
 import app.simple.felicity.preferences.AudioPreferences
 import app.simple.felicity.preferences.PlayerPreferences
+import app.simple.felicity.preferences.ShufflePreferences
 import app.simple.felicity.preferences.UserInterfacePreferences
 import app.simple.felicity.preferences.VisualizerPreferences
 import app.simple.felicity.repository.constants.MediaConstants

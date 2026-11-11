@@ -76,7 +76,7 @@ abstract class BaseHomeFragment : PanelFragment() {
                     } else {
                         showWarning("Wi-Fi Server started on port $port")
                     }
-                } catch (e: Exception)
+                } catch (e: Exception) {
                     // Starting the server can fail for various reasons (e.g. port in use, missing permissions).
                     // Just show a toast and keep the toggle off if that happens — no need to crash the app.
                     e.printStackTrace()

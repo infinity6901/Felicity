@@ -1075,7 +1075,7 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
             binding.exportM3u.setOnClickListener {
                 dismiss()
                 pendingPlaylistForExport = item
-                val safeName = item.playlist.name.replace(Regex("[\\/:*?"<>|]"), "_").ifBlank { "playlist" }
+                val safeName = item.playlist.name.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "playlist" }
                 exportPlaylistLauncher.launch("$safeName.m3u8")
             }
 
