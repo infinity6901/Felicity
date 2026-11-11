@@ -582,4 +582,15 @@
     <string name="wave">Wave</string>
     <string name="blocks">Blocks</string>
     <string name="spectrum_colors">Spectrum Colors</string>
+    <string name="karaoke_mode">Karaoke Mode (Vocal Removal)</string>
+    <string name="karaoke_mode_summary">Attenuate center-panned vocals in real time using mid-side phase cancellation.</string>
+    <string name="night_mode_dsp">Night Mode (Dynamic Compression)</string>
+    <string name="night_mode_dsp_summary">Gently compress loud peaks and boost quiet passages for comfortable late-night listening.</string>
+    <string name="server_port">Server Port</string>
+    <string name="server_port_summary">Configure the TCP port used by the local Wi-Fi HTTP music server (default: 8080).</string>
+    <string name="server_allow_remote_delete">Allow Remote File Deletion</string>
+    <string name="server_allow_remote_delete_summary">Permit browsers connected to the Wi-Fi server to permanently delete audio files from this device.</string>
+    <string name="export_m3u8">Export M3U8</string>
+    <string name="assign_bluetooth_device">Assign to Bluetooth Device</string>
+    <string name="enter_manually">Enter Manually</string>
 </resources>

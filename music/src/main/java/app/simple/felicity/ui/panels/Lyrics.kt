@@ -123,12 +123,12 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             childFragmentManager.showLyricsMenu().setOnMenuListener(object : LyricsMenu.Companion.LyricsMenuListener {
                 override fun onTimeMinusClicked() {
                     lyricsViewModel.seekBy(-SEEK_JUMP_MS)
-                    // syncOffset is updated inside LyricsManager.seekBy() — no extra line needed
+                    showWarning(String.format(java.util.Locale.getDefault(), "Lyrics offset: %+.1f s", lyricsViewModel.syncOffset / 1000f))
                 }
 
                 override fun onTimePlusClicked() {
                     lyricsViewModel.seekBy(SEEK_JUMP_MS)
-                    // Same as above — the manager keeps track of the accumulated offset
+                    showWarning(String.format(java.util.Locale.getDefault(), "Lyrics offset: %+.1f s", lyricsViewModel.syncOffset / 1000f))
                 }
 
                 override fun onLyricsDelete() {
@@ -199,10 +199,29 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
                 onPhraseSearch = { phrase ->
                     viewLifecycleOwner.lifecycleScope.launch {
                         val hits = lyricsViewModel.searchPhraseAcrossTracks(phrase)
-                        val labels = hits.map { "${it.title} · ${it.artist}\n${it.snippet}" }.toTypedArray()
+                        val labels = hits.map { "${it.title} · ${it.artist} (${it.provider})\n${it.snippet}" }.toTypedArray()
                         androidx.appcompat.app.AlertDialog.Builder(requireContext())
                             .setTitle(if (hits.isEmpty()) "No verified lyric matches" else "Matching songs")
-                            .setItems(labels, null)
+                            .setItems(labels) { _, which ->
+                                val hit = hits.getOrNull(which) ?: return@setItems
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    val matchedSong = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        val all = app.simple.felicity.repository.database.instances.AudioDatabase
+                                            .getInstance(requireContext()).audioDao()?.getAllAudioList().orEmpty()
+                                        all.firstOrNull {
+                                            (it.title ?: it.name).equals(hit.title, ignoreCase = true) &&
+                                                (hit.artist.isBlank() || it.artist.orEmpty().contains(hit.artist, ignoreCase = true))
+                                        } ?: all.firstOrNull {
+                                            (it.title ?: it.name).equals(hit.title, ignoreCase = true)
+                                        }
+                                    }
+                                    if (matchedSong != null) {
+                                        MediaPlaybackManager.playSong(matchedSong)
+                                    } else {
+                                        showWarning("\"${hit.title}\" is not in your local library")
+                                    }
+                                }
+                            }
                             .setPositiveButton("Done", null)
                             .show()
                     }

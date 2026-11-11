@@ -120,7 +120,9 @@ class Setup : MediaFragment() {
      * and read media audio (needed for the folder hierarchy to work on Android 13+).
      */
     private fun areRequiredPermissionsGranted(): Boolean {
-        return isPostNotificationsPermissionGranted() && isSAFAccessGranted() && isReadMediaAudioPermissionGranted()
+        // Notification permission is optional on Android 13+; either SAF folder access
+        // or MediaStore audio permission is sufficient to use the player.
+        return isSAFAccessGranted() || isReadMediaAudioPermissionGranted()
     }
 
     private fun updateStartButtonState() {

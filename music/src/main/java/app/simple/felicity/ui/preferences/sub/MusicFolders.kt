@@ -12,6 +12,7 @@ import app.simple.felicity.adapters.ui.lists.AdapterFolderList
 import app.simple.felicity.databinding.FragmentGenericRecyclerViewBinding
 import app.simple.felicity.extensions.fragments.MediaFragment
 import app.simple.felicity.preferences.SAFPreferences
+import app.simple.felicity.repository.services.AudioDatabaseService
 
 /**
  * The "Music Folders" preference panel.
@@ -45,6 +46,7 @@ class MusicFolders : MediaFragment() {
             )
             SAFPreferences.addTreeUri(uri.toString())
             refreshList()
+            AudioDatabaseService.refreshScan(requireContext())
         }
     }
 
@@ -100,6 +102,7 @@ class MusicFolders : MediaFragment() {
 
         SAFPreferences.removeTreeUri(uriString)
         refreshList()
+        AudioDatabaseService.refreshScan(requireContext())
     }
 
     /**

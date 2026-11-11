@@ -264,7 +264,7 @@ abstract class BasePlayerFragment : MediaFragment() {
         pager.addOnPageChangeListener(object : FelicityPager.OnPageChangeListener {
             override fun onPageSelected(position: Int, fromUser: Boolean) {
                 super.onPageSelected(position, fromUser)
-                if (fromUser) {
+                if (fromUser && MediaPlaybackManager.getCurrentOnlineTrack() == null) {
                     MediaPlaybackManager.updatePosition(position)
                 }
             }
@@ -476,7 +476,7 @@ abstract class BasePlayerFragment : MediaFragment() {
 
     override fun onShuffleClicked() {
         super.onShuffleClicked()
-        shuffleMediaItems(songs = MediaPlaybackManager.getSongs())
+        ShufflePreferences.toggleShuffle()
     }
 
     private fun setVisualizerState() {

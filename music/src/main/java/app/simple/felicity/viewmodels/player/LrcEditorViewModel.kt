@@ -70,6 +70,12 @@ class LrcEditorViewModel @AssistedInject constructor(
         }
     }
 
+    private val initialPositionMs: Long = if (MediaPlaybackManager.getCurrentSong()?.id == audio.id) {
+        MediaPlaybackManager.getSeekPosition().coerceAtLeast(0L)
+    } else {
+        0L
+    }
+
     init {
         // Pause the global service so it does not compete with the local player.
         if (MediaPlaybackManager.isPlaying()) {
@@ -209,6 +215,10 @@ class LrcEditorViewModel @AssistedInject constructor(
         localPlayer = ExoPlayer.Builder(getApplication()).build().also { player ->
             player.setMediaItem(MediaItem.fromUri(audio.uri.toUri()))
             player.prepare()
+            if (initialPositionMs > 0L) {
+                player.seekTo(initialPositionMs)
+                _seekPositionMs.value = initialPositionMs
+            }
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) {

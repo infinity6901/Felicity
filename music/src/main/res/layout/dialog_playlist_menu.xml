@@ -154,20 +154,44 @@
                     android:layout_height="1px"
                     android:layout_marginVertical="@dimen/padding_5" />
 
-                <!-- Share -->
-                <app.simple.felicity.decorations.ripple.DynamicRippleTextView
-                    android:id="@+id/share"
+                <!-- Share & Export M3U8 -->
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:padding="@dimen/padding_10"
-                    android:text="@string/send"
-                    android:textSize="@dimen/text_size_14"
-                    android:drawablePadding="@dimen/padding_10"
-                    app:appFontStyle="bold"
-                    app:drawableStartCompat="@drawable/ic_send_16dp"
-                    app:drawableTintStyle="regular"
-                    app:textColorStyle="primary" />
+                    android:orientation="horizontal">
+
+                    <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+                        android:id="@+id/share"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:layout_marginEnd="@dimen/gap"
+                        android:padding="@dimen/padding_10"
+                        android:text="@string/send"
+                        android:textSize="@dimen/text_size_14"
+                        android:drawablePadding="@dimen/padding_10"
+                        app:appFontStyle="bold"
+                        app:drawableStartCompat="@drawable/ic_send_16dp"
+                        app:drawableTintStyle="regular"
+                        app:textColorStyle="primary" />
+
+                    <app.simple.felicity.decorations.ripple.DynamicRippleTextView
+                        android:id="@+id/export_m3u"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:padding="@dimen/padding_10"
+                        android:text="@string/export_m3u8"
+                        android:textSize="@dimen/text_size_14"
+                        android:drawablePadding="@dimen/padding_10"
+                        app:appFontStyle="bold"
+                        app:drawableStartCompat="@drawable/ic_file_info_16dp"
+                        app:drawableTintStyle="regular"
+                        app:textColorStyle="primary" />
+
+                </LinearLayout>
 
                 <app.simple.felicity.decorations.theme.ThemeDivider
                     android:layout_width="match_parent"

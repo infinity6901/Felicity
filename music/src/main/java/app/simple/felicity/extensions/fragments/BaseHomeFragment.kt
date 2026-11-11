@@ -63,7 +63,20 @@ abstract class BaseHomeFragment : PanelFragment() {
             } else {
                 try {
                     ServerModeService.start(requireContext())
-                } catch (e: Exception) {
+                    val port = app.simple.felicity.preferences.ServerPreferences.getServerPort()
+                    val ip = runCatching {
+                        java.net.NetworkInterface.getNetworkInterfaces()?.toList()
+                            ?.filter { it.name.startsWith("wlan") || it.name.startsWith("eth") }
+                            ?.flatMap { it.inetAddresses.toList() }
+                            ?.firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address }
+                            ?.hostAddress
+                    }.getOrNull()
+                    if (ip != null) {
+                        showWarning("Wi-Fi Server started at http://$ip:$port")
+                    } else {
+                        showWarning("Wi-Fi Server started on port $port")
+                    }
+                } catch (e: Exception)
                     // Starting the server can fail for various reasons (e.g. port in use, missing permissions).
                     // Just show a toast and keep the toggle off if that happens — no need to crash the app.
                     e.printStackTrace()

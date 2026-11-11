@@ -60,10 +60,13 @@ class SleepTimerDialog : ScopedBottomSheetFragment(), SleepTimerManager.Listener
         binding.durationSeekbar.setOnSeekChangeListener(object : FelicitySeekbar.OnSeekChangeListener {
             override fun onProgressChanged(seekbar: FelicitySeekbar, progress: Float, fromUser: Boolean) {
                 if (fromUser) {
-                    SleepTimerPreferences.setLastDurationMinutes(progress.toInt())
-                    if (!SleepTimerManager.isArmed) {
-                        refreshStatus()
+                    val minutes = progress.toInt()
+                        .coerceIn(SleepTimerPreferences.MIN_DURATION_MINUTES, SleepTimerPreferences.MAX_DURATION_MINUTES)
+                    SleepTimerPreferences.setLastDurationMinutes(minutes)
+                    if (SleepTimerManager.currentMode() is SleepTimerManager.Mode.Countdown) {
+                        SleepTimerManager.startCountdown(minutes.minutes.inWholeMilliseconds, binding.fadeOutSwitch.isChecked)
                     }
+                    refreshStatus()
                 }
             }
         })
@@ -136,11 +139,7 @@ class SleepTimerDialog : ScopedBottomSheetFragment(), SleepTimerManager.Listener
     private fun refreshStatus() {
         val armed = SleepTimerManager.isArmed
         binding.stopAtEndOfTrackSwitch.isEnabled = !armed
-        if (!armed) {
-            applyEndOfTrackToggleState(binding.stopAtEndOfTrackSwitch.isChecked)
-        } else {
-            binding.durationSeekbar.isEnabled = false
-        }
+        applyEndOfTrackToggleState(binding.stopAtEndOfTrackSwitch.isChecked)
 
         binding.sleepTimerStatus.text = when (SleepTimerManager.currentMode()) {
             is SleepTimerManager.Mode.EndOfTrack -> getString(R.string.sleep_timer_status_active_end_of_track)

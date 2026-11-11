@@ -220,9 +220,9 @@ class YoutubeSection : PanelFragment() {
 
     private fun showDownloadFormatDialog(onFormatSelected: (String) -> Unit) {
         val formats = arrayOf(
-            "M4A (Untouched Stream - Highest Quality)",
-            "MP3 (Transcoded)",
-            "FLAC (Lossless Container)"
+            "M4A (Original Stream — Best Quality, No Re-encoding)",
+            "MP3 (Transcoded — Best Compatibility)",
+            "FLAC (Re-encoded Lossless Container)"
         )
         val formatKeys = arrayOf("m4a", "mp3", "flac")
 

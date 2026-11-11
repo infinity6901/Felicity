@@ -111,27 +111,41 @@ class PlayingQueue : BasePanelFragment() {
             hideMiniPlayer()
 
             val activeQueueId = MediaPlaybackManager.getActiveQueueId()
-            val labels = mutableListOf<String>().apply {
-                for (i in 0 until PlaybackStateManager.QUEUE_COUNT) {
-                    add(QueueLabelPreferences.getDisplayLabel(i) { n ->
-                        getString(R.string.current_queue, n)
-                    })
-                }
-            }
-
-            SharedScrollViewPopup(
-                    container = requireContainerView(),
-                    anchorView = anchorView,
-                    menuItems = labels.map { label -> PopupMenuItem(title = label) },
-                    onMenuItemClick = { clickedIndex ->
-                        if (clickedIndex != activeQueueId) {
-                            MediaPlaybackManager.switchToQueue(clickedIndex, requireContext())
+            viewLifecycleOwner.lifecycleScope.launch {
+                val counts = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val dao = app.simple.felicity.repository.database.instances.AudioDatabase
+                        .getInstance(requireContext()).savedQueueDao()
+                    IntArray(PlaybackStateManager.QUEUE_COUNT) { slot ->
+                        if (slot == activeQueueId) {
+                            MediaPlaybackManager.getSongs().size
+                        } else {
+                            dao.getQueue(slot).size
                         }
-                    },
-                    onDismiss = {
-                        showMiniPlayer()
-                    },
-            ).show()
+                    }
+                }
+                val labels = mutableListOf<String>().apply {
+                    for (i in 0 until PlaybackStateManager.QUEUE_COUNT) {
+                        val base = QueueLabelPreferences.getDisplayLabel(i) { n ->
+                            getString(R.string.current_queue, n)
+                        }
+                        add("$base (${counts[i]})")
+                    }
+                }
+
+                SharedScrollViewPopup(
+                        container = requireContainerView(),
+                        anchorView = anchorView,
+                        menuItems = labels.map { label -> PopupMenuItem(title = label) },
+                        onMenuItemClick = { clickedIndex ->
+                            if (clickedIndex != activeQueueId) {
+                                MediaPlaybackManager.switchToQueue(clickedIndex, requireContext())
+                            }
+                        },
+                        onDismiss = {
+                            showMiniPlayer()
+                        },
+                ).show()
+            }
         }
 
         headerBinding.renameQueue.setOnClickListener {

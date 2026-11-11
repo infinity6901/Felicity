@@ -103,6 +103,38 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
      * We keep it here so the result callback can reach it after the picker returns.
      */
     private var pendingArtistForImagePick: Artist? = null
+    private var pendingPlaylistForExport: PlaylistWithSongs? = null
+
+    private val exportPlaylistLauncher: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri ->
+            val playlist = pendingPlaylistForExport ?: return@registerForActivityResult
+            pendingPlaylistForExport = null
+            if (uri == null) return@registerForActivityResult
+
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val m3u = buildString {
+                        appendLine("#EXTM3U")
+                        appendLine("#PLAYLIST:${playlist.playlist.name}")
+                        for (song in playlist.songs) {
+                            val durSec = (song.duration / 1000L).coerceAtLeast(-1L)
+                            val artist = song.getProperArtists()
+                            val title = song.getProperTitle()
+                            appendLine("#EXTINF:$durSec,$artist - $title")
+                            appendLine(song.uri)
+                        }
+                    }
+                    requireContext().contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                        out.write(m3u.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) {
+                        showWarning(getString(R.string.done))
+                    }
+                }.onFailure { e ->
+                    Log.w(TAG, "Failed to export playlist to M3U8", e)
+                }
+            }
+        }
 
     /**
      * The photo picker launcher. We register it once here and reuse it whenever
@@ -1038,6 +1070,13 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
             binding.share.setOnClickListener {
                 dismiss()
                 sharePlaylistSongs(item)
+            }
+
+            binding.exportM3u.setOnClickListener {
+                dismiss()
+                pendingPlaylistForExport = item
+                val safeName = item.playlist.name.replace(Regex("[\\/:*?"<>|]"), "_").ifBlank { "playlist" }
+                exportPlaylistLauncher.launch("$safeName.m3u8")
             }
 
             binding.edit.setOnClickListener {

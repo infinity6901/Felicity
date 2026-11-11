@@ -39,8 +39,10 @@ import app.simple.felicity.preferences.BehaviourPreferences
 import app.simple.felicity.preferences.ConfigurationPreferences
 import app.simple.felicity.preferences.CrossfadePreferences
 import app.simple.felicity.preferences.EqualizerPreferences
+import androidx.documentfile.provider.DocumentFile
 import app.simple.felicity.preferences.LibraryPreferences
 import app.simple.felicity.preferences.PlayerPreferences
+import app.simple.felicity.preferences.ServerPreferences
 import app.simple.felicity.preferences.UserInterfacePreferences
 import app.simple.felicity.repository.repositories.SongStatRepository
 import app.simple.felicity.repository.services.AudioDatabaseService
@@ -539,6 +541,21 @@ abstract class PreferenceFragment : MediaFragment() {
         if (!granted) PlayerPreferences.setProximityVolume(false)
     }
 
+    private val excludedFolderPickerLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val docName = DocumentFile.fromTreeUri(requireContext(), uri)?.name
+                ?: uri.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/')
+                ?: uri.toString()
+            if (docName.isNotBlank()) {
+                LibraryPreferences.addExcludedFolder(docName)
+                AudioDatabaseService.refreshScan(requireContext())
+                showWarning(R.string.done)
+            }
+        }
+    }
+
     /** Bluetooth resume and proximity volume, both off until switched on. */
     private fun createPlaybackExtrasPreferences(): List<Preference> {
         return listOf(
@@ -901,9 +918,55 @@ abstract class PreferenceFragment : MediaFragment() {
                 },
         )
 
+        val serverHeader = Preference(type = PreferenceType.SUB_HEADER, title = R.string.server)
+
+        val serverPortPref = Preference(
+                title = R.string.server_port,
+                summary = R.string.server_port_summary,
+                icon = R.drawable.ic_radio,
+                type = PreferenceType.NORMAL,
+                onPreferenceAction = { _, _ ->
+                    val input = EditText(requireContext()).apply {
+                        inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                        setText(ServerPreferences.getServerPort().toString())
+                        hint = "8080 (1024–65535)"
+                    }
+                    MaterialAlertDialogBuilder(requireContext())
+                        .setTitle(R.string.server_port)
+                        .setView(input)
+                        .setPositiveButton(R.string.save) { _, _ ->
+                            val port = input.text.toString().trim().toIntOrNull()
+                            if (port != null && port in 1024..65535) {
+                                ServerPreferences.setServerPort(port)
+                                showWarning(R.string.done)
+                            } else {
+                                showWarning("Port must be between 1024 and 65535")
+                            }
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+        )
+
+        val serverAllowDeleteToggle = Preference(
+                title = R.string.server_allow_remote_delete,
+                summary = R.string.server_allow_remote_delete_summary,
+                icon = R.drawable.ic_delete,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, _ ->
+                    ServerPreferences.setAllowRemoteDelete((view as FelicitySwitch).isChecked)
+                },
+                valueProvider = Supplier {
+                    ServerPreferences.isAllowRemoteDelete()
+                }
+        )
+
         preferences.add(applicationHeader)
         preferences.add(keepScreenOn)
         preferences.add(language)
+        preferences.add(serverHeader)
+        preferences.add(serverPortPref)
+        preferences.add(serverAllowDeleteToggle)
 
         return preferences
     }
@@ -1442,16 +1505,42 @@ abstract class PreferenceFragment : MediaFragment() {
         preferences.add(decoderHeader)
         preferences.add(currentDecoder)
         preferences.add(fallbackToSWToggle)
+        val karaokeModeToggle = Preference(
+                title = R.string.karaoke_mode,
+                summary = R.string.karaoke_mode_summary,
+                icon = R.drawable.ic_lyrics,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, _ ->
+                    EqualizerPreferences.setKaraokeModeEnabled((view as FelicitySwitch).isChecked)
+                },
+                valueProvider = Supplier {
+                    EqualizerPreferences.isKaraokeModeEnabled()
+                }
+        )
+
+        val nightModeToggle = Preference(
+                title = R.string.night_mode_dsp,
+                summary = R.string.night_mode_dsp_summary,
+                icon = R.drawable.ic_volume_up,
+                type = PreferenceType.SWITCH,
+                onPreferenceAction = { view, _ ->
+                    EqualizerPreferences.setNightModeEnabled((view as FelicitySwitch).isChecked)
+                },
+                valueProvider = Supplier {
+                    EqualizerPreferences.isNightModeEnabled()
+                }
+        )
+
         preferences.add(outputHeader)
         preferences.add(sinkPopup)
-        if (BuildConfig.DEBUG) {
-            preferences.add(usbDacControl)
-        }
+        preferences.add(usbDacControl)
         preferences.add(hiresToggle)
         preferences.add(visualizerHeader)
         preferences.add(fftResolutionPopup)
         preferences.add(playbackHeader)
         preferences.add(stereoDownmixing)
+        preferences.add(karaokeModeToggle)
+        preferences.add(nightModeToggle)
         preferences.add(gaplessToggle)
         preferences.add(skipSilenceToggle)
         preferences.add(crossfadeHeader)
@@ -1772,7 +1861,11 @@ abstract class PreferenceFragment : MediaFragment() {
 
     protected fun showExcludedFoldersDialog() {
         val currentFolders = LibraryPreferences.getExcludedFolders().toMutableList()
-        val items: Array<CharSequence> = if (currentFolders.isEmpty()) arrayOf("No excluded folders added yet") else currentFolders.map { it as CharSequence }.toTypedArray()
+        val items: Array<CharSequence> = if (currentFolders.isEmpty()) {
+            arrayOf("No excluded folders added yet")
+        } else {
+            currentFolders.map { "$it  (Tap to remove)" as CharSequence }.toTypedArray()
+        }
 
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(app.simple.felicity.shared.R.string.excluded_folders)
@@ -1780,10 +1873,18 @@ abstract class PreferenceFragment : MediaFragment() {
                 if (currentFolders.isNotEmpty()) {
                     val folderToRemove = currentFolders[which]
                     LibraryPreferences.removeExcludedFolder(folderToRemove)
+                    AudioDatabaseService.refreshScan(requireContext())
                     showWarning(R.string.done)
                 }
             }
-            .setPositiveButton("Add Folder Path") { _, _ ->
+            .setPositiveButton("Pick Folder") { _, _ ->
+                runCatching {
+                    excludedFolderPickerLauncher.launch(null)
+                }.onFailure {
+                    showWarning("Could not open folder picker")
+                }
+            }
+            .setNeutralButton("Type Name/Path") { _, _ ->
                 val input = EditText(requireContext()).apply {
                     hint = "e.g. WhatsApp Audio or /Music/Recordings"
                 }
@@ -1794,6 +1895,7 @@ abstract class PreferenceFragment : MediaFragment() {
                         val path = input.text.toString().trim()
                         if (path.isNotBlank()) {
                             LibraryPreferences.addExcludedFolder(path)
+                            AudioDatabaseService.refreshScan(requireContext())
                             showWarning(R.string.done)
                         }
                     }

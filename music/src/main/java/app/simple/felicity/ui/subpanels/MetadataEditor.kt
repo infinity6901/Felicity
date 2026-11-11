@@ -15,8 +15,10 @@ import app.simple.felicity.R
 import app.simple.felicity.databinding.FragmentMetadataEditorBinding
 import app.simple.felicity.extensions.fragments.MediaFragment
 import app.simple.felicity.glide.util.AudioCoverUtils.loadArtCoverWithPayload
+import androidx.core.net.toUri
 import app.simple.felicity.repository.constants.BundleConstants
 import app.simple.felicity.repository.metadata.MetadataWriter
+import app.simple.felicity.repository.metadata.TagLibBridge
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.models.MetadataSearchResult
 import app.simple.felicity.repository.repositories.LrcRepository
@@ -74,6 +76,11 @@ class MetadataEditor : MediaFragment() {
     /** Temporary file to which the picked artwork is copied before embedding. */
     private var pendingArtworkFile: File? = null
 
+    /** Original embedded comment and lyrics loaded from the audio file, used to avoid erasing untouched tags. */
+    private var initialComment: String? = null
+    private var initialLyrics: String? = null
+    private var extraTagsLoaded: Boolean = false
+
     private val pickArtwork = registerForActivityResult(
             ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -129,16 +136,14 @@ class MetadataEditor : MediaFragment() {
             val plain = bundle.getString(LyricsSearch.KEY_PLAIN_LYRICS)
             val synced = bundle.getString(LyricsSearch.KEY_SYNCED_LYRICS)
 
-            if (!plain.isNullOrBlank()) {
-                // binding.lyricsInput.setText(plain)
-            }
-
             if (!synced.isNullOrBlank()) {
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     lrcRepository.saveLrcToFile(synced, audio.uri)
                 }
 
                 binding.lyricsInput.setText(synced)
+            } else if (!plain.isNullOrBlank()) {
+                binding.lyricsInput.setText(plain)
             }
         }
     }
@@ -204,7 +209,35 @@ class MetadataEditor : MediaFragment() {
         }
 
         binding.albumArt.loadArtCoverWithPayload(audio)
+
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            var loadedComment: String? = null
+            var loadedLyrics: String? = null
+            runCatching {
+                requireContext().contentResolver.openFileDescriptor(audio.uri.toUri(), "r")?.use { pfd ->
+                    loadedComment = TagLibBridge.nativeLoadFromFd(pfd.fd)?.comment?.takeIf { it.isNotBlank() }
+                    loadedLyrics = TagLibBridge.nativeExtractLyricsFromFd(pfd.fd)?.takeIf { it.isNotBlank() }
+                }
+            }
+            if (loadedLyrics.isNullOrBlank()) {
+                loadedLyrics = lrcRepository.loadLrcFromFile(audio.uri).getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: lrcRepository.loadTxtFromFile(audio.uri).getOrNull()?.takeIf { it.isNotBlank() }
+            }
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                initialComment = loadedComment
+                initialLyrics = loadedLyrics
+                extraTagsLoaded = true
+                if (_bindingSafe() && binding.commentInput.text.isNullOrEmpty() && !loadedComment.isNullOrEmpty()) {
+                    binding.commentInput.setText(loadedComment)
+                }
+                if (_bindingSafe() && binding.lyricsInput.text.isNullOrEmpty() && !loadedLyrics.isNullOrEmpty()) {
+                    binding.lyricsInput.setText(loadedLyrics)
+                }
+            }
+        }
     }
+
+    private fun _bindingSafe(): Boolean = this::binding.isInitialized && isAdded && view != null
 
     /**
      * Wires the album art thumbnail and the label overlay to launch the
@@ -301,12 +334,18 @@ class MetadataEditor : MediaFragment() {
                 composer = binding.composerInput.text?.toString()?.trim(),
                 writer = binding.writerInput.text?.toString()?.trim(),
                 compilation = binding.compilationInput.text?.toString()?.trim(),
-                comment = binding.commentInput.text?.toString()?.trim(),
-                lyrics = binding.lyricsInput.text?.toString()?.trim(),
-                replayGainTrackGain = binding.rgTrackGainInput.text?.toString()?.trim(),
-                replayGainTrackPeak = binding.rgTrackPeakInput.text?.toString()?.trim(),
-                replayGainAlbumGain = binding.rgAlbumGainInput.text?.toString()?.trim(),
-                replayGainAlbumPeak = binding.rgAlbumPeakInput.text?.toString()?.trim(),
+                comment = binding.commentInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && (!extraTagsLoaded || initialComment == null)) null else it },
+                lyrics = binding.lyricsInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && (!extraTagsLoaded || initialLyrics == null)) null else it },
+                replayGainTrackGain = binding.rgTrackGainInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && audio.replayGainTrackGain == null) null else it },
+                replayGainTrackPeak = binding.rgTrackPeakInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && audio.replayGainTrackPeak == null) null else it },
+                replayGainAlbumGain = binding.rgAlbumGainInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && audio.replayGainAlbumGain == null) null else it },
+                replayGainAlbumPeak = binding.rgAlbumPeakInput.text?.toString()?.trim().orEmpty()
+                    .let { if (it.isEmpty() && audio.replayGainAlbumPeak == null) null else it },
         )
 
         val updatedAudio = audio.copy().apply {

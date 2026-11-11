@@ -89,7 +89,8 @@ ctxDelete.addEventListener("click", async () => {
             renderContent();
             showToast(`"${song.title || song.name}" deleted`);
         } else {
-            showToast("Could not delete — check app permissions.");
+            const errText = await r.text().catch(() => "");
+            showToast(errText || "Could not delete — check app permissions.");
         }
     } catch (err) {
         showToast("Delete failed: " + err.message);

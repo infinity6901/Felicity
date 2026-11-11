@@ -124,11 +124,35 @@ class MultiProviderLyricsEngine @Inject constructor(
         prefs().edit { putBoolean("word_checked:" + selectionKey(title, artist), true) }
     }
 
-    /** Search LRCLib candidates using a lyric phrase, then verify against returned lyric text. */
+    /** Search local cached lyrics and LRCLib candidates using a lyric phrase, then verify against lyric text. */
     suspend fun searchPhraseAcrossTracks(phrase: String): List<PhraseHit> = withContext(Dispatchers.IO) {
         if (!LyricsPhraseMatcher.isSearchable(phrase)) return@withContext emptyList()
+        val localSongs = runCatching {
+            app.simple.felicity.repository.database.instances.AudioDatabase.getInstance(context)
+                .audioDao()?.getAllAudioList().orEmpty()
+        }.getOrDefault(emptyList())
+
+        val localHits = localSongs.mapNotNull { audio ->
+            val raw = repository.loadLrcFromFile(audio.uri).getOrNull()
+                ?: repository.loadTxtFromFile(audio.uri).getOrNull()
+                ?: return@mapNotNull null
+            if (raw.isBlank()) return@mapNotNull null
+            val lines = raw.lineSequence().map { line ->
+                line.replace(Regex("^\\s*\\[[^]]+]\\s*"), "").trim()
+            }.filter(String::isNotBlank).toList()
+            val match = LyricsPhraseMatcher.match(phrase, lines) ?: return@mapNotNull null
+            if (match.score < LyricsPhraseMatcher.VERIFIED_SCORE) return@mapNotNull null
+            PhraseHit(
+                title = audio.title ?: audio.name,
+                artist = audio.artist.orEmpty(),
+                snippet = lines.getOrNull(match.lineIndex).orEmpty().take(110),
+                score = match.score + 0.05f,
+                provider = "Library"
+            )
+        }
+
         val candidates = repository.searchLyrics(phrase, "").getOrNull().orEmpty()
-        candidates.mapNotNull { candidate ->
+        val remoteHits = candidates.mapNotNull { candidate ->
             val raw = candidate.syncedLyrics.orEmpty().ifBlank { candidate.plainLyrics.orEmpty() }
             if (raw.isBlank()) return@mapNotNull null
             val lines = raw.lineSequence().map { line ->
@@ -138,7 +162,12 @@ class MultiProviderLyricsEngine @Inject constructor(
             if (match.score < LyricsPhraseMatcher.VERIFIED_SCORE) return@mapNotNull null
             PhraseHit(candidate.trackName, candidate.artistName,
                 lines.getOrNull(match.lineIndex).orEmpty().take(110), match.score, "LRCLib")
-        }.sortedByDescending { it.score }.take(12)
+        }
+
+        (localHits + remoteHits)
+            .distinctBy { "${it.title.lowercase()}|${it.artist.lowercase()}" }
+            .sortedByDescending { it.score }
+            .take(12)
     }
 
     private suspend fun searchLrcLib(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {

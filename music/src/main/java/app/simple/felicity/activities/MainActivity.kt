@@ -328,8 +328,8 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
     }
 
     private fun startAudioDatabaseService() {
-        // SAF access (at least one folder granted) is enough to start the scan.
-        if (applicationContext.isSAFAccessGranted()) {
+        // Start scanning when either SAF folder access or MediaStore audio permission is granted.
+        if (applicationContext.isSAFAccessGranted() || isReadMediaAudioPermissionGranted()) {
             AudioDatabaseService.startScan(applicationContext)
         }
     }
@@ -389,7 +389,7 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
     private fun runDatabaseScanner() {
         if (isFirstLaunch.not()) {
             if (LibraryPreferences.isScannerOnResumeEnabled()) {
-                if (applicationContext.isSAFAccessGranted()) {
+                if (applicationContext.isSAFAccessGranted() || isReadMediaAudioPermissionGranted()) {
                     AudioDatabaseService.refreshScan(applicationContext)
                 }
             }
@@ -397,8 +397,7 @@ class MainActivity : BaseActivity(), MiniPlayerCallbacks {
     }
 
     private fun setHomePanel() {
-        val allPermissionsGranted = isSAFAccessGranted() &&
-                isPostNotificationsPermissionGranted() &&
+        val allPermissionsGranted = isSAFAccessGranted() ||
                 isReadMediaAudioPermissionGranted()
 
         when {

@@ -12,9 +12,18 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import app.simple.felicity.R
 import app.simple.felicity.adapters.ui.lists.AdapterEqualizerPresets
 import app.simple.felicity.databinding.FragmentEqualizerPresetsBinding
+import android.Manifest
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.EditText
+import androidx.core.content.ContextCompat
 import app.simple.felicity.decorations.views.PopupMenuItem
 import app.simple.felicity.decorations.views.SharedScrollViewPopup
+import app.simple.felicity.engine.managers.BluetoothProfileManager
 import app.simple.felicity.engine.managers.EqualizerManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import app.simple.felicity.extensions.fragments.MediaFragment
 import app.simple.felicity.preferences.EqualizerPreferences
 import app.simple.felicity.repository.models.EqualizerPreset
@@ -144,22 +153,81 @@ class EqualizerPresets : MediaFragment() {
                 menuItems = if (preset.isBuiltIn) {
                     listOf(
                             PopupMenuItem(title = R.string.apply_preset),
+                            PopupMenuItem(title = R.string.assign_bluetooth_device),
                     )
                 } else {
                     listOf(
                             PopupMenuItem(title = R.string.apply_preset),
+                            PopupMenuItem(title = R.string.assign_bluetooth_device),
                             PopupMenuItem(title = R.string.delete),
                     )
                 },
                 onMenuItemClick = {
                     when (it) {
                         R.string.apply_preset -> applyPreset(preset)
+                        R.string.assign_bluetooth_device -> showAssignBluetoothDeviceDialog(preset)
                         R.string.delete -> confirmAndDelete(preset)
                         else -> return@SharedScrollViewPopup
                     }
                 },
                 onDismiss = {}
         ).show()
+    }
+
+    @Suppress("MissingPermission")
+    private fun showAssignBluetoothDeviceDialog(preset: EqualizerPreset) {
+        val ctx = requireContext()
+        val hasBtPerm = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        val btManager = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val bondedNames = if (hasBtPerm) {
+            runCatching {
+                btManager?.adapter?.bondedDevices
+                    ?.mapNotNull { it.name?.takeIf(String::isNotBlank) ?: it.address }
+                    ?.distinct()
+                    ?.sorted()
+                    .orEmpty()
+            }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+
+        if (bondedNames.isNotEmpty()) {
+            val items = bondedNames.map { it as CharSequence }.toTypedArray()
+            MaterialAlertDialogBuilder(ctx)
+                .setTitle(R.string.assign_bluetooth_device)
+                .setItems(items) { _, which ->
+                    val deviceName = bondedNames[which]
+                    BluetoothProfileManager.saveProfileForDevice(ctx, deviceName, preset.name)
+                    showWarning(R.string.done)
+                }
+                .setNeutralButton(R.string.enter_manually) { _, _ ->
+                    showManualBluetoothDeviceInput(preset)
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        } else {
+            showManualBluetoothDeviceInput(preset)
+        }
+    }
+
+    private fun showManualBluetoothDeviceInput(preset: EqualizerPreset) {
+        val ctx = requireContext()
+        val input = EditText(ctx).apply {
+            hint = "Bluetooth device name or MAC address"
+        }
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.assign_bluetooth_device)
+            .setView(input)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    BluetoothProfileManager.saveProfileForDevice(ctx, name, preset.name)
+                    showWarning(R.string.done)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     /**
