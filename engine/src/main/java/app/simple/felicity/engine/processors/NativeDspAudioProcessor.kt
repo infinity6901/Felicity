@@ -270,9 +270,13 @@ class NativeDspAudioProcessor(
          *     leave the DSP in an un-initialized state until the user adjusted a control.
          */
         pushAllParameters()
+        pushedInConfigure = true
 
         return inputAudioFormat
     }
+
+    @Volatile
+    private var pushedInConfigure: Boolean = false
 
     override fun isActive(): Boolean = active
 
@@ -426,9 +430,14 @@ class NativeDspAudioProcessor(
                 )
                 if (retryDsp.isReady) {
                     dspProcessor = retryDsp
+                    pushedInConfigure = false
                 }
             }
-            pushAllParameters()
+            if (pushedInConfigure) {
+                pushedInConfigure = false
+            } else {
+                pushAllParameters()
+            }
         }
     }
 

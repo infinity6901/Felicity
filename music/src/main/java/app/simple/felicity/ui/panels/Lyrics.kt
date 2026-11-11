@@ -358,7 +358,7 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
         val dialogBinding = app.simple.felicity.databinding.DialogLyricsVersionsBinding.inflate(LayoutInflater.from(ctx))
         val song = MediaPlaybackManager.getCurrentSong()
         val online = MediaPlaybackManager.getCurrentOnlineTrack()
-        val initialQuery = online?.title ?: song?.title ?: song?.name.orEmpty()
+        val initialQuery = online?.title ?: song?.getProperTitle().orEmpty()
 
         val adapter = VersionsAdapter { index ->
             lyricsViewModel.selectLyricsVersion(index)
@@ -426,11 +426,11 @@ class Lyrics : MediaFragment(), AddLyrics.Companion.OnLyricsCreatedListener {
             holder.b.trackName.text = c.title.ifBlank { c.provider }
             holder.b.artistName.text = c.artist
             holder.b.artistName.visibility = if (c.artist.isBlank()) View.GONE else View.VISIBLE
-            holder.b.kindBadge.text = getString(when {
-                c.wordSynced -> R.string.lyrics_word_by_word
-                c.synced -> R.string.lyrics_line_by_line
-                else -> R.string.lyrics_plain_text
-            })
+            holder.b.kindBadge.text = when {
+                c.wordSynced -> "★ " + getString(R.string.lyrics_word_by_word)
+                c.synced -> getString(R.string.lyrics_line_by_line)
+                else -> getString(R.string.lyrics_plain_text)
+            }
             holder.b.details.text = buildList {
                 add(c.provider)
                 // Spelled out in the details too, starred for word-by-word, so it reads at a glance.

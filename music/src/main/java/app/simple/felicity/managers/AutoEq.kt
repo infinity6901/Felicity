@@ -8,6 +8,7 @@ package app.simple.felicity.managers
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import app.simple.felicity.repository.factories.TaggedSocketFactory
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -78,6 +79,7 @@ object AutoEq {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            .socketFactory(TaggedSocketFactory(0x41554551))
             .build()
     }
 

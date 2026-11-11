@@ -67,8 +67,11 @@ class DspProcessor(
      * @param sampleRate   New sample rate in Hz.
      * @param channelCount New number of interleaved audio channels (1 or 2).
      */
+    private var lastAppliedLatencyMs: Int = -1
+
     fun configure(sampleRate: Int, channelCount: Int) {
         if (nativeHandle == 0L) return
+        lastAppliedLatencyMs = -1
         nativeDspConfigure(nativeHandle, sampleRate, channelCount)
     }
 
@@ -197,7 +200,10 @@ class DspProcessor(
      */
     fun setOutputLatency(latencyMs: Int) {
         if (nativeHandle == 0L) return
-        nativeDspSetOutputLatency(nativeHandle, latencyMs.coerceAtLeast(0))
+        val clamped = latencyMs.coerceAtLeast(0)
+        if (clamped == lastAppliedLatencyMs) return
+        lastAppliedLatencyMs = clamped
+        nativeDspSetOutputLatency(nativeHandle, clamped)
     }
 
     /**

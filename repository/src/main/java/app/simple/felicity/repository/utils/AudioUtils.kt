@@ -31,8 +31,8 @@ object AudioUtils {
 
     fun Audio.getProperTitle(): String {
         return title.ifNullOrBlank(
-                path?.substringAfterLast('/')
-                    .ifNullOrBlank(name?.substringAfterLast('/') ?: "")
+                path?.substringAfterLast('/')?.substringBeforeLast('.')
+                    .ifNullOrBlank(name?.substringAfterLast('/')?.substringBeforeLast('.') ?: "")
                     .ifNullOrBlank("Unknown"))
     }
 

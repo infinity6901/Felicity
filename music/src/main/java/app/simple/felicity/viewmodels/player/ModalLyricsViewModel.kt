@@ -17,6 +17,8 @@ import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.extensions.viewmodels.WrappedViewModel
 import app.simple.felicity.managers.LyricsLoadingStatus
 import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.utils.AudioUtils.getProperArtists
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import app.simple.felicity.repository.repositories.LrcRepository
 import app.simple.felicity.viewmodels.player.ModalLyricsViewModel.Companion.SYNC_SAVE_DEBOUNCE_MS
 import dagger.assisted.Assisted
@@ -168,7 +170,7 @@ class ModalLyricsViewModel @AssistedInject constructor(
 
                 loadResult.onSuccess { lrcContent ->
                     if (lrcContent != null) {
-                        Log.d(TAG, "Existing LRC file found for ${currentSong.title}, loading lyrics.")
+                        Log.d(TAG, "Existing LRC file found for ${currentSong.getProperTitle()}, loading lyrics.")
                         try {
                             val lrcDataLoaded = selectParser(lrcContent).parse(lrcContent)
                             lrcData.postValue(lrcDataLoaded)
@@ -177,11 +179,11 @@ class ModalLyricsViewModel @AssistedInject constructor(
                             lrcData.postValue(LrcData())
                         }
                     } else {
-                        Log.d(TAG, "No existing LRC file found for ${currentSong.title}, checking for TXT sidecar.")
+                        Log.d(TAG, "No existing LRC file found for ${currentSong.getProperTitle()}, checking for TXT sidecar.")
                         val txtResult = lrcRepository.loadTxtFromFile(currentSong.uri)
                         val txtContent = txtResult.getOrNull()
                         if (!txtContent.isNullOrBlank()) {
-                            Log.d(TAG, "TXT sidecar found for ${currentSong.title}, loading plain-text lyrics.")
+                            Log.d(TAG, "TXT sidecar found for ${currentSong.getProperTitle()}, loading plain-text lyrics.")
                             try {
                                 val txtLrcData = TxtParser().parse(txtContent)
                                 lrcData.postValue(txtLrcData)
@@ -193,7 +195,7 @@ class ModalLyricsViewModel @AssistedInject constructor(
                             val embedded = app.simple.felicity.repository.metadata.LyricsMetaHelper
                                 .extractEmbeddedLyrics(getApplication(), currentSong.uri)
                             if (!embedded.isNullOrBlank()) {
-                                Log.d(TAG, "Embedded lyrics found for ${currentSong.title}.")
+                                Log.d(TAG, "Embedded lyrics found for ${currentSong.getProperTitle()}.")
                                 try {
                                     lrcData.postValue(selectParser(embedded).parse(embedded))
                                 } catch (e: LyricsParseException) {
@@ -201,10 +203,10 @@ class ModalLyricsViewModel @AssistedInject constructor(
                                     lrcData.postValue(LrcData())
                                 }
                             } else if (app.simple.felicity.preferences.LyricsPreferences.isAutoDownloadLyrics()) {
-                                Log.d(TAG, "No local lyrics for ${currentSong.title}, fetching automatically.")
+                                Log.d(TAG, "No local lyrics for ${currentSong.getProperTitle()}, fetching automatically.")
                                 fetchAndSaveLrc(
-                                        trackName = currentSong.title ?: currentSong.name,
-                                        artistName = currentSong.artist ?: "",
+                                        trackName = currentSong.getProperTitle(),
+                                        artistName = currentSong.getProperArtists().takeUnless { it == "Unknown" } ?: "",
                                         audioPath = currentSong.uri
                                 )
                             } else {

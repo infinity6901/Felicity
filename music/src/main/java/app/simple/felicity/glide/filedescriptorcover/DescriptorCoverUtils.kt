@@ -6,6 +6,7 @@ import app.simple.felicity.R
 import app.simple.felicity.glide.transformation.BlurShadow
 import app.simple.felicity.glide.transformation.Padding
 import app.simple.felicity.glide.transformation.RoundedCorners
+import app.simple.felicity.glide.util.AudioCoverUtils.intoSafeBitmapTarget
 import app.simple.felicity.preferences.AppearancePreferences
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.Transformation
@@ -57,6 +58,6 @@ object DescriptorCoverUtils {
                 .diskCacheStrategy(DiskCacheStrategy.NONE)
         }
 
-        glideRequest.into(this)
+        glideRequest.intoSafeBitmapTarget(this)
     }
 }

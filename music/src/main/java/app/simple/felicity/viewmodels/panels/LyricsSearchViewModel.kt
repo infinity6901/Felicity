@@ -159,29 +159,33 @@ class LyricsSearchViewModel @Inject constructor(
             Log.d(TAG, "Searching for lyrics: trackName='$trackName', artistName='$artistName'")
 
             // Query every source in parallel: LrcLib's own search plus the multi-provider engine
-            // (LRCLIB candidates, LyricsPlus mirrors, cached results). Results are merged and
-            // de-duplicated so the same lyrics from two sources show only once.
+            // (LRCLIB candidates, LyricsPlus mirrors, Better Lyrics, cached results). Results are
+            // merged, de-duplicated, and sorted with word-by-word timed lyrics prioritized first.
             val merged = kotlinx.coroutines.supervisorScope {
                 val lrcLib = async { runCatching { lrcRepository.searchLyrics(trackName, artistName).getOrThrow() }.getOrDefault(emptyList()) }
                 val engine = async {
                     runCatching {
                         multiProviderEngine.search(trackName, artistName).map { c ->
+                            val saveableSynced = if (c.synced) c.toSaveableLrc() else null
                             LrcLibResponse(
-                                    id = c.rawLyrics.hashCode(),
+                                    id = (saveableSynced ?: c.plainLyrics).hashCode(),
                                     trackName = c.title.ifBlank { trackName },
                                     artistName = c.artist.ifBlank { artistName },
                                     albumName = c.provider,
-                                    duration = 0.0,
+                                    duration = c.durationSec.toDouble(),
                                     plainLyrics = c.plainLyrics.ifBlank { if (c.synced) null else c.rawLyrics },
-                                    syncedLyrics = if (c.synced) c.rawLyrics else null,
+                                    syncedLyrics = saveableSynced,
                                     isInstrumental = false)
                         }
                     }.getOrDefault(emptyList())
                 }
-                (lrcLib.await() + engine.await())
+                (engine.await() + lrcLib.await())
                     .filter { !it.syncedLyrics.isNullOrBlank() || !it.plainLyrics.isNullOrBlank() }
                     .distinctBy { (it.syncedLyrics ?: it.plainLyrics).orEmpty().trim().hashCode() }
-                    .sortedByDescending { !it.syncedLyrics.isNullOrBlank() }
+                    .sortedWith(
+                        compareByDescending<LrcLibResponse> { it.isWordSynced }
+                            .thenByDescending { !it.syncedLyrics.isNullOrBlank() }
+                    )
             }
 
             _searchResults.postValue(merged)
@@ -270,4 +274,3 @@ class LyricsSearchViewModel @Inject constructor(
         private const val KEY_LAST_TRACK_PATH = "lyrics_search_last_track_path"
     }
 }
-

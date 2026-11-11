@@ -102,7 +102,7 @@ object LogRecorder {
     }
 
     /** Last [maxBytes] of the current log file, for the on-screen viewer. */
-    fun tail(context: Context, maxBytes: Int = 200_000): String {
+    fun tail(context: Context, maxBytes: Int = 16_384): String {
         flush()
         val file = logFile(context)
         if (!file.exists()) return ""

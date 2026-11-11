@@ -95,6 +95,8 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
 
     private var shouldShowMiniPlayer = true
     private var lastSavedSeekPosition = 0L
+    private var lastObservedSongId: Long = -1L
+    private var lastObservedPosition: Int = -1
 
     private var shuffleButton: HighlightTextView? = null
 
@@ -219,12 +221,18 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 MediaPlaybackManager.songPositionFlow.collect { position ->
                     Log.d(TAG, "Song position: $position")
-                    MediaPlaybackManager.getCurrentSong()?.let { song ->
-                        onAudio(song)
+                    val currentSong = MediaPlaybackManager.getCurrentSong()
+                    val songChanged = currentSong != null && currentSong.id != lastObservedSongId
+                    val positionChanged = position != lastObservedPosition
+                    lastObservedPosition = position
+                    if (currentSong != null) {
+                        lastObservedSongId = currentSong.id
+                        onAudio(currentSong)
                     }
                     onPositionChanged(position)
-                    // Save state when song position changes
-                    saveCurrentPlaybackState()
+                    if (songChanged || positionChanged) {
+                        saveCurrentPlaybackState()
+                    }
                 }
             }
         }
@@ -233,7 +241,6 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
             MediaPlaybackManager.songListFlow.collect { songs ->
                 Log.d(TAG, "Song list updated: ${songs.size} songs")
                 onSongListChanged(songs)
-                saveCurrentPlaybackState()
             }
         }
 
@@ -442,7 +449,7 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
      * position 0. The shuffled queue replaces the current queue entirely.
      */
     protected fun shuffleMediaItems(songs: List<Audio>) {
-        val shuffled = smartShuffle(songs, { it.artist ?: "" }).toMutableList()
+        val shuffled = smartShuffle(songs, { it.getProperArtists() }).toMutableList()
         MediaPlaybackManager.setSongs(shuffled, 0, autoPlay = true)
         createSongHistoryDatabase(shuffled)
     }
@@ -604,7 +611,7 @@ open class MediaFragment : KeyboardScopedFragment(), MiniPlayerPolicy {
     }
 
     open fun onAudio(audio: Audio) {
-        Log.d(TAG, "New song played: ${audio.title} by ${audio.artist}")
+        Log.d(TAG, "New song played: ${audio.getProperTitle()} by ${audio.getProperArtists()}")
     }
 
     open fun onPositionChanged(position: Int) {

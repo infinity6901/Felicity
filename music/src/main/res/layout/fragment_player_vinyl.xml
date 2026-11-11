@@ -88,13 +88,81 @@
             android:layout_gravity="bottom"
             android:layout_height="wrap_content" />
 
+    </app.simple.felicity.decorations.glass.GlassHostLayout>
+
+    <app.simple.felicity.decorations.theme.ThemeDivider
+        android:layout_width="match_parent"
+        android:layout_height="1px" />
+
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:clipChildren="false"
+        android:layout_marginHorizontal="@dimen/padding_15"
+        android:orientation="horizontal">
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:paddingVertical="@dimen/padding_5"
+            android:drawableStart="@drawable/ic_queue_16dp"
+            android:drawablePadding="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            app:appFontStyle="bold"
+            app:drawableTintStyle="accent"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/shuffle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="@dimen/padding_5"
+            android:paddingVertical="@dimen/padding_5"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:text="@string/shuffle"
+            app:appFontStyle="bold"
+            app:highlightMode="auto"
+            app:textColorStyle="primary" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:minWidth="@dimen/padding_5"
+            android:layout_height="match_parent" />
+
+        <app.simple.felicity.decorations.highlight.HighlightTextView
+            android:id="@+id/pcm_info"
+            android:layout_width="wrap_content"
+            android:textSize="@dimen/text_size_12"
+            android:maxWidth="100dp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:minWidth="100dp"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:layout_gravity="center_vertical"
+            android:paddingHorizontal="@dimen/padding_10"
+            android:paddingVertical="@dimen/padding_1"
+            android:layout_marginVertical="@dimen/padding_10"
+            android:layout_height="wrap_content"
+            app:appFontStyle="bold"
+            app:highlightMode="outline"
+            app:textColorStyle="primary" />
+
+    </LinearLayout>
 
     <app.simple.felicity.decorations.glass.GlassPanelLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
         android:layout_marginHorizontal="@dimen/padding_15"
-        android:layout_marginBottom="56dp"
+        android:layout_marginBottom="@dimen/padding_10"
         android:paddingHorizontal="@dimen/padding_10"
         android:orientation="horizontal">
 
@@ -154,86 +222,6 @@
             app:buttonTintType="regular" />
 
     </app.simple.felicity.decorations.glass.GlassPanelLayout>
-
-    </app.simple.felicity.decorations.glass.GlassHostLayout>
-
-    <app.simple.felicity.decorations.theme.ThemeDivider
-        android:layout_width="match_parent"
-        android:layout_height="1px" />
-
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:clipChildren="false"
-        android:layout_marginHorizontal="@dimen/padding_15"
-        android:orientation="horizontal">
-
-        <app.simple.felicity.decorations.highlight.HighlightTextView
-            android:id="@+id/count"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
-            android:paddingVertical="@dimen/padding_5"
-            android:paddingHorizontal="@dimen/padding_10"
-            app:appFontStyle="bold"
-            app:highlightMode="auto"
-            app:textColorStyle="primary" />
-
-        <app.simple.felicity.decorations.highlight.HighlightTextView
-            android:id="@+id/lyrics"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
-            android:layout_marginStart="@dimen/padding_5"
-            android:paddingVertical="@dimen/padding_5"
-            android:paddingHorizontal="@dimen/padding_10"
-            android:text="@string/lyrics"
-            app:appFontStyle="bold"
-            app:highlightMode="auto"
-            app:textColorStyle="primary" />
-
-        <app.simple.felicity.decorations.highlight.HighlightTextView
-            android:id="@+id/shuffle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
-            android:layout_marginStart="@dimen/padding_5"
-            android:paddingVertical="@dimen/padding_5"
-            android:paddingHorizontal="@dimen/padding_10"
-            android:text="@string/shuffle"
-            app:appFontStyle="bold"
-            app:highlightMode="auto"
-            app:textColorStyle="primary" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:minWidth="@dimen/padding_5"
-            android:layout_height="match_parent" />
-
-        <app.simple.felicity.decorations.highlight.HighlightTextView
-            android:id="@+id/pcm_info"
-            android:layout_width="wrap_content"
-            android:textSize="@dimen/text_size_12"
-            android:maxWidth="100dp"
-            android:gravity="center"
-            android:maxLines="1"
-            android:singleLine="true"
-            android:minWidth="100dp"
-            android:ellipsize="marquee"
-            android:marqueeRepeatLimit="marquee_forever"
-            android:layout_gravity="center_vertical"
-            android:paddingHorizontal="@dimen/padding_10"
-            android:paddingVertical="@dimen/padding_1"
-            android:layout_marginVertical="@dimen/padding_10"
-            android:layout_height="wrap_content"
-            app:appFontStyle="bold"
-            app:highlightMode="outline"
-            app:textColorStyle="primary" />
-
-    </LinearLayout>
 
     <app.simple.felicity.decorations.typeface.TypeFaceTextView
         android:id="@+id/title"
@@ -334,6 +322,15 @@
                 android:layout_weight="3"
                 android:clipChildren="false"
                 android:clipToPadding="false" />
+
+            <app.simple.felicity.decorations.ripple.DynamicRippleImageButton
+                android:id="@+id/lyrics"
+                android:layout_width="@dimen/button_size"
+                android:layout_height="@dimen/button_size"
+                android:layout_gravity="center_vertical"
+                android:layout_marginEnd="@dimen/padding_1"
+                android:src="@drawable/ic_lyrics"
+                app:buttonTintType="regular" />
 
         </LinearLayout>
 

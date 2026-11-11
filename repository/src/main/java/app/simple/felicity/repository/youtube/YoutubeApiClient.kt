@@ -4,6 +4,7 @@ import app.simple.felicity.repository.youtube.YoutubeAuthHelper.applyYoutubeHead
 import app.simple.felicity.repository.youtube.YoutubeAuthHelper.buildContextBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
+import app.simple.felicity.repository.factories.TaggedSocketFactory
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -16,6 +17,7 @@ object YoutubeApiClient {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
+            .socketFactory(TaggedSocketFactory(0x59544150))
             .build()
     }
 

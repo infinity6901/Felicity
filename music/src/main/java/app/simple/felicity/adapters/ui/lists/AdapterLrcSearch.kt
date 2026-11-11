@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.AsyncListDiffer
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListUpdateCallback
 import androidx.recyclerview.widget.RecyclerView
+import app.simple.felicity.R
 import app.simple.felicity.databinding.AdapterLrcSearchBinding
 import app.simple.felicity.decorations.overscroll.VerticalListViewHolder
 import app.simple.felicity.repository.models.LrcLibResponse
@@ -102,20 +103,33 @@ class AdapterLrcSearch(
          * @param response the LRC search result to display.
          */
         fun bind(response: LrcLibResponse) {
+            val ctx = binding.root.context
             binding.trackName.text = response.trackName
             binding.artistName.text = response.artistName
 
+            val isWordSynced = response.isWordSynced
+            val isLineSynced = !response.syncedLyrics.isNullOrBlank()
             val album = response.albumName?.takeIf { it.isNotBlank() }
-            val duration = DateUtils.formatElapsedTime(response.duration.toLong())
+            val duration = if (response.duration > 0) DateUtils.formatElapsedTime(response.duration.toLong()) else null
+            val wordLabel = if (isWordSynced) "★ " + ctx.getString(R.string.lyrics_word_by_word) else null
 
-            binding.albumDuration.text = when {
-                album != null -> "$album · $duration"
-                else -> duration
+            binding.albumDuration.text = listOfNotNull(album, wordLabel, duration)
+                .ifEmpty { listOf(DateUtils.formatElapsedTime(0L)) }
+                .joinToString(" · ")
+
+            when {
+                isWordSynced -> {
+                    binding.syncedBadge.text = "★ " + ctx.getString(R.string.lyrics_word_by_word)
+                    binding.syncedBadge.visibility = View.VISIBLE
+                }
+                isLineSynced -> {
+                    binding.syncedBadge.text = ctx.getString(R.string.synced)
+                    binding.syncedBadge.visibility = View.VISIBLE
+                }
+                else -> {
+                    binding.syncedBadge.visibility = View.GONE
+                }
             }
-
-            // Show the badge whenever this result carries LRC timestamps.
-            binding.syncedBadge.visibility =
-                if (!response.syncedLyrics.isNullOrBlank()) View.VISIBLE else View.GONE
 
             binding.container.setOnClickListener {
                 onItemClick(response)
@@ -123,4 +137,3 @@ class AdapterLrcSearch(
         }
     }
 }
-

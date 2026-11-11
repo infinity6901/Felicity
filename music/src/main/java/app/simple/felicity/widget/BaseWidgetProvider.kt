@@ -14,9 +14,13 @@ import app.simple.felicity.preferences.AlbumArtPreferences
 import app.simple.felicity.repository.database.instances.AudioDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The shared brain behind every Felicity home screen widget.
@@ -125,7 +129,8 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
             AppWidgetManager.ACTION_APPWIDGET_UPDATE -> {
                 val ids = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS)
                     ?: manager.getAppWidgetIds(ComponentName(context, this::class.java))
-                ids.forEach { id -> pushUpdate(context, manager, id) }
+                if (ids.isEmpty()) return
+                ids.forEach { id -> scheduleWidgetUpdate(context, manager, id) }
             }
 
             ACTION_WIDGET_UPDATE -> {
@@ -138,7 +143,8 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
                         songId = intent.getLongExtra(EXTRA_SONG_ID, -1L)
                 )
                 val ids = manager.getAppWidgetIds(ComponentName(context, this::class.java))
-                ids.forEach { id -> pushUpdate(context, manager, id) }
+                if (ids.isEmpty()) return
+                ids.forEach { id -> scheduleWidgetUpdate(context, manager, id) }
             }
 
             else -> {
@@ -147,6 +153,17 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
                 withContext(Dispatchers.Main) { super.onReceive(context, intent) }
             }
         }
+    }
+
+    private suspend fun scheduleWidgetUpdate(context: Context, manager: AppWidgetManager, widgetId: Int) {
+        activeWidgetJobs.remove(widgetId)?.cancel()
+        val job = coroutineScope {
+            launch {
+                pushUpdate(context, manager, widgetId)
+            }
+        }
+        activeWidgetJobs[widgetId] = job
+        job.join()
     }
 
     // -------------------------------------------------------------------------
@@ -186,16 +203,14 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
         )
         applyStaticViews(viewScope)
 
-        // push immediately so the widget doesn't stay blank while art loads.
-        manager.updateAppWidget(widgetId, views)
-
-        // load bitmaps — this can take a moment, so we push a second update
-        // once they arrive. Both are loaded concurrently to keep things snappy.
-        val bgBitmap = loadBackgroundArt(context, manager, widgetId, songId)
+        // Load background and foreground art concurrently and push a single consolidated
+        // RemoteViews update to avoid flooding AppWidgetManager with 3 IPC calls per broadcast.
+        val (bgBitmap, artBitmap) = coroutineScope {
+            val bgDeferred = async { loadBackgroundArt(context, manager, widgetId, songId) }
+            val artDeferred = async { loadAlbumArt(context, songId) }
+            bgDeferred.await() to artDeferred.await()
+        }
         applyBackgroundArt(views, bgBitmap)
-        manager.updateAppWidget(widgetId, views)
-
-        val artBitmap = loadAlbumArt(context, songId)
         applyAlbumArt(views, artBitmap)
         if (accentColor != 0) applyAccent(views, accentColor)
         manager.updateAppWidget(widgetId, views)
@@ -356,6 +371,8 @@ abstract class BaseWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        private val activeWidgetJobs = ConcurrentHashMap<Int, Job>()
+
         /** Sent by FelicityPlayerService whenever the song or playback state changes. */
         const val ACTION_WIDGET_UPDATE = "app.simple.felicity.ACTION_WIDGET_UPDATE"
 

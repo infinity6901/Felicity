@@ -8,6 +8,7 @@ import app.simple.felicity.preferences.LibraryPreferences
 import app.simple.felicity.repository.covers.MediaStoreCover.loadCoverFromMediaStore
 import app.simple.felicity.repository.covers.MediaStoreCover.uriToBitmap
 import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import java.io.File
 
 /**
@@ -51,7 +52,7 @@ object AudioCover {
             // look for any of our known artwork filenames there.
             val externalArtwork = BaseCoverLoader.loadExternalArtworkSAF(context, audioPath.toUri(), customNames)
             if (externalArtwork != null) {
-                Log.d("AudioCover", "Found SAF external artwork for ${audio.title}")
+                Log.d("AudioCover", "Found SAF external artwork for ${audio.getProperTitle()}")
                 return externalArtwork
             }
         } else {
@@ -60,10 +61,10 @@ object AudioCover {
             if (directory != null && directory.exists()) {
                 val externalArtwork = BaseCoverLoader.loadExternalArtwork(directory, customNames)
                 if (externalArtwork != null) {
-                    Log.d("AudioCover", "Found external artwork for ${audio.title} at ${directory.path}")
+                    Log.d("AudioCover", "Found external artwork for ${audio.getProperTitle()} at ${directory.path}")
                     return externalArtwork
                 } else {
-                    Log.d("AudioCover", "No external artwork found for ${audio.title} in ${directory.path}")
+                    Log.d("AudioCover", "No external artwork found for ${audio.getProperTitle()} in ${directory.path}")
                 }
             }
         }
@@ -71,7 +72,7 @@ object AudioCover {
         // Last resort: crack open the audio file and read the embedded image tag.
         // The junction inside BaseCoverLoader handles the extractor order.
         val embeddedArtwork = BaseCoverLoader.loadEmbeddedArtwork(context, audioPath.toUri())
-        Log.d("AudioCover", "Embedded artwork ${if (embeddedArtwork != null) "found" else "not found"} for ${audio.title}")
+        Log.d("AudioCover", "Embedded artwork ${if (embeddedArtwork != null) "found" else "not found"} for ${audio.getProperTitle()}")
         if (embeddedArtwork != null) return embeddedArtwork
 
         return BaseCoverLoader.loadEmptyAudioCover()

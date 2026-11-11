@@ -536,7 +536,7 @@ object MediaPlaybackManager {
                 if (shuffleOn && isRestore.not()) {
                     // Smart shuffle keeps artists spread out and anchors the tapped song first.
                     val startSong = audios.getOrNull(position)
-                    val shuffled = smartShuffle(audios, { it.artist ?: "" }, startSong)
+                    val shuffled = smartShuffle(audios, { it.getProperArtists() }, startSong)
                     activeQueue = shuffled
                     newShuffledQueue = shuffled
                 } else {
@@ -1250,7 +1250,7 @@ object MediaPlaybackManager {
 
             val result = withContext(Dispatchers.Default) {
                 if (enabled) {
-                    val shuffled = smartShuffle(originalQueue, { it.artist ?: "" }, currentSong)
+                    val shuffled = smartShuffle(originalQueue, { it.getProperArtists() }, currentSong)
                     QueueResult(active = shuffled, shuffled = shuffled)
                 } else {
                     QueueResult(active = originalQueue, shuffled = emptyList())
@@ -1279,35 +1279,56 @@ object MediaPlaybackManager {
             currentSongPosition = newPosition
             suppressPositionEmit = false
 
-            isQueueBeingReplaced = true
-            pendingSeekPositions.clear()
-            pendingSeekPositions.add(newPosition)
-
-            /**
-             * replaceMediaItems is the key here — it swaps out every item in the ExoPlayer
-             * queue without triggering a full pipeline reset, so the currently playing song
-             * keeps streaming without any audible gap, decoder stall, or UI flicker.
-             * We then seek to wherever the current song landed in the new order and restore
-             * the exact playback position the user was at before toggling shuffle.
-             */
             val controller = mediaController
             if (controller != null) {
                 val oldCount = controller.mediaItemCount
-                if (oldCount > 0) {
-                    controller.replaceMediaItems(0, oldCount, mediaItems)
+                val activeControllerIndex = controller.currentMediaItemIndex
+                val canReorderSurgically = oldCount > 0
+                        && currentSong != null
+                        && activeControllerIndex in 0 until oldCount
+                        && controller.getMediaItemAt(activeControllerIndex).mediaId == currentSong.id.toString()
+
+                if (canReorderSurgically) {
+                    // Keep the active MediaItem untouched so ExoPlayer never tears down
+                    // AudioTrack/MediaCodec or fires a playlist-change item transition.
+                    if (activeControllerIndex + 1 < oldCount) {
+                        controller.removeMediaItems(activeControllerIndex + 1, oldCount)
+                    }
+                    if (activeControllerIndex > 0) {
+                        controller.removeMediaItems(0, activeControllerIndex)
+                    }
+                    if (newPosition > 0) {
+                        controller.addMediaItems(0, mediaItems.subList(0, newPosition))
+                    }
+                    if (newPosition + 1 < mediaItems.size) {
+                        controller.addMediaItems(newPosition + 1, mediaItems.subList(newPosition + 1, mediaItems.size))
+                    }
                     Log.d(
                             TAG,
-                            "replaceMediaItems called for shuffle ${if (enabled) "enable" else "disable"}: oldCount=$oldCount, newCount=${mediaItems.size}"
+                            "Surgical queue swap for shuffle ${if (enabled) "enable" else "disable"}: " +
+                                    "oldIndex=$activeControllerIndex -> newPosition=$newPosition, count=${mediaItems.size}"
                     )
                 } else {
-                    controller.setMediaItems(mediaItems, newPosition, seekPosition)
-                    controller.prepare()
-                    Log.d(
-                            TAG,
-                            "setMediaItems called for shuffle ${if (enabled) "enable" else "disable"}: newCount=${mediaItems.size}, starting at position $newPosition"
-                    )
+                    isQueueBeingReplaced = true
+                    pendingSeekPositions.clear()
+                    pendingSeekPositions.add(newPosition)
+
+                    if (oldCount > 0) {
+                        controller.replaceMediaItems(0, oldCount, mediaItems)
+                        Log.d(
+                                TAG,
+                                "replaceMediaItems called for shuffle ${if (enabled) "enable" else "disable"}: oldCount=$oldCount, newCount=${mediaItems.size}"
+                        )
+                    } else {
+                        controller.setMediaItems(mediaItems, newPosition, seekPosition)
+                        controller.prepare()
+                        Log.d(
+                                TAG,
+                                "setMediaItems called for shuffle ${if (enabled) "enable" else "disable"}: newCount=${mediaItems.size}, starting at position $newPosition"
+                        )
+                    }
+                    controller.seekTo(newPosition, seekPosition)
                 }
-                controller.seekTo(newPosition, seekPosition)
             }
 
             if (isPlaying()) {
@@ -1315,6 +1336,7 @@ object MediaPlaybackManager {
             }
 
             _songListFlow.emit(songs)
+            _songPositionFlow.emit(newPosition)
             _shuffleStateFlow.emit(enabled)
 
             Log.d(

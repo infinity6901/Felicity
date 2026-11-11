@@ -99,7 +99,6 @@ class DebugLogActivity : ComponentActivity() {
         logView = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 10f
-            setTextIsSelectable(true)
             gravity = Gravity.START
         }
         logScroll = ScrollView(this).apply {
@@ -173,18 +172,25 @@ class DebugLogActivity : ComponentActivity() {
         }
     }
 
+    private var lastRenderedText: String = ""
+
     private fun refresh(scrollToEnd: Boolean) {
         val recording = LogRecorder.isRecording
         toggle.text = if (recording) "Stop recording" else "Start recording"
         val file = LogRecorder.logFile(this)
         status.text = (if (recording) "Recording: ON" else "Recording: OFF") +
-                "\nFile: ${if (file.exists()) "${file.length() / 1024} KB" else "empty"}" +
+                "\nFile: ${if (file.exists()) "${file.length() / 1024} KB (showing live tail)" else "empty"}" +
                 "\n${file.absolutePath}"
         thread {
-            val text = LogRecorder.tail(this)
+            val text = LogRecorder.tail(this).ifEmpty { "(no log recorded yet)" }
             runOnUiThread {
-                logView.text = text.ifEmpty { "(no log recorded yet)" }
-                if (scrollToEnd) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+                if (text != lastRenderedText) {
+                    lastRenderedText = text
+                    logView.text = text
+                    if (scrollToEnd) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+                } else if (scrollToEnd) {
+                    logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+                }
             }
         }
     }

@@ -334,8 +334,17 @@ internal object BaseCoverLoader {
      * Returns the built-in placeholder artwork when no cover art can be found anywhere.
      * It's not glamorous, but it's better than a crash or a blank space.
      */
+    @Volatile
+    private var cachedEmptyCover: Bitmap? = null
+
     fun loadEmptyAudioCover(): Bitmap {
-        val stream = BaseCoverLoader::class.java.getResourceAsStream(ALBUM_ART_PATH)
-        return BitmapFactory.decodeStream(stream)
+        cachedEmptyCover?.takeIf { !it.isRecycled }?.let {
+            return it.copy(it.config ?: Bitmap.Config.ARGB_8888, false)
+        }
+        val decoded = BaseCoverLoader::class.java.getResourceAsStream(ALBUM_ART_PATH)?.use { stream ->
+            BitmapFactory.decodeStream(stream)
+        } ?: Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        cachedEmptyCover = decoded
+        return decoded.copy(decoded.config ?: Bitmap.Config.ARGB_8888, false)
     }
 }

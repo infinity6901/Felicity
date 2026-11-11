@@ -204,6 +204,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      */
     private var pendingPlayRecordMediaId: String? = null
 
+    /** Tracks audio hashes that have been played in this service session so backward queue browsing only counts a Replay for songs already heard. */
+    private val playedInSessionHashes = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
     /**
      * The duration of the song that is CURRENTLY loaded and ready to play, kept fresh by
      * reading [player.duration] once the player reaches STATE_READY (the only state where
@@ -831,6 +834,14 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
 
     private fun syncStandbyToNextQueueItem() {
         val standby = standbyPlayer ?: return
+        if (!CrossfadePreferences.isCrossfadeEnabled()) {
+            if (standby.playbackState != Player.STATE_IDLE || standby.mediaItemCount > 0) {
+                standby.playWhenReady = false
+                standby.stop()
+                standby.clearMediaItems()
+            }
+            return
+        }
         if (!::player.isInitialized || player.mediaItemCount == 0) {
             standby.playWhenReady = false
             standby.stop()
@@ -1379,8 +1390,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                     if (audioId != null) {
                         serviceScope.launch(Dispatchers.IO) {
                             val audio = audioRepository.getAudioById(audioId) ?: return@launch
+                            playedInSessionHashes.add(audio.hash)
                             songStatRepository.recordPlay(audio.hash)
-                            Log.d(TAG, "Deferred play recorded for: ${audio.title}")
+                            Log.d(TAG, "Deferred play recorded for: ${audio.getProperTitle()}")
                         }
                     }
                 }
@@ -1567,7 +1579,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // transition — there's no point counting stats for songs the user skipped while
             // the player was sitting paused in the background.
             val prevMediaId = previousItemMediaId
-            if (wasPlayingBeforeTransition && prevMediaId != null) {
+            val isSameMediaItem = mediaItem?.mediaId != null && mediaItem.mediaId == prevMediaId
+            if (wasPlayingBeforeTransition && prevMediaId != null && !isSameMediaItem) {
                 // A skip is when the user actively moves FORWARD away from a song before hearing
                 // at least 30% of it. Two things can trigger this in a forward direction:
                 //   1. The user taps next / seeks to a later track (REASON_SEEK, going forward).
@@ -1585,7 +1598,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                         val audioId = prevMediaId.toLongOrNull() ?: return@launch
                         val audio = audioRepository.getAudioById(audioId) ?: return@launch
                         songStatRepository.recordSkip(audio.hash)
-                        Log.d(TAG, "Skip recorded for: ${audio.title} (pos=${previousItemEndPositionMs}ms / dur=${previousItemDurationMs}ms, reason=$reason)")
+                        Log.d(TAG, "Skip recorded for: ${audio.getProperTitle()} (pos=${previousItemEndPositionMs}ms / dur=${previousItemDurationMs}ms, reason=$reason)")
                     }
                 }
             }
@@ -1595,6 +1608,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             // Also check whether this was a backward navigation and count it as a replay if so.
             mediaItem?.let { item ->
                 previousItemMediaId = item.mediaId
+                if (isSameMediaItem && reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
+                    // Same song continuing across an in-place playlist edit — do not double-count play.
+                    pendingPlayRecordMediaId = null
+                    return@let
+                }
                 // While a queue replacement is in flight, ExoPlayer fires intermediate transitions
                 // (e.g. the first item of the new list lands before seekTo moves to the real target).
                 // We must not record those as plays — instead park the ID so it can be flushed once
@@ -1603,16 +1621,19 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 if (player.playWhenReady && !replacingQueue) {
                     pendingPlayRecordMediaId = null
                     val audioId = item.mediaId.toLongOrNull() ?: return@let
-                    val isBackwardNavigation = !MediaPlaybackManager.lastNavigationDirection
+                    val isBackwardSeek = !MediaPlaybackManager.lastNavigationDirection &&
+                            reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
                     serviceScope.launch(Dispatchers.IO) {
                         val audio = audioRepository.getAudioById(audioId) ?: return@launch
-                        songStatRepository.recordPlay(audio.hash)
-                        Log.d(TAG, "Play recorded for: ${audio.title}")
-                        // When the user goes back to a song on purpose, that counts as a replay —
-                        // it's their way of saying "that one was worth hearing again!"
-                        if (isBackwardNavigation && reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
+                        // When the user goes back to a song they already heard in this session,
+                        // record a replay instead of double-counting both Play and Replay.
+                        if (isBackwardSeek && playedInSessionHashes.contains(audio.hash)) {
                             songStatRepository.recordReplay(audio.hash)
-                            Log.d(TAG, "Replay recorded for: ${audio.title}")
+                            Log.d(TAG, "Replay recorded for: ${audio.getProperTitle()}")
+                        } else {
+                            playedInSessionHashes.add(audio.hash)
+                            songStatRepository.recordPlay(audio.hash)
+                            Log.d(TAG, "Play recorded for: ${audio.getProperTitle()}")
                         }
                     }
                 } else {
@@ -1640,8 +1661,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 if (audioId != null) {
                     serviceScope.launch(Dispatchers.IO) {
                         val audio = audioRepository.getAudioById(audioId) ?: return@launch
+                        playedInSessionHashes.add(audio.hash)
                         songStatRepository.recordPlay(audio.hash)
-                        Log.d(TAG, "Deferred play flushed (post-replace) for: ${audio.title}")
+                        Log.d(TAG, "Deferred play flushed (post-replace) for: ${audio.getProperTitle()}")
                     }
                 }
             }
@@ -1668,7 +1690,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                         audioProcessorManager.applyTagReplayGain(db)
                         standbyAudioProcessorManager.applyTagReplayGain(db)
                         if (db != 0f) {
-                            Log.d(TAG, "Auto-RG applied: ${db}dB for track: ${audio?.title}")
+                            Log.d(TAG, "Auto-RG applied: ${db}dB for track: ${audio?.getProperTitle()}")
                         }
                     }
                 }
@@ -2515,7 +2537,13 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 switchAudioMode()
             }
             CrossfadePreferences.CROSSFADE_ENABLED -> {
-                if (CrossfadePreferences.isCrossfadeEnabled()) startCrossfadeTicker() else cancelCrossfadeIfActive()
+                if (CrossfadePreferences.isCrossfadeEnabled()) {
+                    syncStandbyUnlessFading()
+                    startCrossfadeTicker()
+                } else {
+                    cancelCrossfadeIfActive()
+                    syncStandbyUnlessFading()
+                }
             }
             PlayerPreferences.REPEAT_MODE -> {
                 val repeatMode = PlayerPreferences.getRepeatMode()
@@ -2729,32 +2757,47 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
      *
      * Called from the player listener whenever the song or isPlaying state changes.
      */
-    private fun broadcastWidgetUpdate() {
-        val mediaItem = player.currentMediaItem ?: return
-        // Only trust the local-queue song if it IS the item playing — during online playback
-        // getCurrentSong() still returns whatever local song played last.
-        val currentSong = MediaPlaybackManager.getCurrentSong()
-            ?.takeIf { it.id.toString() == mediaItem.mediaId }
-        val title = currentSong?.getProperTitle() ?: mediaItem.mediaMetadata.title?.toString()
-        val artist = currentSong?.getProperArtists() ?: mediaItem.mediaMetadata.artist?.toString()
-        val isPlaying = player.isPlaying
-        val songId = mediaItem.mediaId.toLongOrNull() ?: -1L
+    private var widgetUpdateDebounceJob: Job? = null
+    private var lastWidgetSongId: Long = Long.MIN_VALUE
+    private var lastWidgetIsPlaying: Boolean? = null
+    private var lastWidgetTitle: String? = null
+    private var lastWidgetArtist: String? = null
 
-        // Sent as one explicit broadcast per known provider class rather than a single
-        // implicit one, because this module (engine) cannot depend on the module that
-        // actually declares the widget classes (music) — see WIDGET_PROVIDER_CLASS_NAMES.
-        // Widening this list is the ONLY step needed here whenever a new widget style is
-        // added on the music-module side; everything else about pushing an update is
-        // handled generically by BaseWidgetProvider.
-        WIDGET_PROVIDER_CLASS_NAMES.forEach { className ->
-            val intent = Intent("app.simple.felicity.ACTION_WIDGET_UPDATE").apply {
-                component = ComponentName(applicationContext.packageName, className)
-                putExtra("extra_title", title)
-                putExtra("extra_artist", artist)
-                putExtra("extra_is_playing", isPlaying)
-                putExtra("extra_song_id", songId)
+    private fun broadcastWidgetUpdate() {
+        widgetUpdateDebounceJob?.cancel()
+        widgetUpdateDebounceJob = serviceScope.launch(Dispatchers.Main.immediate) {
+            delay(80L.milliseconds)
+            val mediaItem = player.currentMediaItem ?: return@launch
+            // Only trust the local-queue song if it IS the item playing — during online playback
+            // getCurrentSong() still returns whatever local song played last.
+            val currentSong = MediaPlaybackManager.getCurrentSong()
+                ?.takeIf { it.id.toString() == mediaItem.mediaId }
+            val title = currentSong?.getProperTitle() ?: mediaItem.mediaMetadata.title?.toString()
+            val artist = currentSong?.getProperArtists() ?: mediaItem.mediaMetadata.artist?.toString()
+            val isPlaying = player.isPlaying
+            val songId = mediaItem.mediaId.toLongOrNull() ?: -1L
+
+            if (songId == lastWidgetSongId &&
+                    isPlaying == lastWidgetIsPlaying &&
+                    title == lastWidgetTitle &&
+                    artist == lastWidgetArtist) {
+                return@launch
             }
-            sendBroadcast(intent)
+            lastWidgetSongId = songId
+            lastWidgetIsPlaying = isPlaying
+            lastWidgetTitle = title
+            lastWidgetArtist = artist
+
+            WIDGET_PROVIDER_CLASS_NAMES.forEach { className ->
+                val intent = Intent("app.simple.felicity.ACTION_WIDGET_UPDATE").apply {
+                    component = ComponentName(applicationContext.packageName, className)
+                    putExtra("extra_title", title)
+                    putExtra("extra_artist", artist)
+                    putExtra("extra_is_playing", isPlaying)
+                    putExtra("extra_song_id", songId)
+                }
+                sendBroadcast(intent)
+            }
         }
     }
 

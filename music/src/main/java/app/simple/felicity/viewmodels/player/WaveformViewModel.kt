@@ -10,6 +10,7 @@ import app.simple.felicity.extensions.viewmodels.WrappedViewModel
 import app.simple.felicity.repository.database.instances.AudioDatabase
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.models.WaveformData
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import com.linc.amplituda.Amplituda
 import com.linc.amplituda.Cache
 import com.linc.amplituda.Compress
@@ -17,6 +18,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 import kotlin.math.PI
 import kotlin.math.sin
@@ -45,6 +47,7 @@ class WaveformViewModel @Inject constructor(
     private var currentUri: String? = null
     private var loadJob: Job? = null
     private var amplitudaInstance: Amplituda? = null
+    private val amplitudaLock = Any()
 
     /**
      * Returns a [LiveData] stream of normalized amplitude arrays.
@@ -53,17 +56,14 @@ class WaveformViewModel @Inject constructor(
     fun getWaveformData(): LiveData<FloatArray> = waveformData
 
     fun loadWaveform(audio: Audio) {
-        if (amplitudaInstance == null) {
-            amplitudaInstance = Amplituda(getApplication())
-        }
-
         // Prevent redundant loading
         if (audio.uri == currentUri && waveformData.value?.isNotEmpty() == true) return
 
-        // Track the current request to handle stale extractions
+        // Track the current request and cancel any superseded decode job
         currentUri = audio.uri
+        loadJob?.cancel()
 
-        viewModelScope.launch(Dispatchers.IO) {
+        loadJob = viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 if (currentUri != audio.uri) return@launch
 
@@ -81,86 +81,94 @@ class WaveformViewModel @Inject constructor(
                     }
                 }
 
-                // Nothing in the DB yet — decode the file and save the result
-                val parcelFileDescriptor = getApplication<Application>()
-                    .contentResolver.openFileDescriptor(audio.uri.toUri(), "r")
-                    ?: throw IllegalArgumentException("Unable to open URI: ${audio.uri}")
+                val rawAmplitudes = extractRawAmplitudes(audio)
 
-                try {
-                    val rawAmplitudes = amplitudaInstance!!
-                        .processAudio(
-                                parcelFileDescriptor,
-                                Compress.withParams(Compress.AVERAGE, BARS_PER_SECOND),
-                                Cache.withParams(Cache.REUSE, audio.hash.toString())
-                        )
-                        .get() // Blocking call
-                        .amplitudesAsList()
+                if (currentUri != audio.uri) return@launch
 
-                    parcelFileDescriptor.close()
+                if (rawAmplitudes.isNullOrEmpty()) {
+                    waveformData.postValue(getRandomGhostData(audio.duration))
+                    return@launch
+                }
 
-                    if (currentUri != audio.uri) return@launch
+                // --- Deterministic Time-Based Downsampling ---
 
-                    if (rawAmplitudes.isEmpty()) {
-                        waveformData.postValue(getRandomGhostData(audio.duration)) // Fallback to ghost data if extraction yields nothing
-                        return@launch
-                    }
+                val expectedBars = ((audio.duration / 1000f) * BARS_PER_SECOND).toInt().coerceAtLeast(1)
 
-                    // --- Deterministic Time-Based Downsampling ---
+                val chunkedAmplitudes = FloatArray(expectedBars)
+                val chunkSize = rawAmplitudes.size.toFloat() / expectedBars
 
-                    val expectedBars = ((audio.duration / 1000f) * BARS_PER_SECOND).toInt().coerceAtLeast(1)
+                for (i in 0 until expectedBars) {
+                    val start = (i * chunkSize).toInt()
+                    val end = ((i + 1) * chunkSize).toInt().coerceAtMost(rawAmplitudes.size)
 
-                    val chunkedAmplitudes = FloatArray(expectedBars)
-                    val chunkSize = rawAmplitudes.size.toFloat() / expectedBars
-
-                    for (i in 0 until expectedBars) {
-                        val start = (i * chunkSize).toInt()
-                        val end = ((i + 1) * chunkSize).toInt().coerceAtMost(rawAmplitudes.size)
-
-                        var peakInChunk = 0
-                        for (j in start until end) {
-                            if (rawAmplitudes[j] > peakInChunk) {
-                                peakInChunk = rawAmplitudes[j]
-                            }
+                    var peakInChunk = 0
+                    for (j in start until end) {
+                        if (rawAmplitudes[j] > peakInChunk) {
+                            peakInChunk = rawAmplitudes[j]
                         }
-                        chunkedAmplitudes[i] = peakInChunk.toFloat()
                     }
+                    chunkedAmplitudes[i] = peakInChunk.toFloat()
+                }
 
-                    // --- Final Normalization ---
+                // --- Final Normalization ---
 
-                    val maxPeak = chunkedAmplitudes.maxOrNull() ?: 1f
-                    val sampled = if (maxPeak > 0f) {
-                        FloatArray(expectedBars) { i ->
-                            chunkedAmplitudes[i] / maxPeak
-                        }
-                    } else {
-                        getRandomGhostData(audio.duration) // If all peaks are zero, return random ghost data to avoid a flatline
+                val maxPeak = chunkedAmplitudes.maxOrNull() ?: 1f
+                val sampled = if (maxPeak > 0f) {
+                    FloatArray(expectedBars) { i ->
+                        chunkedAmplitudes[i] / maxPeak
                     }
+                } else {
+                    getRandomGhostData(audio.duration)
+                }
 
-                    // Persist to DB so the next play of this track skips decoding entirely
-                    dao.insertWaveform(WaveformData.fromFloatArray(audio.hash, sampled))
+                // Persist to DB so the next play of this track skips decoding entirely
+                dao.insertWaveform(WaveformData.fromFloatArray(audio.hash, sampled))
 
-                    // Push the perfectly scaled array safely to the UI thread
+                // Push the perfectly scaled array safely to the UI thread
+                if (currentUri == audio.uri) {
                     waveformData.postValue(sampled)
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Amplituda extraction failed on IO thread for ${audio.title}", e)
-                    if (currentUri == audio.uri) {
-                        postFlatData(audio) // Show the ghost waveform if extraction fails
-                    }
-                } finally {
-                    try {
-                        parcelFileDescriptor.close()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to close ParcelFileDescriptor for ${audio.uri}", e)
-                    }
                 }
             }.getOrElse {
-                Log.e(TAG, "Unexpected error in loadWaveform for ${audio.title}", it)
+                Log.e(TAG, "Unexpected error in loadWaveform for ${audio.getProperTitle()}", it)
                 if (currentUri == audio.uri) {
-                    postFlatData(audio) // Show the ghost waveform on any unexpected error
+                    waveformData.postValue(getRandomGhostData(audio.duration))
                 }
             }
         }
+    }
+
+    private fun extractRawAmplitudes(audio: Audio): List<Int>? = synchronized(amplitudaLock) {
+        val amplituda = amplitudaInstance ?: Amplituda(getApplication()).also {
+            amplitudaInstance = it
+        }
+        val compress = Compress.withParams(Compress.AVERAGE, BARS_PER_SECOND)
+        val cache = Cache.withParams(Cache.REUSE, audio.hash.toString())
+
+        // 1. Prefer direct filesystem path when available (most reliable for native FFmpeg probing)
+        val directPath = audio.path?.takeIf { it.isNotBlank() && File(it).canRead() }
+        if (directPath != null) {
+            val fromPath = runCatching {
+                amplituda.processAudio(directPath, compress, cache)?.get()?.amplitudesAsList()
+            }.getOrNull()
+            if (!fromPath.isNullOrEmpty()) return@synchronized fromPath
+        }
+
+        // 2. Try ContentResolver InputStream
+        val fromStream = runCatching {
+            getApplication<Application>().contentResolver.openInputStream(audio.uri.toUri())?.use { stream ->
+                amplituda.processAudio(stream, compress, cache)?.get()?.amplitudesAsList()
+            }
+        }.getOrNull()
+        if (!fromStream.isNullOrEmpty()) return@synchronized fromStream
+
+        // 3. Fallback to ParcelFileDescriptor with null-safe result unwrapping
+        return@synchronized runCatching {
+            getApplication<Application>().contentResolver.openFileDescriptor(audio.uri.toUri(), "r")?.use { pfd ->
+                amplituda.processAudio(pfd, compress, cache)?.get()?.amplitudesAsList()
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "Amplituda extraction failed on IO thread for ${audio.getProperTitle()}", e)
+        }.getOrNull()
     }
 
     /**
@@ -183,30 +191,23 @@ class WaveformViewModel @Inject constructor(
     }
 
     private fun getRandomGhostData(durationMs: Long): FloatArray {
-        // MUST MATCH the density of your actual extraction function
         val expectedBars = ((durationMs / 1000f) * BARS_PER_SECOND).toInt().coerceAtLeast(1)
 
         return FloatArray(expectedBars) { i ->
-            // Calculate normalized progress through the song (0.0 to 1.0)
             val progress = i.toFloat() / expectedBars
-
-            // Create the "Song Shape" envelope using a Sine wave
-            // sin(0) = 0.0 (Intro) -> sin(PI/2) = 1.0 (Middle) -> sin(PI) = 0.0 (Outro)
             val envelope = sin(progress * PI).toFloat()
-
-            // Generate the random spikes (Noise)
-            // We use a floor of 0.2f so the middle doesn't randomly have dead-silent spikes
             val noise = (nextFloat() * 0.8f) + 0.2f
-
-            // Multiply the noise by the envelope
-            // To keep it looking "ghostly" and subtle, we cap the absolute max height at 0.4f (40%)
             (envelope * noise) * 0.4f
         }
     }
 
     override fun onCleared() {
         super.onCleared()
-        amplitudaInstance?.release()
+        loadJob?.cancel()
+        synchronized(amplitudaLock) {
+            amplitudaInstance?.release()
+            amplitudaInstance = null
+        }
     }
 
     companion object {

@@ -25,56 +25,91 @@ object PlaybackStateManager {
     /** Number of independent queue slots available to the user (slots 0–9). */
     const val QUEUE_COUNT = 10
 
+    private val saveMutex = kotlinx.coroutines.sync.Mutex()
+    private var lastSavedPosition: Int = -1
+    private var lastSavedSeek: Long = -1L
+    private var lastSavedQueueSize: Int = -1
+    private var lastSavedShuffle: Boolean? = null
+    private var lastSavedRepeat: Int = -1
+    private var lastSavedQueueId: Int = -1
+    private var lastSaveTimeMs: Long = 0L
+
     data class QueueSwitchResult(
             val songs: List<Audio>,
             val lastPosition: Int,
             val lastSeek: Long
     )
 
-    suspend fun saveCurrentPlaybackState(context: Context, logTag: String = TAG): Boolean {
-        // Always persist the original (unshuffled) queue so we can restore and optionally
-        // re-shuffle on the next launch rather than saving an already-shuffled order.
-        val songs = MediaPlaybackManager.getOriginalQueue()
-        if (songs.isEmpty()) {
-            Log.w(logTag, "Songs list is empty, skipping state save")
-            return false
-        }
-
-        var seek = 0L
-        var position = 0
-
-        withContext(Dispatchers.Main) {
-            seek = MediaPlaybackManager.getSeekPosition()
-            val currentSong = MediaPlaybackManager.getCurrentSong()
-            position = if (currentSong != null) {
-                songs.indexOfFirst { it.id == currentSong.id }.coerceAtLeast(0)
-            } else {
-                MediaPlaybackManager.getCurrentSongPosition().coerceIn(0, (songs.size - 1).coerceAtLeast(0))
+    suspend fun saveCurrentPlaybackState(context: Context, logTag: String = TAG): Boolean = saveMutex.let { mutex ->
+        mutex.lock()
+        try {
+            // Always persist the original (unshuffled) queue so we can restore and optionally
+            // re-shuffle on the next launch rather than saving an already-shuffled order.
+            val songs = MediaPlaybackManager.getOriginalQueue()
+            if (songs.isEmpty()) {
+                Log.w(logTag, "Songs list is empty, skipping state save")
+                return false
             }
-        }
 
-        return try {
-            val audioDatabase = AudioDatabase.getInstance(context)
+            var seek = 0L
+            var position = 0
+
+            withContext(Dispatchers.Main) {
+                seek = MediaPlaybackManager.getSeekPosition()
+                val currentSong = MediaPlaybackManager.getCurrentSong()
+                position = if (currentSong != null) {
+                    songs.indexOfFirst { it.id == currentSong.id }.coerceAtLeast(0)
+                } else {
+                    MediaPlaybackManager.getCurrentSongPosition().coerceIn(0, (songs.size - 1).coerceAtLeast(0))
+                }
+            }
+
             val activeQueueId = MediaPlaybackManager.getActiveQueueId()
             val repeatMode = PlayerPreferences.getRepeatMode()
-            savePlaybackState(
-                    db = audioDatabase,
-                    queueHash = songs.map { it.hash },
-                    index = position,
-                    position = seek,
-                    shuffle = ShufflePreferences.isShuffleEnabled(),
-                    repeat = repeatMode,
-                    activeQueueId = activeQueueId
-            )
-            Log.d(
-                    logTag, "Playback state saved: position=$position, seek=$seek, " +
-                    "queueSize=${songs.size}, shuffle=${ShufflePreferences.isShuffleEnabled()}, " +
-                    "repeat=$repeatMode, activeQueue=$activeQueueId"
-            )
-            true
-        } catch (e: Exception) {
-            Log.e(logTag, "Error saving playback state", e)
-            false
+            val shuffle = ShufflePreferences.isShuffleEnabled()
+            val now = System.currentTimeMillis()
+
+            // Coalesce duplicate saves triggered within 500ms by multiple active MediaFragment instances
+            if (now - lastSaveTimeMs < 500L &&
+                    position == lastSavedPosition &&
+                    songs.size == lastSavedQueueSize &&
+                    shuffle == lastSavedShuffle &&
+                    repeatMode == lastSavedRepeat &&
+                    activeQueueId == lastSavedQueueId &&
+                    kotlin.math.abs(seek - lastSavedSeek) < 1000L) {
+                return true
+            }
+
+            return try {
+                val audioDatabase = AudioDatabase.getInstance(context)
+                savePlaybackState(
+                        db = audioDatabase,
+                        queueHash = songs.map { it.hash },
+                        index = position,
+                        position = seek,
+                        shuffle = shuffle,
+                        repeat = repeatMode,
+                        activeQueueId = activeQueueId
+                )
+                lastSavedPosition = position
+                lastSavedSeek = seek
+                lastSavedQueueSize = songs.size
+                lastSavedShuffle = shuffle
+                lastSavedRepeat = repeatMode
+                lastSavedQueueId = activeQueueId
+                lastSaveTimeMs = now
+                Log.d(
+                        logTag, "Playback state saved: position=$position, seek=$seek, " +
+                        "queueSize=${songs.size}, shuffle=$shuffle, " +
+                        "repeat=$repeatMode, activeQueue=$activeQueueId"
+                )
+                true
+            } catch (e: Exception) {
+                Log.e(logTag, "Error saving playback state", e)
+                false
+            }
+        } finally {
+            mutex.unlock()
         }
     }
 

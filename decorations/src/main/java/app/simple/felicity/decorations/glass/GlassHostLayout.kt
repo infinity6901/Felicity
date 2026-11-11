@@ -79,12 +79,32 @@ class GlassHostLayout @JvmOverloads constructor(
             node.endRecording()
         }
         canvas.drawRenderNode(node)
-        // Glass children are drawn here, over the recording, so they never sample themselves.
+        // Glass targets are drawn here, over the recording, so they never sample themselves.
         val time = drawingTime
-        for (i in 0 until childCount) {
-            val child = getChildAt(i)
-            if (child in targets && child.visibility == VISIBLE) drawChild(canvas, child, time)
+        for (target in targets) {
+            if (target.visibility != VISIBLE) continue
+            if (target.parent === this) {
+                drawChild(canvas, target, time)
+            } else {
+                val (hx, hy) = offsetInHost(target)
+                val save = canvas.save()
+                canvas.translate(hx, hy)
+                target.draw(canvas)
+                canvas.restoreToCount(save)
+            }
         }
+    }
+
+    private fun offsetInHost(view: View): Pair<Float, Float> {
+        var vx = 0f
+        var vy = 0f
+        var current: View? = view
+        while (current != null && current !== this) {
+            vx += current.x
+            vy += current.y
+            current = current.parent as? View
+        }
+        return vx to vy
     }
 
     override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
@@ -92,7 +112,7 @@ class GlassHostLayout @JvmOverloads constructor(
         return super.drawChild(canvas, child, drawingTime)
     }
 
-    private var recording = false
+    internal var recording = false
     private var invalidatingTargets = false
 
     override fun onDescendantInvalidated(child: View, target: View) {
@@ -135,9 +155,10 @@ class GlassHostLayout @JvmOverloads constructor(
         val nodeW = w + margin * 2
         val nodeH = h + margin * 2
 
-        // Where the glass sits inside this host.
-        val hostX = target.x - x + card.left
-        val hostY = target.y - y + originY + card.top
+        // Where the glass sits inside this host (supports both direct children and nested views).
+        val (targetHostX, targetHostY) = offsetInHost(target)
+        val hostX = targetHostX + card.left
+        val hostY = targetHostY + originY + card.top
 
         val node = blurNode ?: RenderNode("felicity-glass-blur").also { blurNode = it }
         node.setPosition(0, 0, nodeW, nodeH)

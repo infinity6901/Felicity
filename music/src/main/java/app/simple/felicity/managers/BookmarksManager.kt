@@ -4,6 +4,7 @@ import android.util.Log
 import app.simple.felicity.engine.managers.MediaPlaybackManager
 import app.simple.felicity.repository.models.AudioBookmark
 import app.simple.felicity.repository.repositories.BookmarkRepository
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,7 +90,7 @@ class BookmarksManager @Inject constructor(
         observeJob?.cancel()
 
         observeJob = scope.launch(Dispatchers.IO) {
-            Log.d(TAG, "Observing bookmarks for hash $hash (${currentSong.title}).")
+            Log.d(TAG, "Observing bookmarks for hash $hash (${currentSong.getProperTitle()}).")
             bookmarkRepository.getBookmarksFlow(hash).collect { list ->
                 if (hash == currentHash) {
                     _bookmarks.value = list

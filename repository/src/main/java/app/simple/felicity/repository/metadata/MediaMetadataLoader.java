@@ -141,13 +141,23 @@ public class MediaMetadataLoader {
             // Use the last path segment of the document URI as the file's display
             // name. This is more reliable than the title tag for naming purposes
             // since the title could be empty or missing entirely.
-            String displayName = contentUri != null && contentUri.getLastPathSegment() != null
+            String rawSegment = contentUri != null && contentUri.getLastPathSegment() != null
                     ? contentUri.getLastPathSegment()
                     : uriString;
+            int slashIdx = rawSegment.lastIndexOf('/');
+            String displayName = slashIdx >= 0 ? rawSegment.substring(slashIdx + 1) : rawSegment;
             audio.setName(displayName);
             audio.setUri(uriString);
             audio.setSize(cachedSize);
             audio.setDateModified(cachedLastModified);
+        }
+
+        if (audio.getTitle() == null || audio.getTitle().trim().isEmpty()) {
+            String fileName = audio.getName();
+            if (fileName != null && !fileName.isEmpty()) {
+                int dotIdx = fileName.lastIndexOf('.');
+                audio.setTitle(dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName);
+            }
         }
         
         audio.setAlbum(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM));

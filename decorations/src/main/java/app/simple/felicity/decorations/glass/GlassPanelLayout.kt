@@ -97,7 +97,13 @@ class GlassPanelLayout @JvmOverloads constructor(
         invalidate()
     }
 
+    override fun dispatchDraw(canvas: Canvas) {
+        if (host?.recording == true) return
+        super.dispatchDraw(canvas)
+    }
+
     override fun onDraw(canvas: Canvas) {
+        if (host?.recording == true) return
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return

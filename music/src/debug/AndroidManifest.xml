@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Debug builds only: records this app's logcat to a file and lets the tester save / share it. -->
-    <application>
+    <application android:enableOnBackInvokedCallback="true">
 
         <!-- Starts the recorder as early as possible (before Application.onCreate). -->
         <provider
@@ -13,6 +13,7 @@
 
         <activity
             android:name="app.simple.felicity.debug.DebugLogActivity"
+            android:enableOnBackInvokedCallback="true"
             android:exported="false"
             android:label="Felicity Logs"
             android:taskAffinity=""

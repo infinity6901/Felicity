@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import app.simple.felicity.repository.covers.AudioCover
 import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import com.bumptech.glide.Priority
 import com.bumptech.glide.load.DataSource
 import com.bumptech.glide.load.data.DataFetcher
@@ -23,11 +24,11 @@ class AudioCoverFetcher internal constructor(
         try {
             // Delegate to AudioCover for centralized audio cover loading
             val bitmap = AudioCover.load(context, audio)
-                ?: throw FileNotFoundException("Could not find audio artwork for: ${audio.title}")
+                ?: throw FileNotFoundException("Could not find audio artwork for: ${audio.getProperTitle()}")
 
             callback.onDataReady(bitmap)
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading audio cover for: ${audio.title}", e)
+            Log.e(TAG, "Error loading audio cover for: ${audio.getProperTitle()}", e)
             callback.onLoadFailed(e)
         }
     }

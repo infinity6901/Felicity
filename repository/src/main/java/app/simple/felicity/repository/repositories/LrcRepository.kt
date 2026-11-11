@@ -242,29 +242,48 @@ class LrcRepository @Inject constructor(
         return text
             .replace(Regex("(?i)\\(official\\s+.*?\\)"), "")
             .replace(Regex("(?i)\\[official\\s+.*?\\]"), "")
-            .replace(Regex("(?i)\\b(official\\s+)?(music\\s+)?(video|audio|lyric\\s+video|lyrical\\s+video|lyrics|hd|4k|full\\s+song|full\\s+video|full\\s+audio)\\b"), "")
+            .replace(Regex("(?i)\\((?:full\\s+|lyrical\\s+|video\\s+|audio\\s+|lyric\\s+).*?\\)"), "")
+            .replace(Regex("(?i)\\[(?:full\\s+|lyrical\\s+|video\\s+|audio\\s+|lyric\\s+).*?\\]"), "")
+            .replace(Regex("(?i)\\b(official\\s+)?(music\\s+)?(video\\s+song|video|audio|lyric\\s+video|lyrical\\s+video|lyrical|lyrics|hd|4k|full\\s+song|full\\s+video|full\\s+audio)\\b"), "")
             .replace(Regex("(?i)\\(from\\s+[\"'].*?[\"']\\)"), "")
             .replace(Regex("(?i)\\(from\\s+.*?\\)"), "")
             .replace(Regex("(?i)\\[from\\s+.*?\\]"), "")
-            .replace(Regex("(?i)\\(feat\\.\\s+.*?\\)"), "")
-            .replace(Regex("(?i)\\(ft\\.\\s+.*?\\)"), "")
-            .replace(Regex("(?i)\\(prod\\.\\s+.*?\\)"), "")
+            .replace(Regex("(?i)\\(feat\\.?\\s+.*?\\)"), "")
+            .replace(Regex("(?i)\\[feat\\.?\\s+.*?\\]"), "")
+            .replace(Regex("(?i)\\(ft\\.?\\s+.*?\\)"), "")
+            .replace(Regex("(?i)\\[ft\\.?\\s+.*?\\]"), "")
+            .replace(Regex("(?i)\\(prod\\.?\\s+.*?\\)"), "")
             .replace(Regex("(?i)-?\\s*topic$"), "")
             .replace(Regex("(?i)vevo$"), "")
+            .replace(Regex("\\(\\s*\\)|\\[\\s*\\]"), "")
             .replace(Regex("\\s+"), " ")
+            .replace(Regex("^[-–—|/\\s]+|[-–—|/\\s]+$"), "")
             .trim()
     }
 
-    private fun extractCandidateTitles(title: String): List<String> {
+    fun extractCandidateTitles(title: String): List<String> {
         val candidates = mutableListOf<String>()
         val cleaned = cleanTitleOrArtist(title)
         if (cleaned.isNotBlank()) {
             candidates.add(cleaned)
         }
 
+        // Split on explicit separators (" - ", "|", "/") first so "Artist - Song Title"
+        // tries "Song Title" before "Artist", while keeping hyphenated words intact.
+        val spacedParts = cleaned.split(Regex("\\s+[-–—|/]+\\s+|\\s*[|/]\\s*"))
+            .map { cleanTitleOrArtist(it).trim() }
+            .filter { it.length >= 2 }
+        if (spacedParts.size >= 2) {
+            for (part in spacedParts.drop(1) + spacedParts.take(1)) {
+                if (!candidates.contains(part)) {
+                    candidates.add(part)
+                }
+            }
+        }
+
         val parts = cleaned.split(Regex("[|\\-/]"))
         for (part in parts) {
-            val partCleaned = part.trim()
+            val partCleaned = cleanTitleOrArtist(part).trim()
             if (partCleaned.length >= 2 && !candidates.contains(partCleaned)) {
                 candidates.add(partCleaned)
             }
@@ -274,6 +293,78 @@ class LrcRepository @Inject constructor(
             candidates.add(title)
         }
         return candidates
+    }
+
+    /**
+     * Generates ordered `(title, artist)` query pairs from potentially messy metadata
+     * such as `"Artist - Song Title (Official Video)"` with an uploader channel in [artistName].
+     */
+    fun extractQueryPairs(trackName: String, artistName: String): List<Pair<String, String>> {
+        val pairs = LinkedHashSet<Pair<String, String>>()
+        val cleanedTitle = cleanTitleOrArtist(trackName).ifBlank { trackName.trim() }
+        val cleanedArtist = cleanTitleOrArtist(artistName)
+            .takeUnless { it.equals("unknown", ignoreCase = true) || it.equals("<unknown>", ignoreCase = true) }
+            .orEmpty()
+
+        fun primaryArtist(artistStr: String): String {
+            return artistStr.split(Regex("\\s*(?:,|&|\\band\\b|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*", RegexOption.IGNORE_CASE))
+                .firstOrNull { it.isNotBlank() }
+                ?.trim()
+                .orEmpty()
+        }
+
+        val spacedParts = cleanedTitle.split(Regex("\\s+[-–—|/]+\\s+|\\s*[|/]\\s*"))
+            .map { cleanTitleOrArtist(it).trim() }
+            .filter { it.length >= 2 }
+
+        // 1. Direct cleaned metadata when the title is not a compound "Artist - Title" string.
+        if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank() && spacedParts.size < 2) {
+            pairs.add(cleanedTitle to cleanedArtist)
+            val primary = primaryArtist(cleanedArtist)
+            if (primary.isNotBlank() && primary != cleanedArtist) {
+                pairs.add(cleanedTitle to primary)
+            }
+        }
+
+        // 2. When the title contains " - " / "|" / "/", try ("Title", "Artist") and ("Artist", "Title").
+        if (spacedParts.size >= 2) {
+            val first = spacedParts[0]
+            val second = spacedParts[1]
+            pairs.add(second to first)
+            val firstPrimary = primaryArtist(first)
+            if (firstPrimary.isNotBlank() && firstPrimary != first) {
+                pairs.add(second to firstPrimary)
+            }
+            pairs.add(first to second)
+            val secondPrimary = primaryArtist(second)
+            if (secondPrimary.isNotBlank() && secondPrimary != second) {
+                pairs.add(first to secondPrimary)
+            }
+            if (cleanedArtist.isNotBlank()) {
+                pairs.add(second to cleanedArtist)
+                pairs.add(first to cleanedArtist)
+            }
+            pairs.add(second to "")
+        }
+
+        // 3. Compound title with original artist tag (if not already added).
+        if (cleanedTitle.isNotBlank() && cleanedArtist.isNotBlank()) {
+            pairs.add(cleanedTitle to cleanedArtist)
+            val primary = primaryArtist(cleanedArtist)
+            if (primary.isNotBlank() && primary != cleanedArtist) {
+                pairs.add(cleanedTitle to primary)
+            }
+        }
+
+        // 4. Title-only fallbacks.
+        if (cleanedTitle.isNotBlank()) {
+            pairs.add(cleanedTitle to "")
+        }
+        for (part in spacedParts) {
+            pairs.add(part to "")
+        }
+
+        return pairs.toList()
     }
 
     /**
@@ -287,6 +378,8 @@ class LrcRepository @Inject constructor(
         return withContext(Dispatchers.IO) {
             try {
                 val cleanedArtist = cleanTitleOrArtist(artistName)
+                    .takeUnless { it.equals("unknown", ignoreCase = true) || it.equals("<unknown>", ignoreCase = true) }
+                    .orEmpty()
                 val candidateTitles = extractCandidateTitles(trackName)
 
                 val testedKeys = mutableSetOf<String>()

@@ -127,11 +127,24 @@ class SongStatRepository @Inject constructor(
         }
 
         val dao = database.songStatDao()
+        val now = System.currentTimeMillis()
         val existing = dao.getStatByHash(audioHash)
         if (existing == null) {
-            dao.insertStat(AudioStat(audioHash = audioHash, replayCount = 1))
+            dao.insertStat(
+                    AudioStat(
+                            audioHash = audioHash,
+                            playCount = 1,
+                            replayCount = 1,
+                            lastPlayed = now
+                    )
+            )
         } else {
-            dao.updateStat(existing.copy(replayCount = existing.replayCount + 1))
+            dao.updateStat(
+                    existing.copy(
+                            replayCount = existing.replayCount + 1,
+                            lastPlayed = now
+                    )
+            )
         }
     }
 

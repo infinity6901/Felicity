@@ -19,6 +19,8 @@ import app.simple.felicity.lyricsanalysis.lyrics.LyricSection
 import app.simple.felicity.lyricsanalysis.lyrics.LyricsPhraseMatcher
 import app.simple.felicity.repository.metadata.LyricsMetaHelper
 import app.simple.felicity.repository.models.Audio
+import app.simple.felicity.repository.utils.AudioUtils.getProperArtists
+import app.simple.felicity.repository.utils.AudioUtils.getProperTitle
 import app.simple.felicity.repository.online.OnlineTrack
 import app.simple.felicity.repository.repositories.LrcRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -114,8 +116,8 @@ class LyricsManager @Inject constructor(
         val online = MediaPlaybackManager.getCurrentOnlineTrack()
         val song = if (online == null) MediaPlaybackManager.getCurrentSong() else null
         val path = online?.let { "online:${it.source}:${it.id}" } ?: song?.uri ?: return
-        val title = online?.title ?: song?.title ?: song?.name.orEmpty()
-        val artist = online?.subtitle ?: song?.artist.orEmpty()
+        val title = online?.title ?: song?.getProperTitle().orEmpty()
+        val artist = online?.subtitle ?: song?.getProperArtists()?.takeUnless { it == "Unknown" }.orEmpty()
         if (title.isBlank()) return
         _versionsLoading.value = true
         scope.launch {
@@ -319,7 +321,7 @@ class LyricsManager @Inject constructor(
 
     fun setOnlineLyrics(rawLrc: String) {
         try {
-            val parsed = LrcParser().parse(rawLrc)
+            val parsed = selectParser(rawLrc).parse(rawLrc)
             _lrcData.value = parsed
         } catch (e: Exception) {
             e.printStackTrace()
@@ -344,19 +346,19 @@ class LyricsManager @Inject constructor(
         if (!isStillRelevant(songPath)) return
 
         if (LyricsPreferences.isAutoDownloadLyrics()) {
-            Log.d(TAG, "No local lyrics for '${song.title}', fetching online.")
+            Log.d(TAG, "No local lyrics for '${song.getProperTitle()}', fetching online.")
 
             // post an empty data first
             emitIfStillRelevant(songPath, LrcData())
 
             fetchAndSaveLrc(
-                    trackName = song.title ?: song.name,
-                    artistName = song.artist ?: "",
+                    trackName = song.getProperTitle(),
+                    artistName = song.getProperArtists().takeUnless { it == "Unknown" } ?: "",
                     audioPath = song.uri,
                     songPath = songPath
             )
         } else {
-            Log.d(TAG, "No local lyrics and auto-download is off for '${song.title}'.")
+            Log.d(TAG, "No local lyrics and auto-download is off for '${song.getProperTitle()}'.")
             emitIfStillRelevant(songPath, LrcData())
         }
     }
@@ -372,7 +374,7 @@ class LyricsManager @Inject constructor(
         if (!isStillRelevant(songPath)) return true
 
         if (lrcContent != null) {
-            Log.d(TAG, "LRC sidecar found for '${song.title}'.")
+            Log.d(TAG, "LRC sidecar found for '${song.getProperTitle()}'.")
             parseThenEmit(lrcContent, songPath, fallback = LrcData()) { content ->
                 selectParser(content).parse(content)
             }
@@ -386,7 +388,7 @@ class LyricsManager @Inject constructor(
         if (!isStillRelevant(songPath)) return true
 
         if (!txtContent.isNullOrBlank()) {
-            Log.d(TAG, "TXT sidecar found for '${song.title}'.")
+            Log.d(TAG, "TXT sidecar found for '${song.getProperTitle()}'.")
             parseThenEmit(txtContent, songPath, fallback = LrcData()) { content ->
                 TxtParser().parse(content)
             }
@@ -407,7 +409,7 @@ class LyricsManager @Inject constructor(
         if (!isStillRelevant(songPath)) return true
         if (embeddedContent.isNullOrBlank()) return false
 
-        Log.d(TAG, "Embedded tag lyrics found for '${song.title}'.")
+        Log.d(TAG, "Embedded tag lyrics found for '${song.getProperTitle()}'.")
         parseThenEmit(embeddedContent, songPath, fallback = LrcData()) { content ->
             selectParser(content).parse(content)
         }
@@ -575,8 +577,8 @@ class LyricsManager @Inject constructor(
         if (!LyricsPreferences.isAutoDownloadLyrics()) return
         val current = _lrcData.value ?: return
         if (current.isEmpty || current.entries.any { it.hasWordSync() }) return
-        val title = song.title ?: song.name
-        val artist = song.artist ?: ""
+        val title = song.getProperTitle()
+        val artist = song.getProperArtists().takeUnless { it == "Unknown" } ?: ""
         if (multiProviderLyricsEngine.selectedId(title, artist) != null) return
         if (multiProviderLyricsEngine.wordUpgradeChecked(title, artist)) return
         val candidates = try {
@@ -601,8 +603,8 @@ class LyricsManager @Inject constructor(
         val song = if (online == null) MediaPlaybackManager.getCurrentSong() else null
         val path = online?.let { "online:${it.source}:${it.id}" } ?: song?.uri ?: return
         val audioPath = path
-        val title = online?.title ?: song?.title.orEmpty()
-        val artist = online?.subtitle ?: song?.artist.orEmpty()
+        val title = online?.title ?: song?.getProperTitle().orEmpty()
+        val artist = online?.subtitle ?: song?.getProperArtists()?.takeUnless { it == "Unknown" }.orEmpty()
         scope.launch {
             applyLyricsCandidate(candidate, audioPath, path, title, artist, rememberSelection = true)
         }

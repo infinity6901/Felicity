@@ -2,12 +2,17 @@ package app.simple.felicity.managers
 
 import android.content.Context
 import androidx.core.content.edit
-import app.simple.felicity.preferences.LyricsPreferences
-import app.simple.felicity.repository.models.LrcLibResponse
+import app.simple.felicity.decorations.lrc.model.LrcData
+import app.simple.felicity.decorations.lrc.model.LrcEntry
 import app.simple.felicity.decorations.lrc.model.WordEntry
-import app.simple.felicity.repository.repositories.LrcRepository
+import app.simple.felicity.decorations.lrc.parser.LrcParser
 import app.simple.felicity.lyricsanalysis.lyrics.LyricsPhraseMatcher
+import app.simple.felicity.preferences.LyricsPreferences
+import app.simple.felicity.repository.factories.TaggedSocketFactory
+import app.simple.felicity.repository.models.LrcLibResponse
+import app.simple.felicity.repository.repositories.LrcRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +25,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 private val WORD_TIME_TAG = Regex("<\\d{1,3}:\\d{2}[.:]\\d{1,3}>")
 
@@ -58,12 +62,47 @@ class MultiProviderLyricsEngine @Inject constructor(
         /** Number of non-empty lyric lines. */
         val lineCount: Int
             get() = rawLyrics.ifBlank { plainLyrics }.lineSequence().count { it.isNotBlank() }
+
+        /**
+         * Returns LRC text with inline `<mm:ss.mmm>` word timestamps baked in when
+         * [lineExtras] carry per-word timings, so saving or passing the string preserves
+         * word-by-word sync.
+         */
+        fun toSaveableLrc(): String {
+            if (!synced) return plainLyrics.ifBlank { rawLyrics }
+            if (lineExtras.none { it.words.isNotEmpty() } || WORD_TIME_TAG.containsMatchIn(rawLyrics)) {
+                return rawLyrics
+            }
+            val parsed = runCatching { LrcParser().parse(rawLyrics) }.getOrNull() ?: return rawLyrics
+            if (parsed.isEmpty) return rawLyrics
+            val extrasByTime = lineExtras.associateBy { it.timeMs }
+            val enriched = LrcData()
+            parsed.metadata.forEach { (key, value) -> enriched.addMetadata(key, value) }
+            parsed.entries.forEachIndexed { index, entry ->
+                val extra = if (entry.timeInMillis >= 0L) {
+                    extrasByTime[entry.timeInMillis]
+                } else {
+                    lineExtras.getOrNull(index)
+                }
+                enriched.addEntry(
+                    LrcEntry(
+                        entry.timeInMillis,
+                        entry.text,
+                        null,
+                        null,
+                        extra?.words?.takeIf { it.isNotEmpty() } ?: entry.words
+                    )
+                )
+            }
+            return enriched.toLrcString()
+        }
     }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
         .readTimeout(7, TimeUnit.SECONDS)
         .callTimeout(9, TimeUnit.SECONDS)
+        .socketFactory(TaggedSocketFactory(0x4C595243))
         .build()
 
     suspend fun search(title: String, artist: String): List<Candidate> = supervisorScope {
@@ -81,7 +120,7 @@ class MultiProviderLyricsEngine @Inject constructor(
         val fromMirrors = runCatching { mirrors.await() }.getOrDefault(emptyList())
         val fromBetter = runCatching { better.await() }.getOrDefault(emptyList())
         val fetched = (fromLrclib + fromMirrors + fromBetter)
-            .distinctBy { it.provider + ":" + it.rawLyrics.hashCode() }
+            .distinctBy { it.provider + ":" + it.rawLyrics.ifBlank { it.plainLyrics }.hashCode() }
         android.util.Log.d("LyricsSearch", "\"$title\" / \"$artist\": LRCLib=${fromLrclib.size} " +
             "LyricsPlus=${fromMirrors.size} BetterLyrics=${fromBetter.size}; word-by-word=${fetched.count { it.wordSynced }}")
         val candidates = fetched.ifEmpty { cachedCandidates(title, artist) }
@@ -94,24 +133,25 @@ class MultiProviderLyricsEngine @Inject constructor(
     }
 
     /**
-     * Free-text search typed by the user. Tries the text as a title, and when it looks like
-     * "Artist - Title" also both orderings of that split, then merges the unique results.
+     * Free-text search typed by the user. Uses cleaned/split query pairs and merges unique
+     * results while keeping word-by-word timed lyrics prioritized at the top.
      */
     suspend fun searchManual(query: String): List<Candidate> = supervisorScope {
         val q = query.trim()
         if (q.isBlank()) return@supervisorScope emptyList()
         val attempts = buildList {
             add(q to "")
-            val parts = q.split(" - ", limit = 2).map { it.trim() }
+            val parts = q.split(Regex("\\s+[-–—|/]+\\s+"), limit = 2).map { it.trim() }
             if (parts.size == 2 && parts.all { it.isNotBlank() }) {
                 add(parts[1] to parts[0])
                 add(parts[0] to parts[1])
             }
-        }
+        }.distinct()
         attempts.map { (title, artist) -> async { runCatching { search(title, artist) }.getOrDefault(emptyList()) } }
             .flatMap { it.await() }
             .distinctBy { it.provider + ":" + it.rawLyrics.ifBlank { it.plainLyrics }.hashCode() }
             .sortedWith(compareByDescending<Candidate> { it.wordSynced }
+                .thenBy { LyricsPreferences.sourceRank(it.provider) }
                 .thenByDescending { it.confidence }
                 .thenByDescending { it.synced })
     }
@@ -171,17 +211,39 @@ class MultiProviderLyricsEngine @Inject constructor(
     }
 
     private suspend fun searchLrcLib(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {
-        repository.searchAllLyrics(title, artist).getOrNull().orEmpty().mapNotNull { item: LrcLibResponse ->
+        repository.searchLyrics(title, artist).getOrNull().orEmpty().mapNotNull { item: LrcLibResponse ->
             val raw = item.syncedLyrics.orEmpty()
             val plain = item.plainLyrics.orEmpty()
             if (raw.isBlank() && plain.isBlank()) return@mapNotNull null
-            Candidate("lrclib:${item.id}", "LRCLib", item.trackName, item.artistName,
-                raw.isNotBlank(), if (raw.isNotBlank()) 92 else 68, raw, plain,
-                durationSec = item.duration.toInt())
+            val hasWordSync = WORD_TIME_TAG.containsMatchIn(raw)
+            Candidate(
+                id = "lrclib:${item.id}",
+                provider = "LRCLib",
+                title = item.trackName,
+                artist = item.artistName,
+                synced = raw.isNotBlank(),
+                confidence = when {
+                    hasWordSync -> 95
+                    raw.isNotBlank() -> 92
+                    else -> 68
+                },
+                rawLyrics = raw,
+                plainLyrics = plain,
+                durationSec = item.duration.toInt()
+            )
         }
     }
 
     private suspend fun searchLyricsPlus(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {
+        val queryPairs = repository.extractQueryPairs(title, artist).ifEmpty { listOf(title to artist) }.take(4)
+        for ((qTitle, qArtist) in queryPairs) {
+            val found = searchLyricsPlusSingle(qTitle, qArtist)
+            if (found.isNotEmpty()) return@withContext found
+        }
+        emptyList()
+    }
+
+    private suspend fun searchLyricsPlusSingle(title: String, artist: String): List<Candidate> = coroutineScope {
         val servers = listOf(
             "https://lyricsplus.binimum.org",
             "https://lyricsplus.atomix.one",
@@ -190,31 +252,29 @@ class MultiProviderLyricsEngine @Inject constructor(
         )
         // Race every mirror; a dead or slow one must not hold up the others.
         val results = kotlinx.coroutines.channels.Channel<List<Candidate>>(servers.size)
-        coroutineScope {
-            val jobs = servers.map { server ->
-                launch {
-                    val url = okhttp3.HttpUrl.Builder().scheme("https")
-                        .host(server.removePrefix("https://").substringBefore('/'))
-                        .addPathSegments("v2/lyrics/get")
-                        .addQueryParameter("title", title)
-                        .apply { if (artist.isNotBlank()) addQueryParameter("artist", artist) }
-                        .build()
-                    val r = runCatching {
-                        client.newCall(Request.Builder().url(url).header("Accept", "application/json").build())
-                            .execute().use { response ->
-                                if (!response.isSuccessful) emptyList() else parseLyricsPlus(response.body.string(), title, artist)
-                            }
-                    }.getOrDefault(emptyList())
-                    results.trySend(r)
-                }
+        val jobs = servers.map { server ->
+            launch {
+                val url = okhttp3.HttpUrl.Builder().scheme("https")
+                    .host(server.removePrefix("https://").substringBefore('/'))
+                    .addPathSegments("v2/lyrics/get")
+                    .addQueryParameter("title", title)
+                    .apply { if (artist.isNotBlank()) addQueryParameter("artist", artist) }
+                    .build()
+                val r = runCatching {
+                    client.newCall(Request.Builder().url(url).header("Accept", "application/json").build())
+                        .execute().use { response ->
+                            if (!response.isSuccessful) emptyList() else parseLyricsPlus(response.body.string(), title, artist)
+                        }
+                }.getOrDefault(emptyList())
+                results.trySend(r)
             }
-            var found: List<Candidate> = emptyList()
-            repeat(servers.size) {
-                if (found.isEmpty()) found = results.receive()
-            }
-            jobs.forEach { it.cancel() }
-            return@coroutineScope found
         }
+        var found: List<Candidate> = emptyList()
+        repeat(servers.size) {
+            if (found.isEmpty()) found = results.receive()
+        }
+        jobs.forEach { it.cancel() }
+        found
     }
 
     /**
@@ -222,6 +282,15 @@ class MultiProviderLyricsEngine @Inject constructor(
      * Adapted from InterTune's provider (GPL-3.0).
      */
     private suspend fun searchBetterLyrics(title: String, artist: String): List<Candidate> = withContext(Dispatchers.IO) {
+        val queryPairs = repository.extractQueryPairs(title, artist).ifEmpty { listOf(title to artist) }.take(4)
+        for ((qTitle, qArtist) in queryPairs) {
+            val found = searchBetterLyricsSingle(qTitle, qArtist)
+            if (found.isNotEmpty()) return@withContext found
+        }
+        emptyList()
+    }
+
+    private fun searchBetterLyricsSingle(title: String, artist: String): List<Candidate> {
         val url = okhttp3.HttpUrl.Builder().scheme("https").host("lyrics-api.boidu.dev")
             .addPathSegment("getLyrics")
             .addQueryParameter("s", title)
@@ -233,9 +302,9 @@ class MultiProviderLyricsEngine @Inject constructor(
                     if (!response.isSuccessful) return@use null
                     JSONObject(response.body.string()).optString("ttml").trim().takeIf { it.isNotEmpty() }
                 }
-        }.getOrNull() ?: return@withContext emptyList()
+        }.getOrNull() ?: return emptyList()
         val parsed = TtmlParser.parse(ttml)
-        if (parsed.isEmpty()) return@withContext emptyList()
+        if (parsed.isEmpty()) return emptyList()
         val extras = ArrayList<LineExtras>()
         val raw = buildString {
             for (line in parsed) {
@@ -246,7 +315,7 @@ class MultiProviderLyricsEngine @Inject constructor(
                 extras += LineExtras(timeMs = line.startMs, words = line.words.map { WordEntry(it.first, it.second, it.third) })
             }
         }.trim()
-        listOf(Candidate(
+        return listOf(Candidate(
             id = "betterlyrics:${raw.hashCode()}", provider = "Better Lyrics",
             title = title, artist = artist, synced = true, confidence = 91,
             rawLyrics = raw, lineExtras = extras
@@ -259,6 +328,7 @@ class MultiProviderLyricsEngine @Inject constructor(
         if (lyrics.length() == 0) return emptyList()
         val metadata = root.optJSONObject("metadata")
         val resolvedTitle = metadata?.optString("title")?.takeIf { it.isNotBlank() } ?: title
+        val resolvedArtist = metadata?.optString("artist")?.takeIf { it.isNotBlank() } ?: artist
         val isSynced = !root.optString("type").equals("None", true)
         val extras = ArrayList<LineExtras>()
         val lines = buildString {
@@ -315,7 +385,7 @@ class MultiProviderLyricsEngine @Inject constructor(
         if (lines.isBlank()) return emptyList()
         return listOf(Candidate(
             id = "lyricsplus:${lines.hashCode()}", provider = "LyricsPlus",
-            title = resolvedTitle, artist = artist,
+            title = resolvedTitle, artist = resolvedArtist,
             synced = isSynced, confidence = if (isSynced) 90 else 70,
             rawLyrics = if (isSynced) lines else "", plainLyrics = if (isSynced) "" else lines,
             lineExtras = extras

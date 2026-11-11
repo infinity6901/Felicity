@@ -19,7 +19,9 @@ import com.bumptech.glide.Glide
 import com.bumptech.glide.load.Transformation
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.bitmap.CenterCrop
+import com.bumptech.glide.RequestBuilder
 import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.target.ImageViewTarget
 import com.bumptech.glide.request.transition.Transition
 
 object AudioCoverUtils {
@@ -61,7 +63,7 @@ object AudioCoverUtils {
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .error(R.drawable.ic_felicity)
 
-        glideRequest.into(this)
+        glideRequest.intoSafeBitmapTarget(this)
     }
 
     fun ImageView.loadArtCoverWithPayload(item: Any) {
@@ -82,7 +84,25 @@ object AudioCoverUtils {
             .dontAnimate()
             .transform(CenterCrop())
             .load(item)
-            .into(this)
+            .intoSafeBitmapTarget(this)
+    }
+
+    /**
+     * Avoids [com.bumptech.glide.request.target.BitmapImageViewTarget] calling
+     * `ImageView.setImageBitmap(null)` during `onLoadStarted` / `onLoadCleared`, which
+     * causes Android's `ImageView` to construct `BitmapDrawable(resources, null)` and
+     * spam `W BitmapDrawable: BitmapDrawable created with null Bitmap` in logcat.
+     */
+    internal fun RequestBuilder<Bitmap>.intoSafeBitmapTarget(imageView: ImageView) {
+        into(object : ImageViewTarget<Bitmap>(imageView) {
+            override fun setResource(resource: Bitmap?) {
+                if (resource != null) {
+                    view.setImageBitmap(resource)
+                } else {
+                    view.setImageDrawable(null)
+                }
+            }
+        })
     }
 
     fun Context.loadPlainArtCover(item: Any, onBitmap: (Bitmap) -> Unit) {

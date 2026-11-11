@@ -199,10 +199,12 @@ object TagLibLoader {
             dateModified: Long,
             mimeType: String?
     ): Audio {
+        val cleanFileName = name.substringAfterLast('/')
+        val fallbackTitle = cleanFileName.substringBeforeLast('.').takeIf { it.isNotBlank() } ?: cleanFileName
         val audio = Audio()
-        audio.name = name
+        audio.name = cleanFileName
         audio.uri = path
-        audio.title = title
+        audio.title = title?.takeIf { it.isNotBlank() } ?: fallbackTitle
         audio.artist = artist
         audio.album = album
         audio.genre = genre
