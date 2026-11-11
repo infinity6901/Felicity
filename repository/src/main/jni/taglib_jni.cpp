@@ -31,20 +31,10 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// RAII wrapper for duplicated file descriptors. TagLib::FileStream(int fd, bool openReadOnly)
-// sets d->closeFile = false internally and NEVER closes a caller-supplied file descriptor,
-// so we must close dupFd ourselves after TagLib::FileStream is destroyed.
-struct ScopedFd {
-    int fd;
-    explicit ScopedFd(int f) : fd(f) {}
-    ~ScopedFd() {
-        if (fd >= 0) {
-            close(fd);
-        }
-    }
-    ScopedFd(const ScopedFd &) = delete;
-    ScopedFd &operator=(const ScopedFd &) = delete;
-};
+// NOTE: the fd passed to TagLib::FileStream is a dup() of the caller's fd and is owned (and closed)
+// by the stream. Closing it again here aborts the process through Android's fdsan
+// ("attempted to close file descriptor N, expected to be unowned"), so there is deliberately no
+// extra RAII guard around it.
 
 static jclass g_metaClass = nullptr;
 static jmethodID g_metaCtor = nullptr;
@@ -149,7 +139,6 @@ Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeLoadFromFd(
         LOGE("dup() failed for fd=%d — cannot read tags", fd);
         return nullptr;
     }
-    ScopedFd fdGuard(dupFd);
 
     TagLib::FileStream stream(dupFd, true /* openReadOnly */);
 
@@ -285,7 +274,6 @@ Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeSaveToFd(
         LOGE("dup() failed for fd=%d — cannot write tags", fd);
         return JNI_FALSE;
     }
-    ScopedFd fdGuard(dupFd);
 
     TagLib::FileStream stream(dupFd, false /* openReadOnly */);
 
@@ -350,7 +338,6 @@ Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeSaveArtworkToFd(
         LOGE("dup() failed for fd=%d — cannot write artwork", fd);
         return JNI_FALSE;
     }
-    ScopedFd fdGuard(dupFd);
 
     TagLib::FileStream stream(dupFd, false /* openReadOnly */);
     TagLib::FileRef fileRef(&stream, false);
@@ -399,7 +386,6 @@ Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeExtractLyricsFro
         LOGE("dup() failed for fd=%d — cannot extract lyrics", fd);
         return nullptr;
     }
-    ScopedFd fdGuard(dupFd);
 
     TagLib::FileStream stream(dupFd, true /* openReadOnly */);
     TagLib::FileRef fileRef(&stream, false);
@@ -428,7 +414,6 @@ Java_app_simple_felicity_repository_metadata_TagLibBridge_nativeExtractArtworkFr
         LOGE("dup() failed for fd=%d — cannot extract artwork", fd);
         return nullptr;
     }
-    ScopedFd fdGuard(dupFd);
 
     TagLib::FileStream stream(dupFd, true /* openReadOnly */);
     TagLib::FileRef fileRef(&stream, false);
