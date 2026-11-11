@@ -441,7 +441,7 @@ class UsbDacDriver private constructor(private val context: Context) {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        if (deviceConnection != null) {
+        if (connection != null) {
             val volumeDb256 = mapSystemVolumeToDacVolume(currentVolume, maxVolume)
             val approxDb = volumeDb256.toFloat() / 256f
             Log.d(TAG, "Syncing system volume ($currentVolume/$maxVolume) → DAC ${volumeDb256}/256 dB (≈ ${"%.1f".format(approxDb)} dB)")
