@@ -4,7 +4,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Equal-power crossfade helpers shared by playback and unit tests. */
+/** Perceptual crossfade helpers shared by playback and unit tests. */
 internal object CrossfadeMath {
     data class Gains(val outgoing: Float, val incoming: Float)
 
@@ -18,7 +18,7 @@ internal object CrossfadeMath {
      * unity at 1) and the outgoing song falls along cos^1.2, which leaves it audibly dimming from
      * the first moments. The summed power dips by under 2 dB at the midpoint.
      */
-    fun equalPowerGains(progress: Float): Gains {
+    fun perceptualCrossfadeGains(progress: Float): Gains {
         val t = progress.coerceIn(0f, 1f)
         val angle = t * (PI.toFloat() / 2f)
         val s = sin(angle)

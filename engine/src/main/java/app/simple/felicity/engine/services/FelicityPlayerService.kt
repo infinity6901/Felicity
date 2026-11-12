@@ -266,6 +266,8 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
     private var dualPlayerFadeJob: Job? = null
     private var crossfadeTickerJob: Job? = null
     private var dualFadeCooldownUntilMs = 0L
+    @Volatile
+    private var queueGeneration = 0L
 
     /** The artificial silence gap used when gapless playback is off; cancelled if the user/timer intervenes. */
     private var gapJob: Job? = null
@@ -812,6 +814,21 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         } catch (error: Throwable) {
             // Best-effort rollback keeps the service controllable if a manager/session update
             // unexpectedly fails. Player listener ownership is restored to the outgoing player.
+            val restoreAttributes = AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
+                .build()
+            runCatching {
+                incoming.setHandleAudioBecomingNoisy(false)
+                incoming.setWakeMode(C.WAKE_MODE_NONE)
+                incoming.setAudioAttributes(restoreAttributes, false)
+            }
+            runCatching {
+                outgoing.setAudioAttributes(restoreAttributes, true)
+                outgoing.setHandleAudioBecomingNoisy(true)
+                outgoing.setWakeMode(C.WAKE_MODE_LOCAL)
+            }
             runCatching { mediaSession?.player = outgoing }
             runCatching { incoming.removeListener(playerListener) }
             runCatching { incoming.removeAnalyticsListener(analyticsListener) }
@@ -1332,11 +1349,13 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
+            queueGeneration++
             // Repeat-one must not preload a different item; repeat-all may wrap to the start.
             syncStandbyUnlessFading()
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            queueGeneration++
             // nextMediaItemIndex is shuffle-aware, so refresh the standby target whenever the
             // shuffle order changes.
             syncStandbyUnlessFading()
@@ -1935,10 +1954,32 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             return
         }
         if (!player.hasNextMediaItem()) return
-        // An exclusive USB DAC stream cannot be shared by two decks, so no overlap there. AAudio and
-        // Oboe are shared-mode streams: the deck that owns the native route is faded in software
-        // (see FelicityAudioSink.applyOutputGain) while the other deck mixes in through AudioTrack.
         if (UsbDacManager.isActive) return
+        val requestedRoute = when (AudioPreferences.getOutputSink()) {
+            AudioPreferences.OUTPUT_SINK_USB_DAC ->
+                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.USB_DAC
+            AudioPreferences.OUTPUT_SINK_AAUDIO ->
+                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.AAUDIO
+            AudioPreferences.OUTPUT_SINK_OBOE ->
+                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.OBOE
+            AudioPreferences.OUTPUT_SINK_ANDROID ->
+                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.ANDROID
+            else ->
+                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.AUTOMATIC
+        }
+        val resolvedRoute = app.simple.felicity.engine.playback.DualPlayerOutputPolicy.resolve(
+            requested = requestedRoute,
+            dualPlaybackOverlap = true
+        )
+        // Only overlap via the dual-player AudioTrack standby when the active route is also
+        // Android's shared mixer; exclusive AAudio/Oboe/USB routes would otherwise silently
+        // downgrade to AudioTrack on promotion.
+        if (resolvedRoute == app.simple.felicity.engine.playback.DualPlayerOutputPolicy.ResolvedRoute.ANDROID_SHARED_MIXER &&
+            requestedRoute != app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.ANDROID &&
+            requestedRoute != app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.AUTOMATIC
+        ) {
+            return
+        }
         // Crossfading resolved, short-lived YouTube stream URLs adds a lot of fragility
         // (a second resolve, in the middle of a fade, for a URL that might already be
         // close to expiring) for comparatively little benefit — local-queue tracks only.
@@ -2020,13 +2061,17 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         val outgoingItem = outgoing.currentMediaItem
         val incomingItem = incoming.currentMediaItem
         if (outgoingItem == null || incomingItem == null || outgoingItem == incomingItem) return
+        val startGeneration = queueGeneration
+        val expectedNextMediaId = incomingItem.mediaId
 
         dualPlayerFadeJob = serviceScope.launch(Dispatchers.Main) {
-            // The permanent standby is already prepared and muted. Re-check identities and
-            // queue position after entering the coroutine to reject stale preload completions.
+            var promoted = false
+            try {
             if (standbyPlayer !== incoming || player !== outgoing ||
+                queueGeneration != startGeneration ||
                 nextPlayableIndex() != expectedNextIndex ||
                 incoming.currentMediaItemIndex != expectedNextIndex ||
+                incoming.currentMediaItem?.mediaId != expectedNextMediaId ||
                 incoming.playbackState != Player.STATE_READY
             ) return@launch
 
@@ -2045,7 +2090,9 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             val readyDeadline = SystemClock.elapsedRealtime() + DUAL_FADE_READY_TIMEOUT_MS
             while (isActive && !(incoming.playbackState == Player.STATE_READY && incoming.isPlaying)) {
                 if (standbyPlayer !== incoming || player !== outgoing ||
-                    outgoing.currentMediaItemIndex != startIndex) {
+                    queueGeneration != startGeneration ||
+                    outgoing.currentMediaItemIndex != startIndex ||
+                    incoming.currentMediaItem?.mediaId != expectedNextMediaId) {
                     incoming.playWhenReady = false
                     incoming.volume = 0f
                     return@launch
@@ -2076,14 +2123,20 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
             Log.d(TAG, "Dual-player fade: start fadeMs=$fadeDurationMs remaining=${actualRemainingMs}ms tail=${outgoingTailMs}ms " +
                     "outPos=$fadeStartPositionMs inPos=${incoming.currentPosition}")
             while (true) {
-                if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
+                if (!isActive || standbyPlayer !== incoming || player !== outgoing ||
+                    queueGeneration != startGeneration ||
+                    nextPlayableIndex() != expectedNextIndex ||
+                    incoming.currentMediaItem?.mediaId != expectedNextMediaId) return@launch
                 // A manual pause pauses both decks. Resume only when the active deck resumes.
                 if (!outgoing.isPlaying) {
                     incoming.pause()
                     while (isActive && standbyPlayer === incoming && player === outgoing && !outgoing.isPlaying) {
                         delay(50L)
                     }
-                    if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
+                    if (!isActive || standbyPlayer !== incoming || player !== outgoing ||
+                    queueGeneration != startGeneration ||
+                    nextPlayableIndex() != expectedNextIndex ||
+                    incoming.currentMediaItem?.mediaId != expectedNextMediaId) return@launch
                     incoming.play()
                 }
                 if (outgoing.currentMediaItemIndex != startIndex) {
@@ -2101,7 +2154,7 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 }
                 val progress = CrossfadeMath.fadeProgress(
                         outgoing.currentPosition - fadeStartPositionMs, fadeDurationMs)
-                val gains = CrossfadeMath.equalPowerGains(progress)
+                val gains = CrossfadeMath.perceptualCrossfadeGains(progress)
                 outgoing.volume = gains.outgoing
                 incoming.volume = gains.incoming
                 val nowMs = SystemClock.elapsedRealtime()
@@ -2115,17 +2168,33 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
                 delay(CrossfadeMath.wallClockStepMs(FADE_TICK_MEDIA_MS, outgoing.playbackParameters.speed))
             }
 
-            if (!isActive || standbyPlayer !== incoming || player !== outgoing) return@launch
+            if (!isActive || standbyPlayer !== incoming || player !== outgoing ||
+                queueGeneration != startGeneration ||
+                nextPlayableIndex() != expectedNextIndex ||
+                incoming.currentMediaItem?.mediaId != expectedNextMediaId) return@launch
             // Promotion performs the listener, DSP, visualizer, equalizer and MediaSession
             // transfer as one guarded service transaction. If it fails, restore the old deck.
             incoming.volume = 1f
             incoming.playWhenReady = true
-            if (!promoteStandbyPlayerAfterFade()) {
-                outgoing.volume = 1f
-                incoming.volume = 0f
-                incoming.playWhenReady = false
+            promoted = promoteStandbyPlayerAfterFade()
+            if (!promoted) {
                 Log.w(TAG, "Dual-player fade completed but promotion was rejected; retained outgoing player")
-                syncStandbyToNextQueueItem()
+            }
+            } finally {
+                if (!promoted) {
+                    runCatching {
+                        if (standbyPlayer === incoming) {
+                            incoming.playWhenReady = false
+                            incoming.volume = 0f
+                        }
+                    }
+                    runCatching {
+                        if (player === outgoing) {
+                            outgoing.volume = 1f
+                        }
+                    }
+                    runCatching { syncStandbyToNextQueueItem() }
+                }
             }
         }.also { job ->
             job.invokeOnCompletion {

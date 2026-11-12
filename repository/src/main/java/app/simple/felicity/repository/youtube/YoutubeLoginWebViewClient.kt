@@ -3,6 +3,7 @@ package app.simple.felicity.repository.youtube
 import android.content.Context
 import android.net.Uri
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 
@@ -31,6 +32,16 @@ class YoutubeLoginWebViewClient(
 
     private var alreadyReported = false
 
+    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        return !isAllowedLoginUrl(request.url)
+    }
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
+        val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return true
+        return !isAllowedLoginUrl(uri)
+    }
+
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
 
@@ -50,6 +61,26 @@ class YoutubeLoginWebViewClient(
     }
 
     companion object {
+        private val ALLOWED_LOGIN_HOSTS = setOf(
+            "accounts.google.com",
+            "accounts.youtube.com",
+            "music.youtube.com",
+            "www.youtube.com",
+            "youtube.com",
+            "consent.youtube.com",
+            "consent.google.com",
+            "myaccount.google.com",
+            "gds.google.com",
+        )
+
+        fun isAllowedLoginUrl(uri: Uri?): Boolean {
+            if (uri == null) return false
+            if (!uri.scheme.equals("https", ignoreCase = true)) return false
+            if (!uri.userInfo.isNullOrEmpty()) return false
+            val host = uri.host?.lowercase() ?: return false
+            return host in ALLOWED_LOGIN_HOSTS
+        }
+
         const val LOGIN_URL =
             "https://accounts.google.com/ServiceLogin?service=youtube&continue=https://music.youtube.com/"
 

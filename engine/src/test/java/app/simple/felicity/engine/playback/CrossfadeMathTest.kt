@@ -6,33 +6,36 @@ import org.junit.Test
 
 class CrossfadeMathTest {
     @Test fun endpointsAreSilentOnOppositeSides() {
-        val start = CrossfadeMath.equalPowerGains(0f)
-        val end = CrossfadeMath.equalPowerGains(1f)
+        val start = CrossfadeMath.perceptualCrossfadeGains(0f)
+        val end = CrossfadeMath.perceptualCrossfadeGains(1f)
         assertEquals(1f, start.outgoing, 0.0001f)
         assertEquals(0f, start.incoming, 0.0001f)
         assertEquals(0f, end.outgoing, 0.0001f)
         assertEquals(1f, end.incoming, 0.0001f)
     }
 
-    @Test fun equalPowerKeepsSquaredGainConstant() {
-        incomingRisesGentlyAndOutgoingFallsMonotonically()
+    @Test fun perceptualCurveMaintainsBoundedMidpointPower() {
+        val mid = CrossfadeMath.perceptualCrossfadeGains(0.5f)
+        val summedPower = mid.outgoing * mid.outgoing + mid.incoming * mid.incoming
+        assertTrue(summedPower > 0.6f)
+        assertTrue(summedPower <= 1.0f)
     }
 
     @Test fun incomingRisesGentlyAndOutgoingFallsMonotonically() {
-        var prev = CrossfadeMath.equalPowerGains(0f)
+        var prev = CrossfadeMath.perceptualCrossfadeGains(0f)
         for (step in 1..100) {
-            val gains = CrossfadeMath.equalPowerGains(step / 100f)
+            val gains = CrossfadeMath.perceptualCrossfadeGains(step / 100f)
             assertTrue(gains.incoming >= prev.incoming)
             assertTrue(gains.outgoing <= prev.outgoing)
             prev = gains
         }
         // The new song is still quiet a quarter of the way in, the old one has already dipped.
-        val quarter = CrossfadeMath.equalPowerGains(0.25f)
+        val quarter = CrossfadeMath.perceptualCrossfadeGains(0.25f)
         assertTrue(quarter.incoming < 0.2f)
         assertTrue(quarter.outgoing < 0.95f)
         // Summed power never collapses mid-fade.
         for (step in 0..100) {
-            val g = CrossfadeMath.equalPowerGains(step / 100f)
+            val g = CrossfadeMath.perceptualCrossfadeGains(step / 100f)
             assertTrue(g.outgoing * g.outgoing + g.incoming * g.incoming > 0.6f)
         }
     }

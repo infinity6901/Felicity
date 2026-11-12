@@ -15,8 +15,4 @@
     <files-path
         name="files"
         path="." />
-    <!--suppress AndroidElementNotAllowed -->
-    <root-path
-        name="root"
-        path="." />
 </paths>

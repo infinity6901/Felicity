@@ -2,7 +2,7 @@ package app.simple.felicity.repository.youtube
 
 import app.simple.felicity.repository.youtube.YoutubeAuthHelper.applyYoutubeHeaders
 import app.simple.felicity.repository.youtube.YoutubeAuthHelper.buildContextBody
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import app.simple.felicity.repository.factories.TaggedSocketFactory
 import okhttp3.OkHttpClient
@@ -257,9 +257,17 @@ object YoutubeApiClient {
      * response; the request is the one the web player sends when playback starts.
      */
     fun reportPlayback(trackingUrl: String, session: YoutubeSession?): Boolean = runCatching {
-        val rewritten = trackingUrl.replace("s.youtube.com", "music.youtube.com")
+        val parsed = trackingUrl.toHttpUrlOrNull() ?: return@runCatching false
+        if (!YoutubeAuthHelper.isAllowedTrackingUrl(parsed)) return@runCatching false
+        val targetHost = if (parsed.host.equals("s.youtube.com", ignoreCase = true)) {
+            "music.youtube.com"
+        } else {
+            parsed.host.lowercase()
+        }
         val cpn = (1..16).map { CPN_ALPHABET.random() }.joinToString("")
-        val url = rewritten.toHttpUrl().newBuilder()
+        val url = parsed.newBuilder()
+            .scheme("https")
+            .host(targetHost)
             .addQueryParameter("ver", "2")
             .addQueryParameter("c", "WEB_REMIX")
             .addQueryParameter("cpn", cpn)

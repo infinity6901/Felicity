@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.viewModelScope
 import app.simple.felicity.R
 import app.simple.felicity.extensions.viewmodels.WrappedViewModel
+import app.simple.felicity.repository.engines.OfflineRecommendationEngine
 import app.simple.felicity.repository.models.Audio
 import app.simple.felicity.repository.repositories.AudioRepository
 import app.simple.felicity.repository.repositories.SongStatRepository
@@ -54,6 +55,8 @@ class MixesViewModel @Inject constructor(
     private val refreshTrigger = MutableStateFlow(0)
     private var appliedTrigger = -1
 
+    private val recommendationEngine = OfflineRecommendationEngine()
+
     init {
         startMixesFlow()
     }
@@ -65,25 +68,17 @@ class MixesViewModel @Inject constructor(
     private fun startMixesFlow() {
         viewModelScope.launch(Dispatchers.IO) {
             combine(
-                    songStatRepository.getNeverPlayed(),
-                    songStatRepository.getRecentlyPlayed(),
+                    songStatRepository.getAllAudioWithStat(),
                     songStatRepository.getMostPlayed(),
                     audioRepository.getAllAudio(),
                     refreshTrigger
-            ) { neverPlayed, recentlyPlayed, mostPlayed, allAudio, trigger ->
+            ) { library, mostPlayed, allAudio, trigger ->
                 if (_mixes.value.isNotEmpty() && trigger == appliedTrigger) return@combine null
 
-                // Discover prefers never played songs; once everything has been played it
-                // falls back to songs that are not among the recently played ones.
-                val discoverPool = neverPlayed.ifEmpty {
-                    val recentIds = recentlyPlayed.map { it.id }.toHashSet()
-                    allAudio.filterNot { it.id in recentIds }
-                }
-
                 trigger to listOf(
-                        Mix(MixType.RECOMMENDED, R.string.recommended, allAudio.shuffled().take(MIX_SIZE)),
-                        Mix(MixType.DISCOVER, R.string.discover, discoverPool.shuffled().take(MIX_SIZE)),
-                        Mix(MixType.RANDOM_PICKS, R.string.random_picks, allAudio.shuffled().take(MIX_SIZE)),
+                        Mix(MixType.RECOMMENDED, R.string.recommended, recommendationEngine.recommendOverallMix(library, limit = MIX_SIZE).map { it.audio }),
+                        Mix(MixType.DISCOVER, R.string.discover, recommendationEngine.recommendDiscover(library, limit = MIX_SIZE).map { it.audio }),
+                        Mix(MixType.RANDOM_PICKS, R.string.random_picks, recommendationEngine.recommendRandomPicks(library, limit = MIX_SIZE).map { it.audio }),
                         Mix(MixType.QUEUE, R.string.queue_mix, buildQueueMix(mostPlayed, allAudio))
                 ).filter { it.songs.isNotEmpty() }
             }

@@ -33,7 +33,7 @@ include(FetchContent)
 # Using a specific commit hash ensures build NEVER breaks unexpectedly.
 FetchContent_Declare(pffft
     GIT_REPOSITORY https://github.com/marton78/pffft.git
-    GIT_TAG 0b4ee12c4ba45a4a8e567550c16d96d1679f50ce
+    GIT_TAG 179a48d486cbee8ec5416e5c163ad575c2efe1f1  # v1.3.0
 )
 
 # Download and make the library available to CMake

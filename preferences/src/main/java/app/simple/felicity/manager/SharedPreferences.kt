@@ -6,6 +6,7 @@ import app.simple.felicity.manager.SharedPreferences.init
 import app.simple.felicity.shared.utils.ConditionUtils.isNull
 import dev.spght.encryptedprefs.EncryptedSharedPreferences
 import dev.spght.encryptedprefs.MasterKey
+import android.util.Log
 import java.io.File
 
 object SharedPreferences {
@@ -35,32 +36,29 @@ object SharedPreferences {
     }
 
     fun initEncrypted(context: Context) {
-        kotlin.runCatching {
-            if (encryptedSharedPreferences.isNull()) {
-                val masterKeyAlias = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
+        if (encryptedSharedPreferences != null) return
+        runCatching {
+            val masterKeyAlias = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-                encryptedSharedPreferences = EncryptedSharedPreferences.create(
-                        context,
-                        PREFERENCES_ENCRYPTED,
-                        masterKeyAlias,
-                        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-            }
-        }.onFailure {
-            /**
-             * Retry with a fail-safe for recursion
-             */
-            if (isInitialized.not()) {
-                // Set the flag to true to prevent infinite recursion
-                isInitialized = true
-
-                // Delete the encrypted shared preferences if it fails to initialize
-                File(getEncryptedSharedPreferencesPath(context)).delete()
-                initEncrypted(context)
-            }
+            encryptedSharedPreferences = EncryptedSharedPreferences.create(
+                    context,
+                    PREFERENCES_ENCRYPTED,
+                    masterKeyAlias,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+        }.onFailure { error ->
+            // Do not destructively delete the encrypted preferences file on transient or
+            // keystore/backup-restore failures; preserve it and surface diagnostics.
+            Log.e("SharedPreferences", "Failed to initialize encrypted shared preferences", error)
         }
+    }
+
+    fun resetEncrypted(context: Context) {
+        encryptedSharedPreferences = null
+        runCatching { File(getEncryptedSharedPreferencesPath(context)).delete() }
+        initEncrypted(context)
     }
 
     /**

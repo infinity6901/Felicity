@@ -82,7 +82,7 @@ class MusicHttpServer(
             newFixedLengthResponse(
                     Response.Status.INTERNAL_ERROR,
                     MIME_PLAINTEXT,
-                    "Internal server error: ${e.message}"
+                    "Internal server error"
             )
         }
     }
@@ -107,9 +107,16 @@ class MusicHttpServer(
                 return false
             }
         }
-        if (session.method == Method.POST || session.method == Method.DELETE) {
+        val uri = session.uri ?: ""
+        val requiresSession = session.method == Method.POST ||
+            session.method == Method.DELETE ||
+            uri.startsWith("/api/") ||
+            STREAM_REGEX.matches(uri) ||
+            ART_REGEX.matches(uri)
+        if (requiresSession) {
             val cookieToken = session.cookies?.read(SESSION_COOKIE_NAME)
-            if (cookieToken != sessionToken) {
+            val bearer = session.headers["authorization"]?.removePrefix("Bearer ")?.trim()
+            if (cookieToken != sessionToken && bearer != sessionToken) {
                 return false
             }
         }
@@ -402,28 +409,40 @@ class MusicHttpServer(
             -1L
         }
 
-        return if (range != null && range.startsWith("bytes=")) {
-            val parts = range.removePrefix("bytes=").split("-")
-            val rawStart = parts[0].toLongOrNull() ?: 0L
-            val start = if (fileLength > 0) rawStart.coerceIn(0L, fileLength - 1) else maxOf(0L, rawStart)
-            val parsedEnd = if (parts.size > 1 && parts[1].isNotBlank()) parts[1].toLongOrNull() else null
-            val end = when {
-                fileLength > 0 && parsedEnd != null -> parsedEnd.coerceIn(start, fileLength - 1)
-                fileLength > 0 -> fileLength - 1
-                parsedEnd != null && parsedEnd >= start -> parsedEnd
-                else -> Long.MAX_VALUE / 2
-            }
-            val length = (end - start + 1).coerceAtLeast(0L)
+        return if (range != null) {
+            when (val parsed = parseByteRange(range, fileLength)) {
+                is ByteRangeResult.Valid -> {
+                    val length = parsed.end - parsed.start + 1
+                    val stream: InputStream = context.contentResolver.openInputStream(audioUri)
+                        ?: return notFound("Could not open audio stream")
+                    skipFully(stream, parsed.start)
 
-            val stream: InputStream = context.contentResolver.openInputStream(audioUri)
-                ?: return notFound("Could not open audio stream")
-            skipFully(stream, start)
-
-            newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, stream, length).apply {
-                if (fileLength > 0) {
-                    addHeader("Content-Range", "bytes $start-$end/$fileLength")
+                    newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, stream, length).apply {
+                        if (fileLength > 0) {
+                            addHeader("Content-Range", "bytes ${parsed.start}-${parsed.end}/$fileLength")
+                        }
+                        addHeader("Accept-Ranges", "bytes")
+                    }
                 }
-                addHeader("Accept-Ranges", "bytes")
+                ByteRangeResult.Unsatisfiable -> {
+                    newFixedLengthResponse(
+                            Response.Status.RANGE_NOT_SATISFIABLE,
+                            MIME_PLAINTEXT,
+                            "Requested Range Not Satisfiable"
+                    ).apply {
+                        if (fileLength > 0) {
+                            addHeader("Content-Range", "bytes */$fileLength")
+                        }
+                        addHeader("Accept-Ranges", "bytes")
+                    }
+                }
+                ByteRangeResult.FallbackFull -> {
+                    val stream: InputStream = context.contentResolver.openInputStream(audioUri)
+                        ?: return notFound("Could not open audio stream")
+                    newChunkedResponse(Response.Status.OK, mimeType, stream).apply {
+                        addHeader("Accept-Ranges", "bytes")
+                    }
+                }
             }
         } else {
             val stream: InputStream = context.contentResolver.openInputStream(audioUri)
@@ -526,7 +545,51 @@ class MusicHttpServer(
         start(SOCKET_READ_TIMEOUT, false)
     }
 
+    internal sealed class ByteRangeResult {
+        data class Valid(val start: Long, val end: Long) : ByteRangeResult()
+        data object Unsatisfiable : ByteRangeResult()
+        data object FallbackFull : ByteRangeResult()
+    }
+
     companion object {
+        internal fun parseByteRange(rangeHeader: String, fileLength: Long): ByteRangeResult {
+            if (!rangeHeader.startsWith("bytes=", ignoreCase = true)) {
+                return ByteRangeResult.Unsatisfiable
+            }
+            val spec = rangeHeader.substring(6).trim()
+            if (spec.isEmpty() || spec.contains(",")) {
+                return ByteRangeResult.Unsatisfiable
+            }
+            val dashIndex = spec.indexOf('-')
+            if (dashIndex < 0) return ByteRangeResult.Unsatisfiable
+
+            val startPart = spec.substring(0, dashIndex).trim()
+            val endPart = spec.substring(dashIndex + 1).trim()
+
+            // Suffix range: bytes=-<suffixLength>
+            if (startPart.isEmpty()) {
+                val suffixLength = endPart.toLongOrNull() ?: return ByteRangeResult.Unsatisfiable
+                if (suffixLength <= 0L) return ByteRangeResult.Unsatisfiable
+                if (fileLength <= 0L) return ByteRangeResult.FallbackFull
+                val start = (fileLength - suffixLength).coerceAtLeast(0L)
+                return ByteRangeResult.Valid(start, fileLength - 1)
+            }
+
+            val start = startPart.toLongOrNull() ?: return ByteRangeResult.Unsatisfiable
+            if (start < 0L) return ByteRangeResult.Unsatisfiable
+            if (fileLength > 0L && start >= fileLength) return ByteRangeResult.Unsatisfiable
+
+            if (endPart.isEmpty()) {
+                if (fileLength <= 0L) return ByteRangeResult.FallbackFull
+                return ByteRangeResult.Valid(start, fileLength - 1)
+            }
+
+            val requestedEnd = endPart.toLongOrNull() ?: return ByteRangeResult.Unsatisfiable
+            if (requestedEnd < start) return ByteRangeResult.Unsatisfiable
+            val end = if (fileLength > 0L) minOf(requestedEnd, fileLength - 1) else requestedEnd
+            return ByteRangeResult.Valid(start, end)
+        }
+
         private const val TAG = "MusicHttpServer"
         private const val SESSION_COOKIE_NAME = "felicity_session"
         private const val MIME_HTML = "text/html; charset=utf-8"

@@ -915,15 +915,18 @@ class FelicityAudioSink(
 
     override fun play() {
         isPaused = false
+        visualizer.setPlaybackPaused(false)
         activeSink.play()
     }
 
     override fun pause() {
         isPaused = true
+        visualizer.setPlaybackPaused(true)
         activeSink.pause()
     }
 
     override fun flush() {
+        visualizer.clearPendingFrames()
         nativeSourceEnded = false
         nativeEndDeadlineMs = 0L
         pendingProcessedSamples = 0

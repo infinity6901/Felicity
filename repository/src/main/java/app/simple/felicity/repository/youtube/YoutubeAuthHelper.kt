@@ -69,12 +69,14 @@ object YoutubeAuthHelper {
         }
         session?.visitorData?.let { headers["X-Goog-Visitor-Id"] = it }
 
-        session?.rawCookies?.takeIf { it.isNotEmpty() }?.let { cookies ->
-            headers["Cookie"] = session.toRawCookieHeader()
+        if (isAllowedCredentialUrl(url)) {
+            session?.rawCookies?.takeIf { it.isNotEmpty() }?.let { cookies ->
+                headers["Cookie"] = session.toRawCookieHeader()
 
-            val sapisid = cookies["SAPISID"] ?: cookies["__Secure-3PAPISID"]
-            if (sapisid != null) {
-                headers["Authorization"] = generateSapisidHash(sapisid, origin)
+                val sapisid = cookies["SAPISID"] ?: cookies["__Secure-3PAPISID"]
+                if (sapisid != null) {
+                    headers["Authorization"] = generateSapisidHash(sapisid, origin)
+                }
             }
         }
 
@@ -86,6 +88,31 @@ object YoutubeAuthHelper {
      * cookie for a given origin without sending the cookie value itself in the
      * Authorization header.
      */
+    private val ALLOWED_CREDENTIAL_HOSTS = setOf(
+        "music.youtube.com",
+        "www.youtube.com",
+        "youtube.com",
+        "youtubei.googleapis.com",
+    )
+
+    private val ALLOWED_TRACKING_HOSTS = setOf(
+        "s.youtube.com",
+        "music.youtube.com",
+        "www.youtube.com",
+    )
+
+    fun isAllowedCredentialUrl(url: HttpUrl): Boolean =
+        url.isHttps &&
+            url.username.isEmpty() &&
+            url.password.isEmpty() &&
+            url.host.lowercase() in ALLOWED_CREDENTIAL_HOSTS
+
+    fun isAllowedTrackingUrl(url: HttpUrl): Boolean =
+        url.isHttps &&
+            url.username.isEmpty() &&
+            url.password.isEmpty() &&
+            url.host.lowercase() in ALLOWED_TRACKING_HOSTS
+
     private fun generateSapisidHash(sapisid: String, origin: String): String {
         val currentTime = System.currentTimeMillis() / 1000
         val hash = sha1("$currentTime $sapisid $origin")
