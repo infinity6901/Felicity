@@ -9,11 +9,16 @@ class DualAudioProcessorSetTest {
 
     /**
      * The processors load the native felicity_audio_engine library, which does not exist in a
-     * plain JVM unit test. Skip (not fail) there; the check runs wherever the library is loadable.
+     * plain JVM unit test, and the processors also touch Android framework classes (Looper, Handler)
+     * that the JVM stub jar rejects with a RuntimeException ("Method ... not mocked"). Skip (not
+     * fail) in both cases; the check runs wherever the library and framework are available.
      */
     private fun newSet(): DualAudioProcessorSet? = try {
         DualAudioProcessorSet()
     } catch (e: LinkageError) {
+        assumeNoException(e)
+        null
+    } catch (e: RuntimeException) {
         assumeNoException(e)
         null
     }
