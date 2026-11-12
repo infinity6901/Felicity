@@ -1956,13 +1956,11 @@ class FelicityPlayerService : MediaLibraryService(), SharedPreferences.OnSharedP
         if (!player.hasNextMediaItem()) return
         if (UsbDacManager.isActive) return
         val requestedRoute = when (AudioPreferences.getOutputSink()) {
-            AudioPreferences.OUTPUT_SINK_USB_DAC ->
-                app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.USB_DAC
-            AudioPreferences.OUTPUT_SINK_AAUDIO ->
+            AudioPreferences.SINK_AAUDIO ->
                 app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.AAUDIO
-            AudioPreferences.OUTPUT_SINK_OBOE ->
+            AudioPreferences.SINK_OBOE ->
                 app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.OBOE
-            AudioPreferences.OUTPUT_SINK_ANDROID ->
+            AudioPreferences.SINK_AUDIO_TRACK ->
                 app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.ANDROID
             else ->
                 app.simple.felicity.engine.playback.DualPlayerOutputPolicy.RequestedRoute.AUTOMATIC

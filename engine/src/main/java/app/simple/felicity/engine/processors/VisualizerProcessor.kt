@@ -222,6 +222,25 @@ class VisualizerProcessor : BaseAudioProcessor() {
     @Volatile
     private var isPlaybackPaused = false
 
+    /**
+     * Pauses or resumes releasing queued spectrum frames to the view, so the bars freeze while
+     * playback is paused instead of replaying what was already queued.
+     */
+    fun setPlaybackPaused(paused: Boolean) {
+        isPlaybackPaused = paused
+        if (!paused) scheduleTick()
+    }
+
+    /** Drops every queued spectrum frame (used on flush/seek so stale frames are not replayed). */
+    fun clearPendingFrames() {
+        synchronized(frameLock) {
+            frameHead = 0
+            frameCount = 0
+            queuedNs = 0L
+        }
+        paceBudgetNs = 0L
+    }
+
     /** Main-thread only: time credit (ns) available to release queued frames. */
     private var paceBudgetNs = 0L
     private var lastTickNs = 0L
