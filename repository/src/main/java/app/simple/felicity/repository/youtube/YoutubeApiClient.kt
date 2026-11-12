@@ -2,6 +2,7 @@ package app.simple.felicity.repository.youtube
 
 import app.simple.felicity.repository.youtube.YoutubeAuthHelper.applyYoutubeHeaders
 import app.simple.felicity.repository.youtube.YoutubeAuthHelper.buildContextBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import app.simple.felicity.repository.factories.TaggedSocketFactory
