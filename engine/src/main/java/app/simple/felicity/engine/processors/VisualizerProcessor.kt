@@ -223,22 +223,25 @@ class VisualizerProcessor : BaseAudioProcessor() {
     private var isPlaybackPaused = false
 
     /**
-     * Pauses or resumes releasing queued spectrum frames to the view, so the bars freeze while
-     * playback is paused instead of replaying what was already queued.
+     * Freezes or resumes the replay of queued frames. While paused the display holds the
+     * last frame and the queue keeps its content, so the spectrum stays aligned with the
+     * audio that is still sitting in the sink's buffer when playback resumes.
      */
     fun setPlaybackPaused(paused: Boolean) {
         isPlaybackPaused = paused
         if (!paused) scheduleTick()
     }
 
-    /** Drops every queued spectrum frame (used on flush/seek so stale frames are not replayed). */
+    /**
+     * Discards all queued-but-not-yet-displayed frames. Call on seeks and pipeline flushes
+     * so stale spectrum data from before the discontinuity is never replayed.
+     */
     fun clearPendingFrames() {
         synchronized(frameLock) {
             frameHead = 0
             frameCount = 0
             queuedNs = 0L
         }
-        paceBudgetNs = 0L
     }
 
     /** Main-thread only: time credit (ns) available to release queued frames. */
@@ -337,6 +340,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
             isAFront: AtomicBoolean,
             view: View
     ) {
+        clearPendingFrames()
         directOutput = DirectOutput(bufA, bufB, isAFront, WeakReference(view))
     }
 
@@ -349,6 +353,7 @@ class VisualizerProcessor : BaseAudioProcessor() {
      */
     fun clearDirectOutput() {
         directOutput = null
+        clearPendingFrames()
     }
 
     /**
