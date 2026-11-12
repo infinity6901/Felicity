@@ -199,7 +199,7 @@ class FelicityButtonGroup @JvmOverloads constructor(
      *
      * @param listener A lambda that receives the zero-based index of the newly selected button.
      */
-    fun setOnButtonSelectedListener(listener: (Int) -> Unit) {
+    fun setOnButtonSelectedListener(listener: ((Int) -> Unit)?) {
         onButtonSelectedListener = listener
     }
 
