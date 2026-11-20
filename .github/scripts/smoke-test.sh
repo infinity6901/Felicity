@@ -3,7 +3,7 @@
 # or dies. Catches "release build closes immediately" bugs (R8 / missing keep rules) in CI.
 # Usage: smoke-test.sh <apk> <outdir>
 set -u
-APK="$1"; OUT="$2"; PKG="app.simple.felicity"
+APK="$1"; OUT="$2"; PKG="app.simple.felicity.argon"
 mkdir -p "$OUT"
 
 adb install -r "$APK" || { echo "::error::APK failed to install"; exit 1; }

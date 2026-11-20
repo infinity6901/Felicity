@@ -9,7 +9,7 @@ APK="$1"; UNSIGNED_OK="${2:-}"
 BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -n1)
 echo "== $APK ($(du -h "$APK" | cut -f1))"
 "$BT/aapt2" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code" || true
-"$BT/aapt2" dump badging "$APK" | grep -q "package: name='app.simple.felicity'" \
+"$BT/aapt2" dump badging "$APK" | grep -q "package: name='app.simple.felicity.argon'" \
   || { echo "unexpected package name"; exit 1; }
 if "$BT/apksigner" verify --print-certs "$APK" 2>&1 | tee /tmp/apksigner.txt | grep -E "Verifies|SHA-256|DN"; then
   :

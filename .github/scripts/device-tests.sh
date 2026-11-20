@@ -10,7 +10,7 @@
 # those stay NOT RUN in the QA report.
 # Usage: device-tests.sh <debug-apk> <outdir> [cycles]
 set -u
-APK="$1"; OUT="$2"; CYCLES="${3:-5}"; PKG="app.simple.felicity"
+APK="$1"; OUT="$2"; CYCLES="${3:-5}"; PKG="app.simple.felicity.argon"
 mkdir -p "$OUT"
 export CI_LOG_DIR="$OUT/ci-logs" CI_STATUS_DIR="$OUT/ci-status"
 # shellcheck source=/dev/null
@@ -71,7 +71,7 @@ for i in 1 2 3; do
 done
 
 # --- 4. Cold launch -------------------------------------------------------------------------
-adb shell am start -W -n "$PKG/.activities.MainActivity" >/dev/null 2>&1 \
+adb shell am start -W -n "$PKG/app.simple.felicity.activities.MainActivity" >/dev/null 2>&1 \
   || adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 sleep 20
 check_phase cold-launch "Cold launch: app stays alive, no crash/ANR for 20 s"

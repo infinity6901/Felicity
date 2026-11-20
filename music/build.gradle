@@ -56,7 +56,9 @@ android {
     }
 
     defaultConfig {
-        applicationId "app.simple.felicity"
+        // Distinct from the upstream app ("app.simple.felicity") so both can be installed side by side.
+        // Only the installed identity changes; source packages and the R/BuildConfig namespace stay as they are.
+        applicationId "app.simple.felicity.argon"
 
         versionCode 33
         versionName "0.0.33_alpha"
